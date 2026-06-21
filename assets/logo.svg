@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">skill-foundry hand-drawn logo</title>
+  <desc id="desc">A hand-drawn forge mark with an anvil, hammer, instruction cards, and ember sparks.</desc>
+  <defs>
+    <filter id="paper" x="-5%" y="-5%" width="110%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="3" stitchTiles="stitch"/>
+      <feColorMatrix type="saturate" values="0"/>
+      <feComponentTransfer>
+        <feFuncA type="table" tableValues="0 0.05"/>
+      </feComponentTransfer>
+      <feBlend mode="multiply" in2="SourceGraphic"/>
+    </filter>
+    <style>
+      .ink {
+        fill: none;
+        stroke: #273236;
+        stroke-width: 10;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .thin {
+        fill: none;
+        stroke: #273236;
+        stroke-width: 6;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .ember {
+        fill: #e46f2c;
+        stroke: #273236;
+        stroke-width: 7;
+        stroke-linejoin: round;
+      }
+      .teal {
+        fill: none;
+        stroke: #3d8d8f;
+        stroke-width: 8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .paper {
+        fill: #fff7e8;
+        stroke: #273236;
+        stroke-width: 7;
+        stroke-linejoin: round;
+      }
+    </style>
+  </defs>
+
+  <rect width="512" height="512" rx="56" fill="#fffaf0" filter="url(#paper)"/>
+
+  <path class="thin" d="M108 374c43 24 235 30 301 1"/>
+  <path class="paper" d="M147 142c55-16 110-13 169 8l-12 132c-50 14-101 12-153-4z"/>
+  <path class="thin" d="M172 178c34-6 70-3 107 8"/>
+  <path class="thin" d="M169 218c34-5 69-2 104 6"/>
+  <path class="thin" d="M168 253c29-4 58-2 87 4"/>
+
+  <path class="teal" d="M334 170c24 8 39 22 47 42"/>
+  <path class="teal" d="M347 224c22 11 34 25 36 44"/>
+
+  <path class="ink" d="M151 309h180"/>
+  <path class="ink" d="M178 309c9 30 29 48 63 53"/>
+  <path class="ink" d="M310 309c-8 29-27 47-57 53"/>
+  <path class="ink" d="M211 362h79"/>
+  <path class="ink" d="M232 362l-15 39"/>
+  <path class="ink" d="M272 362l17 39"/>
+  <path class="ink" d="M191 401h119"/>
+
+  <path class="ember" d="M239 93c20 28 13 49-9 68 35-9 55-30 54-66 17 17 25 35 24 56 19-15 28-34 28-57 32 40 26 89-15 118-38 27-95 17-117-22-21-38-9-78 35-97z"/>
+  <path class="thin" d="M242 141c18 19 14 37-10 51"/>
+
+  <path class="ink" d="M351 97l59 59"/>
+  <path class="paper" d="M392 68l62 63-30 30-63-62z"/>
+  <path class="thin" d="M407 87l30 30"/>
+
+  <path class="thin" d="M99 203c-12-13-22-17-31-13"/>
+  <path class="thin" d="M92 250c-17-5-29-2-36 7"/>
+  <path class="thin" d="M410 300c19 1 31 7 38 19"/>
+  <circle cx="91" cy="300" r="8" fill="#e46f2c"/>
+  <circle cx="421" cy="222" r="7" fill="#e46f2c"/>
+  <circle cx="130" cy="113" r="6" fill="#3d8d8f"/>
+</svg>
