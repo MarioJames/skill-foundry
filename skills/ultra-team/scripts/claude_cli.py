@@ -29,6 +29,7 @@ _DEFAULT_JOBS_ROOTS = {
 _CLAUDE_PERMISSION_MODE = "bypassPermissions"
 _DEFAULT_BG_LAUNCH_TIMEOUT_SECONDS = 90.0
 _DEFAULT_ACTIVE_AGENTS_TIMEOUT_SECONDS = 10.0
+_DEFAULT_AGENT_CONTROL_TIMEOUT_SECONDS = 10.0
 _BG_LAUNCH_STDIN_ENV = "ULTRA_TEAM_BG_LAUNCH_STDIN"
 
 
@@ -97,6 +98,26 @@ def _launch_cmd(eng: str, prompt: str, name: Optional[str] = None, agent: Option
     raise ValueError(f"unsupported engine: {eng}")
 
 
+def claude_control_bin() -> str:
+    override = os.environ.get("ULTRA_TEAM_CLAUDE_BIN", "").strip()
+    if override:
+        return override
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        candidate = pathlib.Path(entry) / "claude"
+        if not candidate.is_file() or not os.access(candidate, os.X_OK):
+            continue
+        if ".superconductor" in candidate.parts:
+            continue
+        return str(candidate)
+    return "claude"
+
+
+def _control_cmd(command: str, job_id: str):
+    return [claude_control_bin(), command, job_id]
+
+
 def bg_launch_timeout() -> float:
     raw = os.environ.get("ULTRA_TEAM_BG_LAUNCH_TIMEOUT_SECONDS", "").strip()
     if not raw:
@@ -116,6 +137,17 @@ def active_agents_timeout() -> float:
         timeout = float(raw)
     except ValueError:
         return _DEFAULT_ACTIVE_AGENTS_TIMEOUT_SECONDS
+    return max(1.0, timeout)
+
+
+def agent_control_timeout() -> float:
+    raw = os.environ.get("ULTRA_TEAM_AGENT_CONTROL_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return _DEFAULT_AGENT_CONTROL_TIMEOUT_SECONDS
+    try:
+        timeout = float(raw)
+    except ValueError:
+        return _DEFAULT_AGENT_CONTROL_TIMEOUT_SECONDS
     return max(1.0, timeout)
 
 
@@ -245,17 +277,39 @@ def read_log(job_id: str, eng: str) -> str:
     return out.stdout or ""
 
 
-def stop(job_id: str, eng: str) -> None:
+def stop(job_id: str, eng: str) -> bool:
     if eng != "claude":
-        return
-    cmd = ["claude", "stop", job_id]
-    subprocess.run(cmd, capture_output=True, text=True, check=False)
+        return False
+    cmd = _control_cmd("stop", job_id)
+    try:
+        out = subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=agent_control_timeout(),
+        )
+    except subprocess.TimeoutExpired:
+        return False
+    return out.returncode == 0
 
 
-def rm(job_id: str, eng: str) -> None:
+def rm(job_id: str, eng: str) -> bool:
     if eng != "claude":
-        return
-    subprocess.run(["claude", "rm", job_id], capture_output=True, text=True, check=False)
+        return False
+    try:
+        out = subprocess.run(
+            _control_cmd("rm", job_id),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=agent_control_timeout(),
+        )
+    except subprocess.TimeoutExpired:
+        return False
+    return out.returncode == 0
 
 
 def active_agents() -> list:

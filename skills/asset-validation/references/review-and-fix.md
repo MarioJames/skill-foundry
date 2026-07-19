@@ -6,6 +6,7 @@ Principles:
 - Only edit the asset-under-test itself.
 - Look for: trigger-surface errors (description too broad/narrow), obvious script bugs, broken state machine / control flow, drift between docs and implementation.
 - Script-bearing assets: first confirm scripts actually run (syntax, dependencies, the bash 3.2 empty-array `set -u` trap), then review logic.
+- Skill assets should run the canonical skill validator when available: `$HOME/.claude/skills/.system/skill-creator/scripts/quick_validate.py <skill_dir>`. If `$HOME/.claude/skills` is a symlink, use `find -L "$HOME/.claude/skills" -path '*/skill-creator/scripts/quick_validate.py' -type f` to discover it. A custom smoke test can supplement quick_validate, but should not silently replace it unless the validator is unavailable and the fallback is stated in the report.
 - After fixing, briefly state what changed and why. Once there are no major problems, move to "produce strategy".
 
 ## Gotchas

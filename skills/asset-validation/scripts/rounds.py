@@ -1,4 +1,14 @@
-from . import db
+import json
+
+from . import catalog, db
+
+
+class BudgetExceeded(RuntimeError):
+    def __init__(self, message, acceptance_id, budget, used):
+        super().__init__(message)
+        self.acceptance_id = acceptance_id
+        self.budget = budget
+        self.used = used
 
 
 def _append(con, table, col, row_id, text):
@@ -10,11 +20,35 @@ def _append(con, table, col, row_id, text):
 
 
 def start_round(con, acceptance_id, *, mode, n, sandbox_path=None) -> str:
+    budget_row = con.execute(
+        "SELECT budget_max_rounds FROM acceptance WHERE id=?",
+        (acceptance_id,),
+    ).fetchone()
+    budget = budget_row["budget_max_rounds"] if budget_row else None
+    if budget is not None:
+        used = con.execute(
+            "SELECT COUNT(*) FROM round WHERE acceptance_id=? "
+            "AND verdict != 'blocked'",
+            (acceptance_id,),
+        ).fetchone()[0]
+        if used >= budget:
+            raise BudgetExceeded(
+                f"budget-exhausted: {used}/{budget} non-blocked rounds used "
+                f"for acceptance {acceptance_id}",
+                acceptance_id, budget, used,
+            )
+    source = con.execute(
+        "SELECT asset.source_path AS source_path FROM acceptance "
+        "JOIN asset ON asset.id=acceptance.asset_id WHERE acceptance.id=?",
+        (acceptance_id,),
+    ).fetchone()
+    asset_hash = catalog.source_hash(source["source_path"]) if source else None
     rid = db.new_id("round")
     con.execute(
         "INSERT INTO round (id, acceptance_id, round_tag, mode, verdict, "
-        "sandbox_path, started_at) VALUES (?,?,?,?, 'running', ?, ?)",
-        (rid, acceptance_id, db.round_tag(n), mode, sandbox_path, db.now()),
+        "sandbox_path, asset_hash, started_at) VALUES (?,?,?,?, 'running', ?, ?, ?)",
+        (rid, acceptance_id, db.round_tag(n), mode, sandbox_path, asset_hash,
+         db.now()),
     )
     con.execute(
         "UPDATE acceptance SET status='active', updated_at=? WHERE id=?",
@@ -77,6 +111,21 @@ def list_rounds(con, *, acceptance_id=None, verdict=None):
     return con.execute(sql, args).fetchall()
 
 
+def add_task_key(con, round_id, task_key) -> None:
+    row = con.execute(
+        "SELECT task_keys FROM round WHERE id=?", (round_id,)
+    ).fetchone()
+    keys = json.loads(row["task_keys"]) if row and row["task_keys"] else []
+    if task_key in keys:
+        return
+    keys.append(task_key)
+    con.execute(
+        "UPDATE round SET task_keys=? WHERE id=?",
+        (json.dumps(keys, ensure_ascii=False), round_id),
+    )
+    con.commit()
+
+
 def record(con, round_id, *, transcript=None, report_append=None) -> None:
     if transcript is not None:
         con.execute("UPDATE round SET transcript=? WHERE id=?", (transcript, round_id))
@@ -85,13 +134,31 @@ def record(con, round_id, *, transcript=None, report_append=None) -> None:
         _append(con, "round", "report", round_id, report_append)
 
 
-def add_finding(con, round_id, *, severity, status, summary) -> None:
+def add_finding(con, round_id, *, severity, status, summary, key=None) -> str:
+    fid = db.new_id("find")
+    con.execute(
+        "INSERT INTO finding (id, round_id, key, severity, status, summary, "
+        "created_at) VALUES (?,?,?,?,?,?,?)",
+        (fid, round_id, key, severity, status, summary, db.now()),
+    )
+    con.commit()
     line = f"- [{severity}/{status}] {summary}"
+    if key:
+        line = f"- [{severity}/{status}] ({key}) {summary}"
     _append(con, "round", "report", round_id, line)
     acc_id = con.execute(
         "SELECT acceptance_id FROM round WHERE id=?", (round_id,)
     ).fetchone()[0]
     _append(con, "acceptance", "issues", acc_id, line)
+    return fid
+
+
+def list_findings(con, round_id) -> list:
+    rows = con.execute(
+        "SELECT * FROM finding WHERE round_id=? ORDER BY created_at",
+        (round_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def finalize(con, round_id, *, verdict, next_round_reco=None, report_append=None) -> None:

@@ -43,8 +43,11 @@ def cleanup_visible_job(job_id, eng, active_ids=None) -> bool:
     if job_id not in ids:
         return False
     claude_cli.stop(job_id, eng)
-    claude_cli.rm(job_id, eng)
-    return True
+    if job_id not in active_agent_ids():
+        return True
+    if not claude_cli.rm(job_id, eng):
+        return False
+    return job_id not in active_agent_ids()
 
 
 def reap_terminal_visible_jobs(root_id: str, eng: str):
@@ -61,6 +64,7 @@ def reap_terminal_visible_jobs(root_id: str, eng: str):
 
 def stop_completed_round_jobs(parent_id: str, root_id: str, round_: int, eng: str):
     stopped = []
+    cleanup_failed = []
     active_ids = active_agent_ids()
     for child in state_store.round_children(parent_id, round_):
         if child["status"] == "running":
@@ -72,10 +76,11 @@ def stop_completed_round_jobs(parent_id: str, root_id: str, round_: int, eng: st
         if child_engine != "claude":
             continue
         if job_id in active_ids:
-            claude_cli.stop(job_id, child_engine)
-            claude_cli.rm(job_id, child_engine)
-            stopped.append(job_id)
-    return stopped
+            if cleanup_visible_job(job_id, child_engine, active_ids):
+                stopped.append(job_id)
+            else:
+                cleanup_failed.append(job_id)
+    return {"reaped_jobs": stopped, "cleanup_failed_jobs": cleanup_failed}
 
 
 def evaluate_round(parent_id, root_id, round_, eng):
@@ -209,7 +214,7 @@ def await_round_blocking(parent_id, root_id, round_, eng, poll=5, max_block=None
         transcript_activity = refresh_round_transcript_activity(parent_id, root_id, round_)
         complete, summary = evaluate_round(parent_id, root_id, round_, eng)
         if complete:
-            reaped_jobs = stop_completed_round_jobs(parent_id, root_id, round_, eng)
+            cleanup_result = stop_completed_round_jobs(parent_id, root_id, round_, eng)
             return {
                 "complete": True,
                 "round": round_,
@@ -218,13 +223,16 @@ def await_round_blocking(parent_id, root_id, round_, eng, poll=5, max_block=None
                 "running_count": 0,
                 "listen_window": block_seconds,
                 "next_listen_window": next_listen_window_seconds(block_seconds),
-                "reaped_jobs": reaped_jobs,
+                **cleanup_result,
             }
         now_ts = time.time()
         timeout = stop_idle_direct_children(parent_id, root_id, round_, eng, now_ts=now_ts)
         if timeout["stopped_jobs"] or timeout["timed_out_agents"]:
             complete, summary = evaluate_round(parent_id, root_id, round_, eng)
-            reaped_jobs = stop_completed_round_jobs(parent_id, root_id, round_, eng) if complete else []
+            cleanup_result = (
+                stop_completed_round_jobs(parent_id, root_id, round_, eng)
+                if complete else {"reaped_jobs": [], "cleanup_failed_jobs": []}
+            )
             return {
                 "complete": complete,
                 "round": round_,
@@ -238,7 +246,7 @@ def await_round_blocking(parent_id, root_id, round_, eng, poll=5, max_block=None
                 "running_count": round_running_agent_count(parent_id, round_),
                 "listen_window": block_seconds,
                 "next_listen_window": next_listen_window_seconds(block_seconds),
-                "reaped_jobs": reaped_jobs,
+                **cleanup_result,
             }
         elapsed_for = now_ts - started_at
         idle_for = round_idle_seconds(parent_id, round_)

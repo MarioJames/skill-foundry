@@ -32,7 +32,9 @@ def prompt_prefix_for_kind(kind: str) -> str:
     if kind in {"review", "fix"}:
         return (
             "You are a leaf node: do NOT call dispatch, claude --bg, claude agents, Agent/Task/Workflow, or "
-            "any other background/sub-task capability; after finishing the review or fix, call finish directly."
+            "any other background/sub-task capability; after finishing the review or fix, call finish directly. "
+            "A prose verdict, Markdown code block, Python snippet, or note saying how to finish is NOT completion; "
+            "your final tool call MUST execute the agent_orchestrator.py finish shell command."
         )
     raise ValueError(f"unsupported child kind: {kind}")
 
@@ -64,7 +66,10 @@ def build_child_prompt(agent_id, parent_id, root_id, round_, kind, task, skill_d
     return (
         f"{identity}"
         f"Do NOT trigger or load the orchestration skill; you are a leaf node, just complete this task and report. "
-        f"When done, call: python3 {pathlib.Path(skill_dir_path) / 'scripts' / 'agent_orchestrator.py'} "
+        "When done, execute the following shell command as your final tool call. Do NOT show it in prose, "
+        "Markdown, or a Python snippet; run it with Bash. If you already wrote a verdict without running this "
+        "command, run it immediately now: "
+        f"python3 {pathlib.Path(skill_dir_path) / 'scripts' / 'agent_orchestrator.py'} "
         f"finish --agent-id {agent_id} --root-id {root_id} --result \"<your result>\" "
         "--caveats \"<unresolved items, optional>\".\n\n"
         f"[TASK] {task}"

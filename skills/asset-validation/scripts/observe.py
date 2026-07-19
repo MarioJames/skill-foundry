@@ -11,7 +11,9 @@ from .envprep import (
     prepare_round_environment,
     rsync_fixture,
 )
-from .plugin_runtime import cleanup_plugin_install, install_plugin_source
+from .plugin_runtime import cleanup_plugin_install, install_agent_source
+from .plugin_runtime import install_plugin_source
+from .plugin_runtime import install_skill_source
 
 
 def tmux_new_session(session, cwd, cmd, runner=subprocess.run) -> str:
@@ -159,6 +161,31 @@ def wait_for_prompt(pane, *, timeout=20, interval=0.5,
             time.sleep(interval)
             continue
         if "❯" in text:
+            return True
+        time.sleep(interval)
+    return False
+
+
+def wait_for_idle(pane, *, idle_seconds, max_seconds, interval=2.0,
+                  runner=subprocess.run) -> bool:
+    """Return True when pane content is stable and the input prompt is visible."""
+    if max_seconds <= 0:
+        return False
+    deadline = time.time() + max_seconds
+    last_compact = None
+    last_change = time.time()
+    while time.time() < deadline:
+        try:
+            text = capture_pane(pane, start="-120", runner=runner)
+        except subprocess.CalledProcessError:
+            text = ""
+        compact = _compact_text(text)
+        prompt_visible = "❯" in text
+        now = time.time()
+        if compact != last_compact:
+            last_compact = compact
+            last_change = now
+        elif prompt_visible and now - last_change >= idle_seconds:
             return True
         time.sleep(interval)
     return False

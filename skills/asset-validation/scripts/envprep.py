@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -45,6 +46,22 @@ def _ensure_json_object(path: Path) -> None:
     path.write_text("{}\n", encoding="utf-8")
 
 
+def _sandbox_claude_settings(home: Path) -> dict:
+    """Copy only settings needed for auth/model/permissions into sandbox."""
+    src = home / ".claude" / "settings.json"
+    try:
+        data = json.loads(src.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    return {
+        key: data[key]
+        for key in ("env", "permissions", "model")
+        if key in data
+    }
+
+
 def prepare_round_environment(sandbox, source_home: Optional[Path] = None) -> dict:
     sb = Path(sandbox)
     acc_home = sb / ".aut-acceptance"
@@ -52,13 +69,23 @@ def prepare_round_environment(sandbox, source_home: Optional[Path] = None) -> di
     tmp = sb / ".tmp"
     home = Path(source_home) if source_home else Path.home()
     settings = iso / "claude-settings.json"
+    try:
+        depth = int(os.environ.get("ACCEPTANCE_DEPTH", "0")) + 1
+    except ValueError:
+        depth = 1
     for path in (acc_home, iso, tmp):
         path.mkdir(parents=True, exist_ok=True)
     _ensure_json_object(settings)
+    settings.write_text(
+        json.dumps(_sandbox_claude_settings(home), ensure_ascii=False, indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
     return {
         "ACCEPTANCE_SANDBOX": str(sb),
         "ACCEPTANCE_HOME": str(acc_home),
         "ACCEPTANCE_TMPDIR": str(tmp),
+        "ACCEPTANCE_DEPTH": str(depth),
         "TMPDIR": str(tmp),
         "TMP": str(tmp),
         "TEMP": str(tmp),
@@ -82,7 +109,7 @@ def cleanup_sandbox(sandbox) -> dict:
     existed = sb.exists()
     tmp_existed = tmp.exists()
     if existed:
-        shutil.rmtree(sb)
+        _rmtree_retry(sb)
     return {
         "removed": str(sb),
         "existed": existed,
@@ -106,7 +133,7 @@ def _cleanup_nested_sandbox(path, parent_sandbox: Path) -> dict:
     nested = Path(path)
     existed = nested.exists()
     if existed:
-        shutil.rmtree(nested)
+        _rmtree_retry(nested)
     return {
         "path": str(nested),
         "existed": existed,
@@ -131,3 +158,16 @@ def _is_safe_nested_sandbox(path, parent_sandbox: Path) -> bool:
         or tmp_resolved in nested_resolved.parents
         or nested_resolved.parent == tmp_resolved
     )
+
+
+def _rmtree_retry(path: Path, attempts: int = 4) -> None:
+    for attempt in range(attempts):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            if attempt + 1 >= attempts:
+                raise
+            time.sleep(0.1 * (attempt + 1))

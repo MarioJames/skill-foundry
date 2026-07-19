@@ -41,6 +41,19 @@ def _write_install_manifest(sandbox, manifest: dict) -> None:
                     encoding="utf-8")
 
 
+def _session_isolation_prompt(kind: str, names: list) -> str:
+    listed = ", ".join(names) if names else kind
+    return (
+        "Acceptance sandbox isolation: use only the asset staged through this "
+        f"session plugin ({kind}: {listed}). Do not use same-name global skills, "
+        "agents, or files under $HOME/.claude/skills as the asset source when a "
+        "staged copy exists under ACCEPTANCE_SANDBOX. A token such as "
+        "$asset-validation denotes a skill name in the user task, not a shell "
+        "command or npm package. Never print settings files, auth tokens, or "
+        "secret environment values; report paths only."
+    )
+
+
 def _read_plugin_name(src: Path, fallback: Optional[str]) -> str:
     manifest = src / "plugin.json"
     if manifest.exists():
@@ -51,6 +64,54 @@ def _read_plugin_name(src: Path, fallback: Optional[str]) -> str:
         except (OSError, json.JSONDecodeError):
             pass
     return fallback or src.name
+
+
+def _read_skill_name(src: Path, fallback: Optional[str]) -> str:
+    skill = src / "SKILL.md"
+    if skill.exists():
+        try:
+            in_frontmatter = False
+            for raw in skill.read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if line == "---":
+                    if not in_frontmatter:
+                        in_frontmatter = True
+                        continue
+                    break
+                if in_frontmatter and line.startswith("name:"):
+                    name = line.split(":", 1)[1].strip().strip("\"'")
+                    if name:
+                        return name
+        except OSError:
+            pass
+    return fallback or src.name
+
+
+def _read_agent_name(src: Path, fallback: Optional[str]) -> str:
+    candidates = []
+    if src.is_file() and src.suffix == ".md":
+        candidates.append(src)
+    agents_dir = src / "agents"
+    if agents_dir.exists():
+        candidates.extend(sorted(child for child in agents_dir.iterdir()
+                                 if child.suffix == ".md"))
+    for child in candidates:
+        try:
+            in_frontmatter = False
+            for raw in child.read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if line == "---":
+                    if not in_frontmatter:
+                        in_frontmatter = True
+                        continue
+                    break
+                if in_frontmatter and line.startswith("name:"):
+                    name = line.split(":", 1)[1].strip().strip("\"'")
+                    if name:
+                        return name
+        except OSError:
+            pass
+    return fallback or src.stem
 
 
 def install_plugin_source(sandbox, source_path, *, name: Optional[str] = None) -> dict:
@@ -68,7 +129,12 @@ def install_plugin_source(sandbox, source_path, *, name: Optional[str] = None) -
     agents = sorted(child.name for child in (src / "agents").iterdir()) \
         if (src / "agents").exists() else []
     settings = env["CMDAI_CLAUDE_SETTINGS_PATH"]
-    cli_args = ["--settings", settings, "--plugin-dir", str(plugin_dir)]
+    cli_args = [
+        "--bare",
+        "--append-system-prompt", _session_isolation_prompt("plugin", skills + agents),
+        "--settings", settings,
+        "--plugin-dir", str(plugin_dir),
+    ]
     manifest = {
         "name": plugin_name,
         "source": str(src),
@@ -88,6 +154,111 @@ def install_plugin_source(sandbox, source_path, *, name: Optional[str] = None) -
         "cli_args": cli_args,
         "skills": skills,
         "agents": agents,
+    }
+
+
+def install_agent_source(sandbox, source_path, *, name: Optional[str] = None) -> dict:
+    src = Path(source_path)
+    if not src.exists():
+        return {"installed": False, "reason": f"source not found: {src}"}
+
+    env = prepare_round_environment(sandbox)
+    agent_name = _read_agent_name(src, name)
+    plugin_name = f"acc-agent-{agent_name}"
+    plugin_dir = (
+        Path(env["ACCEPTANCE_SANDBOX"])
+        / ".iso" / "claude-agent-plugins" / plugin_name
+    )
+    agents_dest = plugin_dir / "agents"
+    if (src / "agents").exists():
+        _copy_entry(src / "agents", agents_dest)
+    elif src.is_file() and src.suffix == ".md":
+        _copy_entry(src, agents_dest / src.name)
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "plugin.json").write_text(
+        json.dumps({"name": plugin_name}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    agents = sorted(child.name for child in agents_dest.iterdir()) \
+        if agents_dest.exists() else []
+    settings = env["CMDAI_CLAUDE_SETTINGS_PATH"]
+    cli_args = [
+        "--bare",
+        "--append-system-prompt", _session_isolation_prompt("agent", agents),
+        "--settings", settings,
+        "--plugin-dir", str(plugin_dir),
+    ]
+    manifest = {
+        "name": plugin_name,
+        "source": str(src),
+        "plugin_dir": str(plugin_dir),
+        "settings": settings,
+        "skills": [],
+        "agents": agents,
+        "cli_args": cli_args,
+        "staged_asset_type": "agent",
+    }
+    _write_install_manifest(sandbox, manifest)
+
+    return {
+        "installed": True,
+        "name": plugin_name,
+        "plugin_dir": str(plugin_dir),
+        "settings": settings,
+        "cli_args": cli_args,
+        "skills": [],
+        "agents": agents,
+    }
+
+
+def install_skill_source(sandbox, source_path, *, name: Optional[str] = None) -> dict:
+    src = Path(source_path)
+    if not src.exists():
+        return {"installed": False, "reason": f"source not found: {src}"}
+
+    env = prepare_round_environment(sandbox)
+    skill_name = _read_skill_name(src, name)
+    plugin_name = f"acc-skill-{skill_name}"
+    plugin_dir = (
+        Path(env["ACCEPTANCE_SANDBOX"])
+        / ".iso" / "claude-skill-plugins" / plugin_name
+    )
+    skill_dir = plugin_dir / "skills" / skill_name
+    _copy_entry(src, skill_dir)
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "plugin.json").write_text(
+        json.dumps({"name": plugin_name}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    settings = env["CMDAI_CLAUDE_SETTINGS_PATH"]
+    cli_args = [
+        "--bare",
+        "--append-system-prompt", _session_isolation_prompt("skill", [skill_name]),
+        "--settings", settings,
+        "--plugin-dir", str(plugin_dir),
+    ]
+    manifest = {
+        "name": plugin_name,
+        "source": str(src),
+        "plugin_dir": str(plugin_dir),
+        "settings": settings,
+        "skills": [skill_name],
+        "agents": [],
+        "cli_args": cli_args,
+        "staged_asset_type": "skill",
+    }
+    _write_install_manifest(sandbox, manifest)
+
+    return {
+        "installed": True,
+        "name": plugin_name,
+        "plugin_dir": str(plugin_dir),
+        "settings": settings,
+        "cli_args": cli_args,
+        "skills": [skill_name],
+        "agents": [],
     }
 
 

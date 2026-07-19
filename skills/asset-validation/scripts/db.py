@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS acceptance (
   task_prompts        TEXT,
   issues              TEXT,
   fixture_path        TEXT,
+  ladder              TEXT,
+  budget_max_rounds   INTEGER,
   status              TEXT NOT NULL DEFAULT 'draft'
                         CHECK (status IN ('draft','active','done')),
   created_at          TEXT NOT NULL,
@@ -38,10 +40,43 @@ CREATE TABLE IF NOT EXISTS round (
   transcript      TEXT,
   next_round_reco TEXT,
   sandbox_path    TEXT,
+  asset_hash      TEXT,
+  task_keys       TEXT,
   started_at      TEXT NOT NULL,
   ended_at        TEXT
 );
+CREATE TABLE IF NOT EXISTS finding (
+  id          TEXT PRIMARY KEY,
+  round_id    TEXT NOT NULL REFERENCES round(id),
+  key         TEXT,
+  severity    TEXT NOT NULL,
+  status      TEXT NOT NULL,
+  summary     TEXT NOT NULL,
+  created_at  TEXT NOT NULL
+);
 """
+
+_ROUND_EXTRA_COLUMNS = {
+    "mode": "TEXT CHECK (mode IN ('stop-loss','collect-first','hybrid'))",
+    "report": "TEXT",
+    "transcript": "TEXT",
+    "next_round_reco": "TEXT",
+    "sandbox_path": "TEXT",
+    "asset_hash": "TEXT",
+    "task_keys": "TEXT",
+    "ended_at": "TEXT",
+}
+
+_ACCEPTANCE_EXTRA_COLUMNS = {
+    "strategy": "TEXT",
+    "acceptance_prompt": "TEXT",
+    "acceptance_criteria": "TEXT",
+    "task_prompts": "TEXT",
+    "issues": "TEXT",
+    "fixture_path": "TEXT",
+    "ladder": "TEXT",
+    "budget_max_rounds": "INTEGER",
+}
 
 
 def runtime_root() -> Path:
@@ -53,12 +88,17 @@ def db_path() -> Path:
     return runtime_root() / "state.sqlite3"
 
 
-def fixtures_root() -> Path:
-    return runtime_root() / "fixtures"
+def _ensure_columns(con, table, columns) -> None:
+    existing = {row[1] for row in con.execute(f"PRAGMA table_info({table})")}
+    for name, decl in columns.items():
+        if name not in existing:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
 
 def ensure_schema(con: sqlite3.Connection) -> None:
     con.executescript(SCHEMA)
+    _ensure_columns(con, "round", _ROUND_EXTRA_COLUMNS)
+    _ensure_columns(con, "acceptance", _ACCEPTANCE_EXTRA_COLUMNS)
     con.commit()
 
 
@@ -81,6 +121,22 @@ def round_sandbox_paths_from(path: Path) -> list:
             "SELECT sandbox_path FROM round WHERE sandbox_path IS NOT NULL"
         ).fetchall()
         return [row["sandbox_path"] for row in rows if row["sandbox_path"]]
+    except sqlite3.Error:
+        return []
+    finally:
+        con.close()
+
+
+def round_cleanup_targets_from(path: Path) -> list:
+    if not Path(path).exists():
+        return []
+    con = sqlite3.connect(path)
+    try:
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            "SELECT round_tag, sandbox_path FROM round"
+        ).fetchall()
+        return [dict(row) for row in rows]
     except sqlite3.Error:
         return []
     finally:

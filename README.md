@@ -21,6 +21,8 @@
 
 Most skills, plugins, rules, and agents are never actually exercised — they're eyeballed, shipped, and trusted. `asset-validation` closes that gap. It runs the asset-under-test as a **real interactive CLI** (in tmux, never a stand-in subagent), feeds it real tasks, observes what actually happens, independently re-verifies, captures evidence, and cleans up the sandbox. You end with acceptance you can point at — *here's the run, here's what it did* — before you publish, refactor, or trust an asset.
 
+It includes progressive task ladders, clean post-fix PASS gates, typed staging profiles (`skill` / `plugin` / `agent`), secret redaction, and budgeted unattended runs.
+
 **Reach for it when** validating a skill, plugin, rule, or agent before release, or re-checking one after changes.
 
 ### `ultra-team` — a harness for large-scale agent orchestration
@@ -28,6 +30,14 @@ Most skills, plugins, rules, and agents are never actually exercised — they're
 Coordinating many agents on big work without losing state, context, or accountability is hard. `ultra-team` is distilled orchestration experience turned into a runnable harness: an explicit task tree with dispatch / implement / review / fix child roles, recursion and recovery protocols, lifecycle hooks, and durable runtime state. A root agent stays in the foreground and delegates; interrupted runs resume instead of starting over. It is dormant by default and only activates on an explicit `ultra team` request.
 
 **Reach for it when** complex work needs delegation, tracking, review, and safe resume.
+
+### `workspace-knowledge-graph` — multi-repo workspace routing and relations
+
+Multi-repo workspaces accumulate tribal knowledge about which package owns what, how repos connect, and where agents should start. `workspace-knowledge-graph` turns that into a maintained graph: `AGENTS.md` / `CLAUDE.md` / `MEMORY.md` root routes, `.workspace/` declarations, per-repo index docs, and evidence-backed cross-repo relations. It scans sibling git repos, runs a research → write → review loop for high-density entry docs, then re-renders derived views with `init` / `validate`.
+
+Human-facing workspace artifacts default to Chinese; machine tokens (paths, keys, commands) stay as-is.
+
+**Reach for it when** bootstrapping or refreshing a multi-repo workspace knowledge graph, task routing, or cross-repo relation map.
 
 ## Install
 
@@ -40,6 +50,7 @@ npx skills add MarioJames/skill-foundry --all
 # One skill
 npx skills add MarioJames/skill-foundry --skill asset-validation
 npx skills add MarioJames/skill-foundry --skill ultra-team
+npx skills add MarioJames/skill-foundry --skill workspace-knowledge-graph
 
 # Target a specific agent, or install globally
 npx skills add MarioJames/skill-foundry --all -a claude-code   # or: -a codex
@@ -58,7 +69,7 @@ Codex:
 git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
 mkdir -p ~/.codex/skills
-cp -R skills/asset-validation skills/ultra-team ~/.codex/skills/
+cp -R skills/asset-validation skills/ultra-team skills/workspace-knowledge-graph ~/.codex/skills/
 ```
 
 Claude-style runtimes:
@@ -67,7 +78,7 @@ Claude-style runtimes:
 git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
 mkdir -p ~/.claude/skills
-cp -R skills/asset-validation skills/ultra-team ~/.claude/skills/
+cp -R skills/asset-validation skills/ultra-team skills/workspace-knowledge-graph ~/.claude/skills/
 ```
 
 Verify the installation:
@@ -75,6 +86,7 @@ Verify the installation:
 ```bash
 test -f ~/.codex/skills/asset-validation/SKILL.md
 test -f ~/.codex/skills/ultra-team/SKILL.md
+test -f ~/.codex/skills/workspace-knowledge-graph/SKILL.md
 ```
 
 ### Update Manual Installs
@@ -84,8 +96,8 @@ For manual installs, pull the latest repository and replace the copied skill dir
 ```bash
 cd skill-foundry
 git pull
-rm -rf ~/.codex/skills/asset-validation ~/.codex/skills/ultra-team
-cp -R skills/asset-validation skills/ultra-team ~/.codex/skills/
+rm -rf ~/.codex/skills/asset-validation ~/.codex/skills/ultra-team ~/.codex/skills/workspace-knowledge-graph
+cp -R skills/asset-validation skills/ultra-team skills/workspace-knowledge-graph ~/.codex/skills/
 ```
 
 ## Usage
@@ -104,6 +116,12 @@ Run explicit orchestration:
 Run this in ultra team mode and coordinate implementation, validation, and final review.
 ```
 
+Bootstrap or refresh a multi-repo knowledge graph:
+
+```text
+Use workspace-knowledge-graph to scan this workspace, build the knowledge graph, and refresh AGENTS.md.
+```
+
 Each skill defines its own activation rules in `SKILL.md`. In particular, `ultra-team` is dormant by default and only activates when the user explicitly asks for `ultra team`.
 
 ## Repository Layout
@@ -118,16 +136,25 @@ skill-foundry/
 │   │   ├── assets/
 │   │   ├── references/
 │   │   └── scripts/
-│   └── ultra-team/
+│   ├── ultra-team/
+│   │   ├── SKILL.md
+│   │   ├── hooks/
+│   │   ├── references/
+│   │   └── scripts/
+│   └── workspace-knowledge-graph/
 │       ├── SKILL.md
-│       ├── hooks/
+│       ├── agents/
 │       ├── references/
 │       └── scripts/
 ├── LICENSE
 └── README.md
 ```
 
-Only `skills/asset-validation/` and `skills/ultra-team/` are installable skill packages in the current repository shape.
+Installable skill packages in the current repository shape:
+
+- `skills/asset-validation/`
+- `skills/ultra-team/`
+- `skills/workspace-knowledge-graph/`
 
 ## Verify
 

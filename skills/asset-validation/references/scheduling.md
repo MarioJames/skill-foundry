@@ -1,5 +1,7 @@
 # Scheduling engine (dynamic, principle-driven)
 
+The three modes are observer narrative labels for round strategy. The script layer does not branch on `--mode`; it is recorded on the round and surfaced in history. Choose the mode that best describes your fix-vs-collect strategy for this round.
+
 Three modes (the `--mode` flag of `acc start`):
 
 - **stop-loss** (及时止损): a defect that blocks the whole run → stop now, fix, restart a fresh round. Quickly cuts defects that poison scheduling.

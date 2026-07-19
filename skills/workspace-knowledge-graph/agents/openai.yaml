@@ -1,0 +1,4 @@
+interface:
+  display_name: 'workspace-knowledge-graph'
+  short_description: '生成高密度工作区路由，并按需保留不可重建的用户上下文'
+  default_prompt: '使用 $workspace-knowledge-graph 刷新当前工作区图谱；仅基于可归因的用户输入或外部操作，审计并按需更新无法由代码、git/PR/CI、任务系统或图谱恢复的记忆。'

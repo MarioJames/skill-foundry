@@ -6,12 +6,12 @@ import sys
 from pathlib import Path
 
 try:  # works when imported as a package (tests, `python3 -m scripts.acc`)
-    from . import catalog, cleanup, db, observe, rounds
+    from . import catalog, cleanup, db, observe, profiles, redact, rounds
     _SKILL_DIR = Path(__file__).resolve().parent.parent
 except ImportError:  # works when run directly: `python3 .../scripts/acc.py`
     _SKILL_DIR = Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(_SKILL_DIR))
-    from scripts import catalog, cleanup, db, observe, rounds
+    from scripts import catalog, cleanup, db, observe, profiles, redact, rounds
 
 
 def _emit(obj):
@@ -62,6 +62,19 @@ def _build_parser():
     p = argparse.ArgumentParser(prog="acc")
     sub = p.add_subparsers(dest="cmd", required=True)
 
+    bs = sub.add_parser("bootstrap")
+    bs.add_argument("--name", required=True)
+    bs.add_argument("--type", required=True,
+                    choices=["skill", "plugin", "rule", "agent"])
+    bs.add_argument("--source", required=True)
+    bs.add_argument("--goal")
+    bs.add_argument("--goal-file")
+    bs.add_argument("--strategy")
+    bs.add_argument("--strategy-file")
+    bs.add_argument("--fixture")
+    bs.add_argument("--task-prompts-file",
+                    help="JSON file: {task_key: body} fed to the asset-under-test")
+
     asset = sub.add_parser("asset").add_subparsers(dest="sub", required=True)
     a = asset.add_parser("add")
     a.add_argument("--name", required=True)
@@ -92,6 +105,10 @@ def _build_parser():
     au.add_argument("--criteria-file")
     au.add_argument("--task-prompts-file",
                     help="JSON file: {task_key: body} fed to the asset-under-test")
+    au.add_argument("--ladder-file",
+                    help="JSON file: {rung: [task_key, ...]}")
+    au.add_argument("--budget-max-rounds", type=int,
+                    help="max non-blocked rounds before budget-exhausted")
     al = accept.add_parser("list")
     al.add_argument("--asset", help="asset name or id")
     al.add_argument("--status")
@@ -131,16 +148,32 @@ def _build_parser():
     cp.add_argument("--out")
     cp.add_argument("--start", default="-2000")
 
+    wt = sub.add_parser("wait")
+    wt.add_argument("--round")
+    wt.add_argument("--pane")
+    wt.add_argument("--idle-seconds", type=float, required=True)
+    wt.add_argument("--max-seconds", type=float, required=True)
+
     rc = sub.add_parser("record")
     rc.add_argument("--round", required=True)
     rc.add_argument("--transcript-file")
     rc.add_argument("--report")
 
     fd = sub.add_parser("finding")
-    fd.add_argument("--round", required=True)
-    fd.add_argument("--severity", required=True)
-    fd.add_argument("--status", required=True)
-    fd.add_argument("--summary", required=True)
+    fd_sub = fd.add_subparsers(dest="finding_cmd")
+    fd.add_argument("--round")
+    fd.add_argument("--severity")
+    fd.add_argument("--status")
+    fd.add_argument("--summary")
+    fd.add_argument("--key")
+    fd_add = fd_sub.add_parser("add")
+    fd_add.add_argument("--round", required=True)
+    fd_add.add_argument("--severity", required=True)
+    fd_add.add_argument("--status", required=True)
+    fd_add.add_argument("--summary", required=True)
+    fd_add.add_argument("--key", default=None)
+    fd_list = fd_sub.add_parser("list")
+    fd_list.add_argument("--round", required=True)
 
     fz = sub.add_parser("finalize")
     fz.add_argument("--round", required=True)
@@ -149,11 +182,27 @@ def _build_parser():
     fz.add_argument("--next-round-reco")
     fz.add_argument("--keep-sandbox", action="store_true",
                     help="finalize without automatic round cleanup for debugging")
+    fz.add_argument("--allow-partial",
+                    help="override ladder coverage gate with a reason")
 
     cl = sub.add_parser("cleanup")
     cl.add_argument("--sandbox")
     cl.add_argument("--round",
                     help="resolve sandbox_path from a round id")
+
+    prof = sub.add_parser("profile").add_subparsers(dest="sub", required=True)
+    prof.add_parser("list")
+    pr = prof.add_parser("run-task")
+    pr.add_argument("--acceptance", required=True)
+    pr.add_argument("--task", required=True)
+    pr.add_argument("--mode", required=True,
+                    choices=["stop-loss", "collect-first", "hybrid"])
+    pr.add_argument("--cli", choices=["claude", "codex"], default="claude")
+    pr.add_argument("--wait-seconds", type=float, default=60)
+    pr.add_argument("--capture-start", default="-2000")
+    pr.add_argument("--finalize-verdict",
+                    choices=["PASS", "CONDITIONAL", "FAIL", "blocked"])
+    pr.add_argument("--next-round-reco")
 
     hi = sub.add_parser("history")
     hi.add_argument("--asset", required=True)
@@ -165,8 +214,36 @@ def main(argv=None) -> int:
     args = _build_parser().parse_args(argv)
     con = db.connect()
     try:
-        if args.cmd == "asset" and args.sub == "add":
-            _emit({"id": catalog.add_asset(con, args.name, args.type, args.source)})
+        if args.cmd == "bootstrap":
+            try:
+                reg = catalog.register_asset(con, args.name, args.type, args.source)
+                goal = _choose_inline_or_file(args.goal, args.goal_file, "goal")
+                strategy = args.strategy
+                if args.strategy_file:
+                    if strategy:
+                        raise ValueError(
+                            "use only one of --strategy or --strategy-file")
+                    strategy = _read(args.strategy_file)
+                cid = catalog.new_acceptance(
+                    con, reg["id"], goal,
+                    strategy=strategy, fixture_path=args.fixture,
+                    task_prompts=_read_json(args.task_prompts_file),
+                )
+            except (ValueError, json.JSONDecodeError) as exc:
+                _emit({"error": str(exc)})
+                return 2
+            _emit({
+                "asset_id": reg["id"],
+                "asset_created": reg["created"],
+                "warning": reg["warning"],
+                "acceptance_id": cid,
+            })
+        elif args.cmd == "asset" and args.sub == "add":
+            try:
+                _emit(catalog.register_asset(con, args.name, args.type, args.source))
+            except ValueError as exc:
+                _emit({"error": str(exc)})
+                return 2
         elif args.cmd == "asset" and args.sub == "list":
             rows = catalog.list_assets(con, type=args.type, name=args.name)
             _emit({"assets": [dict(r) for r in rows]})
@@ -186,11 +263,15 @@ def main(argv=None) -> int:
                     _emit({"error": "use only one of --strategy or --strategy-file"})
                     return 2
                 strategy = _read(args.strategy_file)
-            cid = catalog.new_acceptance(
-                con, asset["id"], goal,
-                strategy=strategy, fixture_path=args.fixture,
-                task_prompts=_read_json(args.task_prompts_file),
-            )
+            try:
+                cid = catalog.new_acceptance(
+                    con, asset["id"], goal,
+                    strategy=strategy, fixture_path=args.fixture,
+                    task_prompts=_read_json(args.task_prompts_file),
+                )
+            except (ValueError, json.JSONDecodeError) as exc:
+                _emit({"error": str(exc)})
+                return 2
             _emit({"id": cid})
         elif args.cmd == "accept" and args.sub == "update":
             acceptance_id = args.id or args.acceptance
@@ -203,14 +284,21 @@ def main(argv=None) -> int:
                     _emit({"error": "use only one of --strategy or --strategy-file"})
                     return 2
                 strategy = _read(args.strategy_file)
-            updates = {
-                "status": args.status, "strategy": strategy,
-                "acceptance_prompt": _read(args.prompt_file),
-                "acceptance_criteria": _read(args.criteria_file),
-                "task_prompts": _read_json(args.task_prompts_file),
-            }
-            catalog.update_acceptance(
-                con, acceptance_id, **{k: v for k, v in updates.items() if v is not None})
+            try:
+                updates = {
+                    "status": args.status, "strategy": strategy,
+                    "acceptance_prompt": _read(args.prompt_file),
+                    "acceptance_criteria": _read(args.criteria_file),
+                    "task_prompts": _read_json(args.task_prompts_file),
+                    "ladder": _read_json(args.ladder_file),
+                    "budget_max_rounds": args.budget_max_rounds,
+                }
+                catalog.update_acceptance(
+                    con, acceptance_id,
+                    **{k: v for k, v in updates.items() if v is not None})
+            except (ValueError, json.JSONDecodeError) as exc:
+                _emit({"error": str(exc)})
+                return 2
             _emit({"id": acceptance_id, "updated": True})
         elif args.cmd == "accept" and args.sub == "list":
             asset_id = None
@@ -224,6 +312,14 @@ def main(argv=None) -> int:
             if not pre["ok"]:
                 _emit({"preflight": "fail", **pre})
                 return 2
+            try:
+                depth = int(os.environ.get("ACCEPTANCE_DEPTH", "0"))
+            except ValueError:
+                depth = 0
+            if depth >= 2:
+                _emit({"error": f"acceptance recursion depth exceeded: {depth + 1}",
+                       "blocked": "depth-exceeded"})
+                return 2
             arow = catalog.get_acceptance(con, args.acceptance)
             if not arow:
                 _emit({"error": f"acceptance not found: {args.acceptance}"})
@@ -233,7 +329,11 @@ def main(argv=None) -> int:
                 _emit({"error": f"fixture not found: {fixture_path}"})
                 return 2
             # open the round first so we have a stable round_tag for the sandbox
-            rid = rounds.start_round(con, args.acceptance, mode=args.mode, n=args.n)
+            try:
+                rid = rounds.start_round(con, args.acceptance, mode=args.mode, n=args.n)
+            except rounds.BudgetExceeded as exc:
+                _emit({"error": str(exc), "blocked": "budget-exhausted"})
+                return 2
             rrow = rounds.get_round_target(con, rid)
             sandbox = observe.make_sandbox(rrow["round_tag"])
             fixture_copy = observe.rsync_fixture(fixture_path, sandbox)
@@ -261,24 +361,16 @@ def main(argv=None) -> int:
                 _emit({"error": f"round sandbox not found: {row['sandbox_path']}"})
                 return 2
             cli = pre["resolved"] or pre["cli"]
-            plugin_install = None
-            cli_args = ["--add-dir", _source_add_dir(row["asset_source"])]
-            if row["asset_type"] == "plugin":
-                plugin_install = observe.install_plugin_source(
-                    row["sandbox_path"], row["asset_source"], name=row["asset_name"],
-                )
-                if plugin_install:
-                    cli_args = [*plugin_install.get("cli_args", []), *cli_args]
-            launched = observe.launch_round(
-                row["round_tag"], row["sandbox_path"], cli, cli_args=cli_args,
-            )
+            launch = profiles.launch_round_for_target(row, cli)
             _emit({
                 "round": args.round,
                 "round_tag": row["round_tag"],
                 "sandbox": row["sandbox_path"],
                 "cli": cli,
-                "plugin_install": plugin_install,
-                **launched,
+                "plugin_install": launch.get("plugin_install"),
+                "session": launch["session"],
+                "pane": launch["pane"],
+                "existing": launch["existing"],
             })
         elif args.cmd == "round" and args.sub == "list":
             rows = rounds.list_rounds(
@@ -310,6 +402,8 @@ def main(argv=None) -> int:
             except RuntimeError as exc:
                 _emit({"error": str(exc)})
                 return 2
+            if args.round:
+                rounds.add_task_key(con, args.round, args.task)
             _emit({"fed": True, "task": args.task, "chars": len(body), "pane": pane})
         elif args.cmd == "capture":
             pane = args.pane
@@ -322,7 +416,9 @@ def main(argv=None) -> int:
             if not pane:
                 _emit({"error": "capture requires --pane or --round"})
                 return 2
-            transcript = observe.capture_pane(pane, start=args.start)
+            transcript = redact.redact_secrets(
+                observe.capture_pane(pane, start=args.start)
+            )
             out_path = None
             if args.out:
                 out_path = Path(args.out)
@@ -333,17 +429,59 @@ def main(argv=None) -> int:
                 "chars": len(transcript),
                 "out": str(out_path) if out_path else None,
             })
+        elif args.cmd == "wait":
+            pane = args.pane
+            if args.round:
+                row = rounds.get_round_target(con, args.round)
+                if not row:
+                    _emit({"error": f"round not found: {args.round}"})
+                    return 2
+                pane = pane or f"{observe.session_name(row['round_tag'])}:0.0"
+            if not pane:
+                _emit({"error": "wait requires --pane or --round"})
+                return 2
+            idle = observe.wait_for_idle(
+                pane, idle_seconds=args.idle_seconds,
+                max_seconds=args.max_seconds,
+            )
+            _emit({"pane": pane, "idle": idle})
         elif args.cmd == "record":
+            transcript = _read(args.transcript_file)
+            if transcript is not None:
+                transcript = redact.redact_secrets(transcript)
             rounds.record(con, args.round,
-                          transcript=_read(args.transcript_file), report_append=args.report)
+                          transcript=transcript, report_append=args.report)
             _emit({"round": args.round, "recorded": True})
         elif args.cmd == "finding":
-            rounds.add_finding(con, args.round, severity=args.severity,
-                               status=args.status, summary=args.summary)
-            _emit({"round": args.round, "finding": True})
+            if args.finding_cmd == "list":
+                _emit({"findings": rounds.list_findings(con, args.round)})
+            else:
+                missing = [
+                    name for name in ("round", "severity", "status", "summary")
+                    if not getattr(args, name)
+                ]
+                if missing:
+                    _emit({"error": "finding add missing: " + ", ".join(missing)})
+                    return 2
+                fid = rounds.add_finding(
+                    con, args.round, severity=args.severity,
+                    status=args.status, summary=args.summary, key=args.key,
+                )
+                _emit({"round": args.round, "finding": True, "id": fid})
         elif args.cmd == "finalize":
+            if args.verdict == "PASS" and not args.allow_partial:
+                ok, reason = catalog.can_finalize_pass(con, args.round)
+                if not ok:
+                    _emit({"error": reason})
+                    return 2
             rounds.finalize(con, args.round, verdict=args.verdict,
                             next_round_reco=args.next_round_reco)
+            if args.allow_partial and args.verdict == "PASS":
+                rounds.add_finding(
+                    con, args.round, severity="P2", status="waived",
+                    summary=f"ladder coverage overridden: {args.allow_partial}",
+                    key="allow-partial",
+                )
             cleanup_result = None
             cleanup_skipped = None
             if args.keep_sandbox:
@@ -373,6 +511,30 @@ def main(argv=None) -> int:
                     _emit({"error": "cleanup requires --sandbox or --round"})
                     return 2
                 _emit(observe.cleanup(sandbox))
+        elif args.cmd == "profile" and args.sub == "list":
+            _emit({"profiles": profiles.list_profiles()})
+        elif args.cmd == "profile" and args.sub == "run-task":
+            pre = _preflight(args.cli)
+            if not pre["ok"]:
+                _emit({"preflight": "fail", **pre})
+                return 2
+            try:
+                out = profiles.run_task(
+                    con, args.acceptance, args.task,
+                    mode=args.mode,
+                    cli=pre["resolved"] or pre["cli"],
+                    wait_seconds=args.wait_seconds,
+                    capture_start=args.capture_start,
+                    finalize_verdict=args.finalize_verdict,
+                    next_round_reco=args.next_round_reco,
+                )
+            except (KeyError, ValueError, NotImplementedError, RuntimeError) as exc:
+                payload = {"error": str(exc)}
+                if isinstance(exc, rounds.BudgetExceeded):
+                    payload["blocked"] = "budget-exhausted"
+                _emit(payload)
+                return 2
+            _emit({"preflight": "ok", "cli": pre["cli"], **out})
         elif args.cmd == "history":
             _emit(catalog.history(con, args.asset))
     finally:

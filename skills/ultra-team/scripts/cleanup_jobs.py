@@ -2,12 +2,17 @@ import os
 
 import claude_cli
 import state_store
-from rounds import visible_agent_id
+from rounds import cleanup_visible_job, visible_agent_id
 
 
 def stop_output(root_id: str, stopped, already_terminal=False, status=None):
+    cleanup_failed_jobs = []
+    if isinstance(stopped, dict):
+        cleanup_failed_jobs = stopped.get("cleanup_failed_jobs") or []
+        stopped = stopped.get("stopped_jobs") or []
     return {
         "stopped_jobs": stopped,
+        "cleanup_failed_jobs": cleanup_failed_jobs,
         "root_id": root_id,
         "terminal": True,
         "next_action": "record_and_restart_fresh_cwd",
@@ -24,17 +29,25 @@ def stop_output(root_id: str, stopped, already_terminal=False, status=None):
 
 def stop_recorded_and_orphan_jobs(root_id: str, eng: str, reason: str):
     stopped = []
+    cleanup_failed = []
     jobs = state_store.recorded_jobs(root_id)
     active_items = claude_cli.active_agents()
     active_ids = {visible_agent_id(item) for item in active_items}
     for job in jobs:
         job_engine = job.get("engine") or eng
-        claude_cli.stop(job["job_id"], job_engine)
-        append_unique(stopped, job["job_id"])
         if job.get("status") == "running":
             state_store.fail_if_running(job["agent_id"], root_id, reason)
         if job_engine == "claude" and job["job_id"] in active_ids:
-            claude_cli.rm(job["job_id"], job_engine)
+            if cleanup_visible_job(job["job_id"], job_engine, active_ids):
+                append_unique(stopped, job["job_id"])
+            else:
+                append_unique(cleanup_failed, job["job_id"])
+        else:
+            stop_result = claude_cli.stop(job["job_id"], job_engine)
+            if stop_result is False:
+                append_unique(cleanup_failed, job["job_id"])
+            else:
+                append_unique(stopped, job["job_id"])
     recorded_ids = {job["job_id"] for job in jobs}
     run = state_store.get_run(root_id)
     for item in active_items:
@@ -42,10 +55,11 @@ def stop_recorded_and_orphan_jobs(root_id: str, eng: str, reason: str):
         if not item_id or item_id in recorded_ids:
             continue
         if is_coord_orphan_for_run(item, run):
-            claude_cli.stop(item_id, "claude")
-            claude_cli.rm(item_id, "claude")
-            append_unique(stopped, item_id)
-    return stopped
+            if cleanup_visible_job(item_id, "claude", active_ids):
+                append_unique(stopped, item_id)
+            else:
+                append_unique(cleanup_failed, item_id)
+    return {"stopped_jobs": stopped, "cleanup_failed_jobs": cleanup_failed}
 
 
 def append_unique(items, value):
