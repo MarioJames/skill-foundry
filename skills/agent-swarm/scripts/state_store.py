@@ -1,9 +1,4 @@
-"""SQLite facts for Agent Swarm Runtime v2.
-
-The old Kind/Round runtime used ``state.sqlite3``.  v2 deliberately uses a new
-database file so a breaking protocol upgrade cannot reinterpret live legacy
-rows.  The legacy database remains available for read-only diagnostics.
-"""
+"""SQLite facts for the clean-break Agent Swarm Runtime schema."""
 
 import contextlib
 import hashlib
@@ -23,10 +18,8 @@ except ModuleNotFoundError as error:
 
 
 RUNTIME_HOME_ENV = "AGENT_SWARM_HOME"
-MIGRATION_SOURCE_ENV = "AGENT_SWARM_MIGRATE_FROM"
 RUNTIME_HOME_DIRECTORY = ".agent-swarm"
-LEGACY_RUNTIME_HOME_DIRECTORY = ".ultra-team"
-SCHEMA_VERSION = "agent-swarm-runtime-v2"
+SCHEMA_VERSION = 1
 BUSY_TIMEOUT_MS = 5000
 RUNTIME_ASSET_MANIFEST = ".runtime-assets.json"
 RUNTIME_HOOK_SCRIPTS = ("hook_runtime.py", "hook_manager.py", "state_store.py")
@@ -39,18 +32,19 @@ RUNTIME_HOOK_FILES = (
 
 
 SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS meta (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version INTEGER PRIMARY KEY,
+  applied_at REAL NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS runs (
   root_id TEXT PRIMARY KEY,
-  task TEXT NOT NULL,
+  goal TEXT NOT NULL,
   cwd TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'running',
-  root_task_id TEXT,
-  root_agent_id TEXT,
+  status TEXT NOT NULL DEFAULT 'running' CHECK (
+    status IN ('running', 'stopping', 'done', 'failed', 'cancelled')
+  ),
+  root_task_id INTEGER REFERENCES tasks(task_id),
   max_concurrent_agents INTEGER NOT NULL DEFAULT 8,
   max_total_tasks INTEGER NOT NULL DEFAULT 100,
   max_attempts_per_task INTEGER NOT NULL DEFAULT 2,
@@ -59,9 +53,9 @@ CREATE TABLE IF NOT EXISTS runs (
   max_children_per_action INTEGER NOT NULL DEFAULT 12,
   require_final_review INTEGER NOT NULL DEFAULT 1,
   model_tiers_json TEXT NOT NULL,
-  execution_json TEXT NOT NULL DEFAULT '{}',
-  child_token_seed_ref TEXT,
-  child_token_seed_hash TEXT,
+  execution_config_json TEXT NOT NULL,
+  token_seed_ref TEXT,
+  token_seed_hash TEXT,
   owner_token_hash TEXT,
   lease_epoch INTEGER NOT NULL DEFAULT 0,
   lease_expires_at REAL,
@@ -71,20 +65,23 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
-  task_id TEXT PRIMARY KEY,
+  task_id INTEGER PRIMARY KEY,
   root_id TEXT NOT NULL REFERENCES runs(root_id) ON DELETE CASCADE,
-  parent_task_id TEXT REFERENCES tasks(task_id),
+  parent_task_id INTEGER REFERENCES tasks(task_id),
+  created_by_session_pk INTEGER REFERENCES acp_sessions(session_pk),
   goal TEXT NOT NULL,
   intent_hint TEXT NOT NULL,
   resolved_intent TEXT,
-  status TEXT NOT NULL DEFAULT 'pending',
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (
+    status IN ('pending', 'ready', 'assigned', 'active', 'stopping',
+               'done', 'failed', 'blocked', 'cancelled')
+  ),
   priority INTEGER NOT NULL DEFAULT 50,
   complexity_hint TEXT NOT NULL DEFAULT 'medium',
   model_tier_hint TEXT,
   output_contract TEXT,
   constraints_json TEXT NOT NULL DEFAULT '{}',
   estimate_json TEXT,
-  current_attempt_id TEXT,
   delegation_depth INTEGER NOT NULL DEFAULT 0,
   replan_count INTEGER NOT NULL DEFAULT 0,
   created_at REAL NOT NULL,
@@ -95,66 +92,71 @@ CREATE INDEX IF NOT EXISTS idx_tasks_root_status
 ON tasks(root_id, status, priority DESC, created_at);
 
 CREATE TABLE IF NOT EXISTS task_dependencies (
-  task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
-  depends_on_task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
-  condition TEXT NOT NULL DEFAULT 'success',
+  task_id INTEGER NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+  depends_on_task_id INTEGER NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+  condition TEXT NOT NULL DEFAULT 'success' CHECK (condition IN ('success', 'terminal')),
   PRIMARY KEY (task_id, depends_on_task_id)
 );
 
-CREATE TABLE IF NOT EXISTS task_attempts (
-  attempt_id TEXT PRIMARY KEY,
-  root_id TEXT NOT NULL REFERENCES runs(root_id) ON DELETE CASCADE,
-  task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS attempts (
+  attempt_id INTEGER PRIMARY KEY,
+  task_id INTEGER NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
   attempt_no INTEGER NOT NULL,
-  agent_id TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'assigned',
+  state TEXT NOT NULL DEFAULT 'assigned' CHECK (
+    state IN ('assigned', 'evaluating', 'active', 'waiting', 'stopping',
+              'done', 'failed', 'cancelled')
+  ),
+  actor_token_hash TEXT NOT NULL,
+  backend_id TEXT NOT NULL,
+  agent_type TEXT NOT NULL,
+  model_tier TEXT,
+  model_name TEXT,
+  config_json TEXT NOT NULL,
+  heartbeat_at REAL,
+  last_error TEXT,
   retryable INTEGER,
   result_json TEXT,
+  created_at REAL NOT NULL,
   started_at REAL,
   finished_at REAL,
   UNIQUE(task_id, attempt_no)
 );
 
-CREATE TABLE IF NOT EXISTS agents (
-  agent_id TEXT PRIMARY KEY,
-  root_id TEXT NOT NULL REFERENCES runs(root_id) ON DELETE CASCADE,
-  task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
-  attempt_id TEXT NOT NULL REFERENCES task_attempts(attempt_id) ON DELETE CASCADE,
-  state TEXT NOT NULL DEFAULT 'received',
-  actor_token_hash TEXT NOT NULL,
-  session_name TEXT,
-  job_id TEXT,
-  backend_id TEXT,
-  agent_key TEXT,
-  model_tier TEXT,
-  model_name TEXT,
-  heartbeat_at REAL,
-  last_error TEXT,
+CREATE UNIQUE INDEX IF NOT EXISTS idx_attempts_one_live
+ON attempts(task_id)
+WHERE state IN ('assigned', 'evaluating', 'active', 'waiting', 'stopping');
+
+CREATE INDEX IF NOT EXISTS idx_attempts_task_state
+ON attempts(task_id, state, attempt_no DESC);
+
+CREATE TABLE IF NOT EXISTS agent_profiles (
+  profile_id INTEGER PRIMARY KEY,
+  agent_type TEXT NOT NULL,
+  package_name TEXT NOT NULL DEFAULT '',
+  adapter_version TEXT NOT NULL DEFAULT '',
+  command TEXT NOT NULL,
+  state_namespace TEXT NOT NULL DEFAULT 'default',
+  config_json TEXT NOT NULL,
   created_at REAL NOT NULL,
-  finished_at REAL
+  UNIQUE(agent_type, package_name, adapter_version, command, state_namespace)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_attempt
-ON agents(attempt_id);
-
-CREATE TABLE IF NOT EXISTS execution_sessions (
-  attempt_id TEXT PRIMARY KEY REFERENCES task_attempts(attempt_id) ON DELETE CASCADE,
-  root_id TEXT NOT NULL REFERENCES runs(root_id) ON DELETE CASCADE,
-  backend_id TEXT NOT NULL,
-  generation INTEGER NOT NULL,
+CREATE TABLE IF NOT EXISTS launches (
+  launch_id INTEGER PRIMARY KEY,
+  attempt_id INTEGER NOT NULL REFERENCES attempts(attempt_id) ON DELETE CASCADE,
+  launch_no INTEGER NOT NULL,
   owner_nonce TEXT,
   session_name TEXT NOT NULL,
-  execution_id TEXT NOT NULL UNIQUE,
-  config_json TEXT NOT NULL,
-  acp_session_id TEXT,
+  backend_ref TEXT,
   worker_pid INTEGER,
   agent_pid INTEGER,
   control_endpoint TEXT,
-  agent_key TEXT,
-  protocol_version INTEGER,
-  capabilities_json TEXT,
-  status TEXT NOT NULL,
-  prompt_state TEXT,
+  status TEXT NOT NULL CHECK (
+    status IN ('starting', 'running', 'stopping', 'turn_ended', 'error', 'closed')
+  ),
+  prompt_state TEXT NOT NULL DEFAULT 'pending' CHECK (
+    prompt_state IN ('pending', 'in_flight', 'ended', 'cancelled')
+  ),
   last_worker_heartbeat_at REAL,
   last_event_at REAL,
   exit_reason TEXT,
@@ -162,17 +164,41 @@ CREATE TABLE IF NOT EXISTS execution_sessions (
   ready_at REAL,
   stop_requested_at REAL,
   reconciled_at REAL,
-  closed_at REAL
+  closed_at REAL,
+  UNIQUE(attempt_id, launch_no)
 );
 
-CREATE INDEX IF NOT EXISTS idx_execution_sessions_root_status
-ON execution_sessions(root_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_launches_one_live
+ON launches(attempt_id)
+WHERE status IN ('starting', 'running', 'stopping', 'turn_ended', 'error');
+
+CREATE INDEX IF NOT EXISTS idx_launches_attempt_status
+ON launches(attempt_id, status, launch_no DESC);
+
+CREATE TABLE IF NOT EXISTS acp_sessions (
+  session_pk INTEGER PRIMARY KEY,
+  launch_id INTEGER NOT NULL UNIQUE REFERENCES launches(launch_id) ON DELETE CASCADE,
+  profile_id INTEGER NOT NULL REFERENCES agent_profiles(profile_id),
+  external_session_id TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  protocol_version INTEGER NOT NULL,
+  capabilities_json TEXT NOT NULL DEFAULT '{}',
+  mode TEXT,
+  model TEXT,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'closed', 'lost')),
+  created_at REAL NOT NULL,
+  closed_at REAL,
+  UNIQUE(profile_id, external_session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_acp_sessions_external
+ON acp_sessions(external_session_id);
 
 CREATE TABLE IF NOT EXISTS run_notes (
   note_id INTEGER PRIMARY KEY AUTOINCREMENT,
   root_id TEXT NOT NULL REFERENCES runs(root_id) ON DELETE CASCADE,
-  task_id TEXT REFERENCES tasks(task_id),
-  agent_id TEXT NOT NULL REFERENCES agents(agent_id),
+  task_id INTEGER REFERENCES tasks(task_id),
+  created_by_attempt_id INTEGER NOT NULL REFERENCES attempts(attempt_id),
   category TEXT NOT NULL,
   scope TEXT NOT NULL DEFAULT 'task',
   content TEXT NOT NULL,
@@ -182,9 +208,11 @@ CREATE TABLE IF NOT EXISTS run_notes (
   created_at REAL NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS side_effect_outbox (
+CREATE TABLE IF NOT EXISTS effects (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   root_id TEXT NOT NULL REFERENCES runs(root_id) ON DELETE CASCADE,
+  attempt_id INTEGER REFERENCES attempts(attempt_id),
+  launch_id INTEGER REFERENCES launches(launch_id),
   effect_type TEXT NOT NULL,
   payload_json TEXT NOT NULL,
   idempotency_key TEXT NOT NULL UNIQUE,
@@ -196,10 +224,14 @@ CREATE TABLE IF NOT EXISTS side_effect_outbox (
   completed_at REAL
 );
 
+CREATE INDEX IF NOT EXISTS idx_effects_root_status
+ON effects(root_id, status, id);
+
 CREATE TABLE IF NOT EXISTS processed_actions (
   root_id TEXT NOT NULL,
   action_id TEXT NOT NULL,
-  agent_id TEXT NOT NULL,
+  attempt_id INTEGER NOT NULL REFERENCES attempts(attempt_id),
+  source_session_pk INTEGER REFERENCES acp_sessions(session_pk),
   response_json TEXT NOT NULL,
   processed_at REAL NOT NULL,
   PRIMARY KEY (root_id, action_id)
@@ -208,9 +240,9 @@ CREATE TABLE IF NOT EXISTS processed_actions (
 CREATE TABLE IF NOT EXISTS events (
   event_id INTEGER PRIMARY KEY AUTOINCREMENT,
   root_id TEXT NOT NULL,
-  task_id TEXT,
-  attempt_id TEXT,
-  agent_id TEXT,
+  task_id INTEGER,
+  attempt_id INTEGER,
+  session_pk INTEGER,
   action_id TEXT,
   type TEXT NOT NULL,
   payload_json TEXT NOT NULL,
@@ -234,79 +266,7 @@ def runtime_root():
 
 
 def db_path():
-    return runtime_root() / "runtime-v2.sqlite3"
-
-
-def legacy_db_path():
-    return runtime_root() / "state.sqlite3"
-
-
-def _legacy_runtime_roots():
-    """Locations used only to import the previous Agent Swarm v2 runtime."""
-    roots = []
-    override = os.environ.get(MIGRATION_SOURCE_ENV, "").strip()
-    if override:
-        roots.append(pathlib.Path(override).expanduser().resolve())
-    # A caller who chooses an explicit new home expects an isolated runtime. In
-    # that case only an explicitly supplied previous-home source may be imported.
-    if not os.environ.get(RUNTIME_HOME_ENV, "").strip():
-        roots.append((pathlib.Path.home() / LEGACY_RUNTIME_HOME_DIRECTORY).resolve())
-    current = runtime_root()
-    return [root for index, root in enumerate(roots) if root != current and root not in roots[:index]]
-
-
-def _legacy_v2_db_paths():
-    target = db_path()
-    return [
-        root / "runtime-v2.sqlite3"
-        for root in _legacy_runtime_roots()
-        if root / "runtime-v2.sqlite3" != target
-    ]
-
-
-def _legacy_kind_round_db_paths():
-    paths = [legacy_db_path()]
-    paths.extend(root / "state.sqlite3" for root in _legacy_runtime_roots())
-    return [path for index, path in enumerate(paths) if path not in paths[:index]]
-
-
-def _is_v2_database(path):
-    try:
-        con = sqlite3.connect("%s?mode=ro" % path.resolve().as_uri(), uri=True)
-        try:
-            tables = {
-                row[0]
-                for row in con.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ).fetchall()
-            }
-            return {"runs", "tasks", "task_attempts", "agents"}.issubset(tables)
-        finally:
-            con.close()
-    except sqlite3.Error:
-        return False
-
-
-def _copy_legacy_v2_database(source, target):
-    """Copy a prior v2 database without mutating the source or exposing a partial target."""
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=".runtime-v2-migration-", suffix=".sqlite3", dir=str(target.parent)
-    )
-    os.close(descriptor)
-    temporary = pathlib.Path(temporary_name)
-    try:
-        source_con = sqlite3.connect("%s?mode=ro" % source.resolve().as_uri(), uri=True)
-        target_con = sqlite3.connect(str(temporary))
-        try:
-            source_con.backup(target_con)
-        finally:
-            target_con.close()
-            source_con.close()
-        if not target.exists():
-            temporary.replace(target)
-    finally:
-        if temporary.exists():
-            temporary.unlink()
+    return runtime_root() / "runtime.sqlite3"
 
 
 @contextlib.contextmanager
@@ -424,54 +384,9 @@ def ensure_runtime_assets():
     return target_root
 
 
-def _migrate_previous_v2_database(target):
-    if target.exists():
-        return
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with _runtime_lock(target.parent, ".runtime-v2-migration.lock"):
-        if target.exists():
-            return
-        for source in _legacy_v2_db_paths():
-            if source.exists() and _is_v2_database(source):
-                _copy_legacy_v2_database(source, target)
-                return
-
-
-def legacy_active_runs_for_cwd(cwd):
-    """Read-only guard against starting v2 beside an unfinished legacy Run."""
-    rows = []
-    for path in _legacy_kind_round_db_paths():
-        if not path.exists():
-            continue
-        con = None
-        try:
-            con = sqlite3.connect("%s?mode=ro" % path.resolve().as_uri(), uri=True)
-            con.row_factory = sqlite3.Row
-            columns = {row["name"] for row in con.execute("PRAGMA table_info(runs)").fetchall()}
-            if not {"root_id", "cwd", "status"}.issubset(columns):
-                continue
-            selected = "root_id, cwd, status"
-            if "normalized_cwd" in columns:
-                selected += ", normalized_cwd"
-            rows.extend(dict(row) for row in con.execute("SELECT %s FROM runs" % selected).fetchall())
-        except sqlite3.Error:
-            continue
-        finally:
-            if con is not None:
-                con.close()
-    expected = os.path.realpath(cwd)
-    return [
-        row
-        for row in rows
-        if os.path.realpath(row.get("normalized_cwd") or row.get("cwd") or "") == expected
-        and row.get("status") not in {"done", "cancelled"}
-    ]
-
-
 def connect():
     path = db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    _migrate_previous_v2_database(path)
     con = sqlite3.connect(str(path), isolation_level=None)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA busy_timeout = %d" % BUSY_TIMEOUT_MS)
@@ -480,163 +395,14 @@ def connect():
     return con
 
 
-def _columns(con, table):
-    return {row["name"] for row in con.execute("PRAGMA table_info(%s)" % table).fetchall()}
-
-
-def _historical_execution_json():
-    return json.dumps(
-        {
-            "backend": "claude_cli",
-            "claude_cli": {"command": "claude"},
-            "acp": {
-                "agent": "claude",
-                "command": None,
-                "args": [],
-                "permission_policy": "allow_in_workspace",
-                "prompt_timeout_seconds": None,
-                "session_close_on_stop": True,
-                "turn_end_reprompt_limit": 1,
-            },
-            "routing": {"by_intent": {}, "by_model_tier": {}},
-        },
-        sort_keys=True,
-    )
-
-
-def _migrate_schema(con):
-    """Apply additive migrations to copied or existing v2 databases."""
-    run_columns = _columns(con, "runs")
-    if "execution_json" not in run_columns:
-        con.execute("ALTER TABLE runs ADD COLUMN execution_json TEXT NOT NULL DEFAULT '{}'")
-    if "child_token_seed_ref" not in run_columns:
-        con.execute("ALTER TABLE runs ADD COLUMN child_token_seed_ref TEXT")
-    if "child_token_seed_hash" not in run_columns:
-        con.execute("ALTER TABLE runs ADD COLUMN child_token_seed_hash TEXT")
-    agent_columns = _columns(con, "agents")
-    if "backend_id" not in agent_columns:
-        con.execute("ALTER TABLE agents ADD COLUMN backend_id TEXT")
-    if "agent_key" not in agent_columns:
-        con.execute("ALTER TABLE agents ADD COLUMN agent_key TEXT")
-
-    historical = _historical_execution_json()
-    con.execute(
-        "UPDATE runs SET execution_json=? WHERE execution_json IS NULL OR execution_json='' OR execution_json='{}'",
-        (historical,),
-    )
-    con.execute("UPDATE agents SET backend_id='claude_cli' WHERE backend_id IS NULL OR backend_id=''")
-    con.execute("UPDATE agents SET agent_key='claude' WHERE agent_key IS NULL OR agent_key=''")
-
-    rows = con.execute(
-        """SELECT a.*, r.cwd FROM agents a JOIN runs r ON r.root_id=a.root_id
-           WHERE (a.session_name IS NOT NULL OR a.job_id IS NOT NULL)
-             AND NOT EXISTS (
-               SELECT 1 FROM execution_sessions e WHERE e.attempt_id=a.attempt_id
-             )"""
-    ).fetchall()
-    created = now()
-    for row in rows:
-        status = "closed" if row["state"] == "terminal" else (
-            "starting" if row["state"] == "received" else "running"
-        )
-        config = json.dumps(
-            {
-                "backend": "claude_cli",
-                "agent": "claude",
-                "command": "claude",
-                "args": [],
-                "model": row["model_name"],
-                "permission_policy": "bypassPermissions",
-            },
-            sort_keys=True,
-        )
-        con.execute(
-            """INSERT INTO execution_sessions(
-                 attempt_id, root_id, backend_id, generation, owner_nonce,
-                 session_name, execution_id, config_json, agent_key, status,
-                 created_at, ready_at, closed_at
-               ) VALUES (?, ?, 'claude_cli', 1, NULL, ?, ?, ?, 'claude', ?, ?, ?, ?)""",
-            (
-                row["attempt_id"],
-                row["root_id"],
-                row["session_name"] or "agent-swarm-legacy-%s" % row["attempt_id"],
-                "claude_cli:%s:1" % row["attempt_id"],
-                config,
-                status,
-                row["created_at"] or created,
-                row["created_at"] if status != "starting" else None,
-                row["finished_at"] if status == "closed" else None,
-            ),
-        )
-
-    open_effects = con.execute(
-        """SELECT id, effect_type, payload_json FROM side_effect_outbox
-           WHERE effect_type IN ('spawn_agent','stop_agent') AND status != 'completed'"""
-    ).fetchall()
-    for effect in open_effects:
-        try:
-            payload = json.loads(effect["payload_json"])
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(payload, dict):
-            continue
-        if all(
-            key in payload
-            for key in ("backend_id", "execution_id", "generation", "config_json")
-        ):
-            continue
-        attempt_id = payload.get("attempt_id")
-        execution = (
-            con.execute(
-                "SELECT * FROM execution_sessions WHERE attempt_id=?", (attempt_id,)
-            ).fetchone()
-            if attempt_id
-            else None
-        )
-        if execution is not None:
-            backend_id = execution["backend_id"]
-            execution_id = execution["execution_id"]
-            generation = execution["generation"]
-            config_json = execution["config_json"]
-        else:
-            backend_id = "claude_cli"
-            execution_id = "legacy-orphan:%s" % effect["id"]
-            generation = 1
-            config_json = json.dumps(
-                {
-                    "backend": "claude_cli",
-                    "agent": "claude",
-                    "command": "claude",
-                    "args": [],
-                    "model": None,
-                    "permission_policy": "bypassPermissions",
-                },
-                sort_keys=True,
-            )
-        payload.update(
-            {
-                "backend_id": backend_id,
-                "execution_id": execution_id,
-                "generation": generation,
-                "config_json": config_json,
-            }
-        )
-        con.execute(
-            "UPDATE side_effect_outbox SET payload_json=? WHERE id=?",
-            (json.dumps(payload, ensure_ascii=False, sort_keys=True), effect["id"]),
-        )
-
-
 def initialize_schema():
     ensure_runtime_assets()
     con = connect()
     try:
         con.executescript(SCHEMA_SQL)
-        _migrate_schema(con)
         con.execute(
-            "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (SCHEMA_VERSION,),
+            "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+            (SCHEMA_VERSION, now()),
         )
     finally:
         con.close()
@@ -696,19 +462,98 @@ def get_task(task_id, con=None):
 
 
 def get_attempt(attempt_id, con=None):
-    return _one("SELECT * FROM task_attempts WHERE attempt_id = ?", (attempt_id,), con)
+    return _one(
+        """SELECT a.*, t.root_id
+           FROM attempts a JOIN tasks t ON t.task_id=a.task_id
+           WHERE a.attempt_id=?""",
+        (attempt_id,),
+        con,
+    )
 
 
-def get_agent(agent_id, con=None):
-    return _one("SELECT * FROM agents WHERE agent_id = ?", (agent_id,), con)
+def get_current_attempt(task_id, con=None):
+    return _one(
+        """SELECT a.*, t.root_id
+           FROM attempts a JOIN tasks t ON t.task_id=a.task_id
+           WHERE a.task_id=? ORDER BY a.attempt_no DESC LIMIT 1""",
+        (task_id,),
+        con,
+    )
 
 
-def get_outbox(effect_id, con=None):
-    return _one("SELECT * FROM side_effect_outbox WHERE id = ?", (effect_id,), con)
+def get_effect(effect_id, con=None):
+    return _one("SELECT * FROM effects WHERE id = ?", (effect_id,), con)
 
 
-def get_execution(attempt_id, con=None):
-    return _one("SELECT * FROM execution_sessions WHERE attempt_id = ?", (attempt_id,), con)
+def get_launch(launch_id, con=None):
+    return _one(
+        """SELECT l.*, a.task_id, a.backend_id, a.agent_type, a.config_json, t.root_id
+           FROM launches l
+           JOIN attempts a ON a.attempt_id=l.attempt_id
+           JOIN tasks t ON t.task_id=a.task_id
+           WHERE l.launch_id=?""",
+        (launch_id,),
+        con,
+    )
+
+
+def get_current_launch(attempt_id, con=None):
+    return _one(
+        """SELECT l.*, a.task_id, a.backend_id, a.agent_type, a.config_json, t.root_id
+           FROM launches l
+           JOIN attempts a ON a.attempt_id=l.attempt_id
+           JOIN tasks t ON t.task_id=a.task_id
+           WHERE l.attempt_id=? ORDER BY l.launch_no DESC LIMIT 1""",
+        (attempt_id,),
+        con,
+    )
+
+
+def get_session(session_pk, con=None):
+    return _one(
+        """SELECT s.*, p.agent_type, p.package_name, p.adapter_version,
+                  p.command, p.state_namespace, p.config_json AS profile_config_json,
+                  l.attempt_id, a.task_id, t.root_id
+           FROM acp_sessions s
+           JOIN agent_profiles p ON p.profile_id=s.profile_id
+           JOIN launches l ON l.launch_id=s.launch_id
+           JOIN attempts a ON a.attempt_id=l.attempt_id
+           JOIN tasks t ON t.task_id=a.task_id
+           WHERE s.session_pk=?""",
+        (session_pk,),
+        con,
+    )
+
+
+def get_session_for_launch(launch_id, con=None):
+    return _one(
+        """SELECT s.*, p.agent_type, p.package_name, p.adapter_version,
+                  p.command, p.state_namespace, p.config_json AS profile_config_json
+           FROM acp_sessions s JOIN agent_profiles p ON p.profile_id=s.profile_id
+           WHERE s.launch_id=?""",
+        (launch_id,),
+        con,
+    )
+
+
+def find_session(agent_type, external_session_id, root_id=None, con=None):
+    root_filter = " AND t.root_id=?" if root_id is not None else ""
+    params = [agent_type, external_session_id]
+    if root_id is not None:
+        params.append(root_id)
+    return fetchall(
+        """SELECT s.*, p.agent_type, p.package_name, p.adapter_version,
+                  p.command, p.state_namespace, p.config_json AS profile_config_json,
+                  l.attempt_id, a.task_id, t.root_id
+           FROM acp_sessions s
+           JOIN agent_profiles p ON p.profile_id=s.profile_id
+           JOIN launches l ON l.launch_id=s.launch_id
+           JOIN attempts a ON a.attempt_id=l.attempt_id
+           JOIN tasks t ON t.task_id=a.task_id
+           WHERE p.agent_type=? AND s.external_session_id=?""" + root_filter,
+        tuple(params),
+        con,
+    )
 
 
 def list_tasks(root_id, con=None):
@@ -719,13 +564,38 @@ def list_tasks(root_id, con=None):
 
 def list_attempts(root_id, con=None):
     return fetchall(
-        "SELECT * FROM task_attempts WHERE root_id = ? ORDER BY task_id, attempt_no", (root_id,), con
+        """SELECT a.*, t.root_id FROM attempts a
+           JOIN tasks t ON t.task_id=a.task_id
+           WHERE t.root_id=? ORDER BY a.task_id, a.attempt_no""",
+        (root_id,),
+        con,
     )
 
 
-def list_agents(root_id, con=None):
+def list_launches(root_id, con=None):
     return fetchall(
-        "SELECT * FROM agents WHERE root_id = ? ORDER BY created_at, agent_id", (root_id,), con
+        """SELECT l.*, a.task_id, a.backend_id, a.agent_type, a.config_json, t.root_id
+           FROM launches l
+           JOIN attempts a ON a.attempt_id=l.attempt_id
+           JOIN tasks t ON t.task_id=a.task_id
+           WHERE t.root_id=? ORDER BY l.created_at, l.launch_id""",
+        (root_id,),
+        con,
+    )
+
+
+def list_sessions(root_id, con=None):
+    return fetchall(
+        """SELECT s.*, p.agent_type, p.package_name, p.adapter_version,
+                  p.command, p.state_namespace, l.attempt_id, a.task_id, t.root_id
+           FROM acp_sessions s
+           JOIN agent_profiles p ON p.profile_id=s.profile_id
+           JOIN launches l ON l.launch_id=s.launch_id
+           JOIN attempts a ON a.attempt_id=l.attempt_id
+           JOIN tasks t ON t.task_id=a.task_id
+           WHERE t.root_id=? ORDER BY s.created_at, s.session_pk""",
+        (root_id,),
+        con,
     )
 
 
@@ -738,39 +608,64 @@ def list_notes(root_id, include_inactive=False, con=None):
     )
 
 
-def list_outbox(root_id, con=None):
+def list_effects(root_id, con=None):
     return fetchall(
-        "SELECT * FROM side_effect_outbox WHERE root_id = ? ORDER BY id", (root_id,), con
+        "SELECT * FROM effects WHERE root_id = ? ORDER BY id", (root_id,), con
     )
 
 
-def list_executions(root_id, con=None):
-    return fetchall(
-        "SELECT * FROM execution_sessions WHERE root_id = ? ORDER BY created_at, attempt_id",
-        (root_id,),
-        con,
+def ensure_agent_profile(con, config, *, state_namespace="default"):
+    agent_type = config.get("agent") or "custom"
+    package_name = config.get("package") or ""
+    adapter_version = str(config.get("profile_version") or "")
+    command = config.get("command") or config.get("resolved_command") or ""
+    encoded = json.dumps(config, ensure_ascii=False, sort_keys=True)
+    con.execute(
+        """INSERT OR IGNORE INTO agent_profiles(
+             agent_type, package_name, adapter_version, command,
+             state_namespace, config_json, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            agent_type,
+            package_name,
+            adapter_version,
+            command,
+            state_namespace,
+            encoded,
+            now(),
+        ),
     )
+    row = con.execute(
+        """SELECT profile_id FROM agent_profiles
+           WHERE agent_type=? AND package_name=? AND adapter_version=?
+             AND command=? AND state_namespace=?""",
+        (agent_type, package_name, adapter_version, command, state_namespace),
+    ).fetchone()
+    return row["profile_id"]
 
 
-def claim_execution_ownership(attempt_id, generation, owner_nonce, worker_pid):
+def claim_launch_ownership(launch_id, owner_nonce, worker_pid):
     """Atomically fence ACP Worker ownership before it can Popen an Agent."""
     if not owner_nonce:
         raise ValueError("owner_nonce is required")
     with transaction() as con:
         timestamp = now()
         cursor = con.execute(
-            """UPDATE execution_sessions
+            """UPDATE launches
                SET owner_nonce=?, worker_pid=?, last_worker_heartbeat_at=?, last_event_at=?
-               WHERE attempt_id=? AND generation=? AND owner_nonce IS NULL
+               WHERE launch_id=? AND owner_nonce IS NULL
                  AND stop_requested_at IS NULL AND status='starting'
                  AND EXISTS (
                    SELECT 1
-                   FROM task_attempts a
+                   FROM attempts a
                    JOIN tasks t ON t.task_id=a.task_id
-                   JOIN runs r ON r.root_id=a.root_id
-                   WHERE a.attempt_id=execution_sessions.attempt_id
-                     AND a.status IN ('assigned','running')
-                     AND t.current_attempt_id=a.attempt_id
+                   JOIN runs r ON r.root_id=t.root_id
+                   WHERE a.attempt_id=launches.attempt_id
+                     AND a.state IN ('assigned','evaluating','active','waiting','stopping')
+                     AND NOT EXISTS (
+                       SELECT 1 FROM attempts newer
+                       WHERE newer.task_id=a.task_id AND newer.attempt_no>a.attempt_no
+                     )
                      AND t.status IN ('assigned','active','stopping')
                      AND r.status='running'
                  )""",
@@ -779,8 +674,7 @@ def claim_execution_ownership(attempt_id, generation, owner_nonce, worker_pid):
                 int(worker_pid),
                 timestamp,
                 timestamp,
-                attempt_id,
-                int(generation),
+                int(launch_id),
             ),
         )
         return cursor.rowcount == 1
@@ -803,18 +697,18 @@ def append_event(
     payload=None,
     task_id=None,
     attempt_id=None,
-    agent_id=None,
+    session_pk=None,
     action_id=None,
 ):
     con.execute(
         """INSERT INTO events(
-             root_id, task_id, attempt_id, agent_id, action_id, type, payload_json, created_at
+             root_id, task_id, attempt_id, session_pk, action_id, type, payload_json, created_at
            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             root_id,
             task_id,
             attempt_id,
-            agent_id,
+            session_pk,
             action_id,
             event_type,
             json.dumps(payload or {}, ensure_ascii=False, sort_keys=True),

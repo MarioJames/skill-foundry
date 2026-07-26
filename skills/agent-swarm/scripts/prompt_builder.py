@@ -15,14 +15,18 @@ def _recovery_context(task, attempt, con):
     if con is None or attempt.get("attempt_no", 1) <= 1:
         return ""
     previous = con.execute(
-        """SELECT attempt_no, status, result_json FROM task_attempts
+        """SELECT attempt_no, state, result_json FROM attempts
            WHERE task_id=? AND attempt_no < ? ORDER BY attempt_no DESC LIMIT 3""",
         (task["task_id"], attempt["attempt_no"]),
     ).fetchall()
     child_rows = con.execute(
         """SELECT child.task_id, child.status, attempt.result_json
            FROM tasks child
-           LEFT JOIN task_attempts attempt ON attempt.attempt_id=child.current_attempt_id
+           LEFT JOIN attempts attempt ON attempt.attempt_id=(
+             SELECT current.attempt_id FROM attempts current
+             WHERE current.task_id=child.task_id
+             ORDER BY current.attempt_no DESC LIMIT 1
+           )
            WHERE child.parent_task_id=? ORDER BY child.created_at LIMIT 12""",
         (task["task_id"],),
     ).fetchall()
@@ -31,7 +35,7 @@ def _recovery_context(task, attempt, con):
         result = json.loads(row["result_json"]) if row["result_json"] else {}
         facts.append({
             "attempt_no": row["attempt_no"],
-            "status": row["status"],
+            "status": row["state"],
             "summary": result.get("summary"),
             "caveats": result.get("caveats", []),
         })
@@ -45,9 +49,9 @@ def _recovery_context(task, attempt, con):
     return "\n[RECOVERY CONTEXT]\n%s\n" % json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
-def build_prompt(run, task, attempt, agent, con=None):
+def build_prompt(run, task, attempt, con=None):
     constraints = json.loads(task.get("constraints_json") or "{}")
-    execution = json.loads(run.get("execution_json") or "{}")
+    execution = json.loads(run.get("execution_config_json") or "{}")
     if execution.get("backend") == "acp":
         skill_guidance = (
             "The complete required Runtime protocol is included below. Use"
@@ -82,7 +86,6 @@ To inspect an Action schema, use exactly:
 root_id: {root_id}
 task_id: {task_id}
 attempt_id: {attempt_id}
-agent_id: {agent_id}
 
 [TASK]
 {goal}
@@ -133,7 +136,6 @@ mandatory for every Backend; hook-capable Backends also refresh local hook setti
         root_id=run["root_id"],
         task_id=task["task_id"],
         attempt_id=attempt["attempt_id"],
-        agent_id=agent["agent_id"],
         goal=task["goal"],
         intent=task.get("resolved_intent") or task["intent_hint"],
         output_contract=task.get("output_contract") or "Report the completed result.",

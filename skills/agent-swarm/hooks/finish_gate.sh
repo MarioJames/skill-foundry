@@ -37,7 +37,7 @@ if [ "$STOP_HOOK_ACTIVE" = "true" ]; then
   exit 0
 fi
 
-for name in AGENT_SWARM_ROOT_ID AGENT_SWARM_TASK_ID AGENT_SWARM_ATTEMPT_ID AGENT_SWARM_AGENT_ID AGENT_SWARM_ACTOR_TOKEN; do
+for name in AGENT_SWARM_ROOT_ID AGENT_SWARM_TASK_ID AGENT_SWARM_ATTEMPT_ID AGENT_SWARM_ACTOR_TOKEN; do
   if [ -z "${!name:-}" ]; then
     printf '{"skipped":true,"reason":"missing orchestration identity"}\n'
     exit 0
@@ -57,13 +57,11 @@ except ValueError:
     data = {}
 task = data.get("task") if isinstance(data, dict) else None
 attempt = data.get("attempt") if isinstance(data, dict) else None
-agent = data.get("agent") if isinstance(data, dict) else None
-if not all(isinstance(value, dict) for value in (task, attempt, agent)):
+if not all(isinstance(value, dict) for value in (task, attempt)):
     print("unknown")
 elif (
     task.get("status") in {"done", "failed", "blocked", "cancelled"}
-    and attempt.get("status") in {"done", "failed", "cancelled"}
-    and agent.get("state") == "terminal"
+    and attempt.get("state") in {"done", "failed", "cancelled"}
 ):
     print("terminal")
 else:

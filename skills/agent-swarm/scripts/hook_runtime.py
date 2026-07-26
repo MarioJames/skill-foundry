@@ -14,7 +14,6 @@ IDENTITY_ENVIRONMENT = {
     "root_id": "AGENT_SWARM_ROOT_ID",
     "task_id": "AGENT_SWARM_TASK_ID",
     "attempt_id": "AGENT_SWARM_ATTEMPT_ID",
-    "agent_id": "AGENT_SWARM_AGENT_ID",
     "actor_token": "AGENT_SWARM_ACTOR_TOKEN",
 }
 
@@ -24,32 +23,28 @@ def _verify_owner(run, token):
         raise RuntimeError("invalid owner token")
 
 
-def heartbeat(root_id, task_id, attempt_id, agent_id, actor_token):
+def heartbeat(root_id, task_id, attempt_id, actor_token):
     with state_store.transaction() as con:
         run = state_store.get_run(root_id, con)
         task = state_store.get_task(task_id, con)
         attempt = state_store.get_attempt(attempt_id, con)
-        agent = state_store.get_agent(agent_id, con)
-        if not all((run, task, attempt, agent)):
+        if not all((run, task, attempt)):
             raise RuntimeError("invalid heartbeat binding")
         if not (
             task["root_id"] == root_id
             and attempt["root_id"] == root_id
             and attempt["task_id"] == task_id
-            and attempt["agent_id"] == agent_id
-            and agent["root_id"] == root_id
-            and agent["task_id"] == task_id
-            and agent["attempt_id"] == attempt_id
         ):
             raise RuntimeError("invalid heartbeat binding")
-        if not state_store.token_matches(actor_token, agent["actor_token_hash"]):
+        if not state_store.token_matches(actor_token, attempt["actor_token_hash"]):
             raise RuntimeError("invalid actor token")
-        if task["current_attempt_id"] != attempt_id:
+        current = state_store.get_current_attempt(task_id, con)
+        if current is None or current["attempt_id"] != attempt_id:
             return {"accepted": False, "stale_attempt": True}
-        if run["status"] != "running" or agent["state"] == "terminal":
+        if run["status"] != "running" or attempt["state"] in {"done", "failed", "cancelled"}:
             return {"accepted": False, "terminal": True}
         timestamp = state_store.now()
-        con.execute("UPDATE agents SET heartbeat_at=? WHERE agent_id=?", (timestamp, agent_id))
+        con.execute("UPDATE attempts SET heartbeat_at=? WHERE attempt_id=?", (timestamp, attempt_id))
         lease_expires_at = run.get("lease_expires_at")
         if task_id == run["root_task_id"]:
             _verify_owner(run, actor_token)
@@ -67,27 +62,25 @@ def heartbeat(root_id, task_id, attempt_id, agent_id, actor_token):
         }
 
 
-def observe_session_end(root_id, task_id, attempt_id, agent_id, actor_token):
-    """Record SessionEnd without changing Attempt, Task, or Agent lifecycle state."""
+def observe_session_end(root_id, task_id, attempt_id, actor_token):
+    """Record SessionEnd without changing Attempt or Task lifecycle state."""
     with state_store.transaction() as con:
         run = state_store.get_run(root_id, con)
         task = state_store.get_task(task_id, con)
         attempt = state_store.get_attempt(attempt_id, con)
-        agent = state_store.get_agent(agent_id, con)
-        if not all((run, task, attempt, agent)):
+        if not all((run, task, attempt)):
             raise RuntimeError("invalid SessionEnd binding")
         if not (
             task["root_id"] == root_id
             and attempt["task_id"] == task_id
-            and agent["attempt_id"] == attempt_id
-            and state_store.token_matches(actor_token, agent["actor_token_hash"])
+            and state_store.token_matches(actor_token, attempt["actor_token_hash"])
         ):
             raise RuntimeError("invalid SessionEnd identity")
         state_store.append_event(
-            con, root_id, "SessionEndObserved", {"agent_state": agent["state"]},
-            task_id=task_id, attempt_id=attempt_id, agent_id=agent_id,
+            con, root_id, "SessionEndObserved", {"attempt_state": attempt["state"]},
+            task_id=task_id, attempt_id=attempt_id,
         )
-        return {"observed": True, "agent_id": agent_id, "state": agent["state"]}
+        return {"observed": True, "attempt_id": attempt_id, "state": attempt["state"]}
 
 
 def _authorize_read(root_id, actor_token):
@@ -96,8 +89,8 @@ def _authorize_read(root_id, actor_token):
     if run is None:
         raise ValueError("run not found")
     if not any(
-        state_store.token_matches(actor_token, agent["actor_token_hash"])
-        for agent in state_store.list_agents(root_id)
+        state_store.token_matches(actor_token, attempt["actor_token_hash"])
+        for attempt in state_store.list_attempts(root_id)
     ):
         raise ValueError("invalid actor token")
     return run
@@ -108,18 +101,12 @@ def inspect_current(root_id, task_id, actor_token):
     task = state_store.get_task(task_id)
     if task is None or task["root_id"] != root_id:
         raise ValueError("current task does not belong to the authorized run")
-    attempt = state_store.get_attempt(task["current_attempt_id"])
+    attempt = state_store.get_current_attempt(task_id)
     if attempt is None or attempt["root_id"] != root_id or attempt["task_id"] != task_id:
         raise ValueError("current attempt binding is invalid")
-    agent = state_store.get_agent(attempt["agent_id"])
-    if (
-        agent is None
-        or agent["root_id"] != root_id
-        or agent["task_id"] != task_id
-        or agent["attempt_id"] != attempt["attempt_id"]
-    ):
-        raise ValueError("current agent binding is invalid")
-    return {"run": run, "task": task, "attempt": attempt, "agent": agent}
+    launch = state_store.get_current_launch(attempt["attempt_id"])
+    session = state_store.get_session_for_launch(launch["launch_id"]) if launch else None
+    return {"run": run, "task": task, "attempt": attempt, "launch": launch, "session": session}
 
 
 def _refresh_run_hooks(root_id, cwd):
@@ -132,6 +119,11 @@ def _identity_from_environment():
     missing = [IDENTITY_ENVIRONMENT[key] for key, value in values.items() if not value]
     if missing:
         raise ValueError("missing orchestration identity: %s" % ", ".join(missing))
+    for key in ("task_id", "attempt_id"):
+        try:
+            values[key] = int(values[key])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("%s must be an integer" % IDENTITY_ENVIRONMENT[key]) from exc
     return values
 
 

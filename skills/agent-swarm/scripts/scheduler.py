@@ -1,7 +1,6 @@
 """Dependency resolution and attempt creation for ready child tasks."""
 
 import json
-import uuid
 
 import execution_config
 import execution_secrets
@@ -10,11 +9,7 @@ import state_store
 
 
 TERMINAL_TASKS = {"done", "failed", "blocked", "cancelled"}
-LIVE_AGENT_STATES = {"received", "evaluating", "active", "waiting"}
-
-
-def new_id(prefix):
-    return "%s_%s" % (prefix, uuid.uuid4().hex[:12])
+LIVE_ATTEMPT_STATES = {"assigned", "evaluating", "active", "waiting", "stopping"}
 
 
 def _resolve_dependencies(con, root_id):
@@ -61,18 +56,20 @@ def _resolve_dependencies(con, root_id):
                 changed = True
 
 
-def _live_agent_count(con, root_id):
-    marks = ",".join("?" for _ in LIVE_AGENT_STATES)
-    params = [root_id] + sorted(LIVE_AGENT_STATES)
+def _live_attempt_count(con, root_id):
+    marks = ",".join("?" for _ in LIVE_ATTEMPT_STATES)
+    params = [root_id] + sorted(LIVE_ATTEMPT_STATES)
     return con.execute(
-        "SELECT COUNT(*) AS n FROM agents WHERE root_id=? AND state IN (%s)" % marks,
+        """SELECT COUNT(*) AS n FROM attempts a
+           JOIN tasks t ON t.task_id=a.task_id
+           WHERE t.root_id=? AND a.state IN (%s)""" % marks,
         params,
     ).fetchone()["n"]
 
 
 def _create_attempt(con, run, task):
     last_no = con.execute(
-        "SELECT COALESCE(MAX(attempt_no), 0) AS n FROM task_attempts WHERE task_id=?",
+        "SELECT COALESCE(MAX(attempt_no), 0) AS n FROM attempts WHERE task_id=?",
         (task["task_id"],),
     ).fetchone()["n"]
     attempt_no = last_no + 1
@@ -87,100 +84,79 @@ def _create_attempt(con, run, task):
         )
         return None
 
-    attempt_id = new_id("attempt")
-    agent_id = new_id("agent")
     tier = model_policy.select_model_tier(task)
     model_name = model_policy.resolve_model(run, tier)
     execution = execution_config.snapshot_attempt(run, model=model_name)
     backend_id = execution["backend"]
-    agent_key = execution["agent"]
+    agent_type = execution["agent"]
     created = state_store.now()
-    session_name = "agent-swarm-%s-%s-%d" % (
-        run["root_id"].replace("root_", "")[:8],
-        task["task_id"].replace("task_", "")[:8],
-        attempt_no,
-    )
-    actor_token = execution_secrets.derive_attempt_token(run, attempt_id, agent_id)
-    con.execute(
-        """INSERT INTO task_attempts(
-             attempt_id, root_id, task_id, attempt_no, agent_id, status
-           ) VALUES (?, ?, ?, ?, ?, 'assigned')""",
-        (attempt_id, run["root_id"], task["task_id"], attempt_no, agent_id),
-    )
-    con.execute(
-        """INSERT INTO agents(
-             agent_id, root_id, task_id, attempt_id, state, actor_token_hash,
-             session_name, backend_id, agent_key, model_tier, model_name,
-             heartbeat_at, created_at
-           ) VALUES (?, ?, ?, ?, 'received', ?, ?, ?, ?, ?, ?, ?, ?)""",
+    encoded_config = json.dumps(execution, ensure_ascii=False, sort_keys=True)
+    cursor = con.execute(
+        """INSERT INTO attempts(
+             task_id, attempt_no, state, actor_token_hash, backend_id, agent_type,
+             model_tier, model_name, config_json, heartbeat_at, created_at
+           ) VALUES (?, ?, 'assigned', 'pending', ?, ?, ?, ?, ?, ?, ?)""",
         (
-            agent_id,
-            run["root_id"],
             task["task_id"],
-            attempt_id,
-            state_store.hash_token(actor_token),
-            session_name,
+            attempt_no,
             backend_id,
-            agent_key,
+            agent_type,
             tier,
             model_name,
+            encoded_config,
             created,
             created,
         ),
     )
-    generation = 1
-    execution_id = "%s:%s:%d" % (backend_id, attempt_id, generation)
+    attempt_id = cursor.lastrowid
+    actor_token = execution_secrets.derive_attempt_token(run, attempt_id)
     con.execute(
-        """INSERT INTO execution_sessions(
-             attempt_id, root_id, backend_id, generation, owner_nonce,
-             session_name, execution_id, config_json, agent_key, status,
-             prompt_state, created_at, last_event_at
-           ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, 'starting', 'pending', ?, ?)""",
-        (
-            attempt_id,
-            run["root_id"],
-            backend_id,
-            generation,
-            session_name,
-            execution_id,
-            json.dumps(execution, ensure_ascii=False, sort_keys=True),
-            agent_key,
-            created,
-            created,
-        ),
+        "UPDATE attempts SET actor_token_hash=? WHERE attempt_id=?",
+        (state_store.hash_token(actor_token), attempt_id),
     )
-    con.execute(
-        "UPDATE tasks SET status='assigned', current_attempt_id=? WHERE task_id=?",
-        (attempt_id, task["task_id"]),
+    session_name = "agent-swarm-%s-%s-%d" % (
+        run["root_id"].replace("root_", "")[:8],
+        task["task_id"],
+        attempt_no,
     )
+    cursor = con.execute(
+        """INSERT INTO launches(
+             attempt_id, launch_no, session_name, status, prompt_state,
+             created_at, last_event_at
+           ) VALUES (?, 1, ?, 'starting', 'pending', ?, ?)""",
+        (attempt_id, session_name, created, created),
+    )
+    launch_id = cursor.lastrowid
+    con.execute("UPDATE tasks SET status='assigned' WHERE task_id=?", (task["task_id"],))
     payload = {
         "root_id": run["root_id"],
         "task_id": task["task_id"],
         "attempt_id": attempt_id,
-        "agent_id": agent_id,
+        "launch_id": launch_id,
         "backend_id": backend_id,
-        "execution_id": execution_id,
-        "generation": generation,
-        "config_json": json.dumps(execution, ensure_ascii=False, sort_keys=True),
     }
     con.execute(
-        """INSERT OR IGNORE INTO side_effect_outbox(
-             root_id, effect_type, payload_json, idempotency_key, status, attempts, created_at
-           ) VALUES (?, 'spawn_agent', ?, ?, 'pending', 0, ?)""",
+        """INSERT OR IGNORE INTO effects(
+             root_id, attempt_id, launch_id, effect_type, payload_json,
+             idempotency_key, status, attempts, created_at
+           ) VALUES (?, ?, ?, 'spawn_agent', ?, ?, 'pending', 0, ?)""",
         (
             run["root_id"],
+            attempt_id,
+            launch_id,
             json.dumps(payload, ensure_ascii=False, sort_keys=True),
-            "spawn:%s" % attempt_id,
+            "spawn:%s" % launch_id,
             created,
         ),
     )
     state_store.append_event(
         con, run["root_id"], "AttemptCreated", {"attempt_no": attempt_no},
-        task_id=task["task_id"], attempt_id=attempt_id, agent_id=agent_id,
+        task_id=task["task_id"], attempt_id=attempt_id,
     )
     state_store.append_event(
-        con, run["root_id"], "AgentSpawnRequested", {"session_name": session_name},
-        task_id=task["task_id"], attempt_id=attempt_id, agent_id=agent_id,
+        con, run["root_id"], "AgentSpawnRequested",
+        {"session_name": session_name, "launch_id": launch_id},
+        task_id=task["task_id"], attempt_id=attempt_id,
     )
     return payload
 
@@ -190,7 +166,7 @@ def schedule_with_connection(con, root_id):
     if run is None or run["status"] != "running":
         return []
     _resolve_dependencies(con, root_id)
-    slots = max(0, run["max_concurrent_agents"] - _live_agent_count(con, root_id))
+    slots = max(0, run["max_concurrent_agents"] - _live_attempt_count(con, root_id))
     if slots <= 0:
         return []
     ready = state_store.fetchall(

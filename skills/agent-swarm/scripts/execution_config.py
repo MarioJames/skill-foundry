@@ -88,6 +88,8 @@ def resolve_run_execution(
         raise ValueError("unsupported ACP permission policy: %s" % permission)
     if backend == "acp" and permission == "prompt":
         raise ValueError("ACP permission policy 'prompt' has no headless UI")
+    if backend == "acp":
+        registry.ensure_sdk_available()
     profile = registry.freeze_profile(profile, environment=environment)
     return {
         "backend": backend,
@@ -116,15 +118,15 @@ def resolve_run_execution(
 
 
 def load_run_execution(run):
-    raw = run.get("execution_json") if run else None
+    raw = run.get("execution_config_json") if run else None
     if not raw:
         return resolve_run_execution(environment={"PATH": os.environ.get("PATH", "")})
     try:
         value = json.loads(raw)
     except (TypeError, ValueError) as exc:
-        raise ValueError("run execution_json is invalid") from exc
+        raise ValueError("run execution_config_json is invalid") from exc
     if not isinstance(value, dict) or value.get("backend") not in BACKENDS:
-        raise ValueError("run execution_json has an unsupported backend")
+        raise ValueError("run execution_config_json has an unsupported backend")
     return value
 
 

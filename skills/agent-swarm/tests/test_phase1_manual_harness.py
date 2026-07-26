@@ -1,5 +1,6 @@
 import importlib.util
 import pathlib
+import tempfile
 import unittest
 from unittest import mock
 
@@ -11,6 +12,20 @@ SPEC.loader.exec_module(manual_real_acp)
 
 
 class Phase1ManualHarnessTests(unittest.TestCase):
+    def test_real_matrix_includes_adapter_crash_and_task_tree_modes(self):
+        self.assertIn("agent-crash", manual_real_acp.GOALS)
+        self.assertIn("orchestration", manual_real_acp.GOALS)
+
+    def test_token_residue_reports_only_files_containing_plaintext_token(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            (root / "safe.log").write_text("safe")
+            (root / "unsafe.log").write_text("prefix-secret-token-suffix")
+
+            residue = manual_real_acp.token_residue(root, ["secret-token"])
+
+        self.assertEqual(["unsafe.log"], residue)
+
     def test_official_codex_agent_mode_is_safe_workspace_evidence(self):
         self.assertTrue(
             manual_real_acp.has_safe_workspace_mode(
@@ -49,13 +64,13 @@ class Phase1ManualHarnessTests(unittest.TestCase):
         with mock.patch.object(
             manual_real_acp.recovery,
             "stop_run",
-            return_value={"terminal": True},
+            return_value={"status": "cancelled"},
         ) as stop, mock.patch.object(
-            manual_real_acp.state_store, "list_executions", return_value=[]
+            manual_real_acp.state_store, "list_launches", return_value=[]
         ):
             result = manual_real_acp.bounded_cleanup(identity)
 
-        self.assertEqual({"terminal": True}, result["stop"])
+        self.assertEqual({"status": "cancelled"}, result["stop"])
         self.assertIsNone(result["error"])
         stop.assert_called_once_with("root_test", "secret")
 

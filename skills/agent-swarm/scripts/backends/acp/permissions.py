@@ -1,5 +1,6 @@
 """Headless ACP permission policies; approval automation is not an OS sandbox."""
 
+from dataclasses import dataclass
 import json
 import os
 import re
@@ -22,6 +23,23 @@ _TRUSTED_SHELLS = frozenset(
 )
 
 
+@dataclass(frozen=True)
+class PermissionDecision:
+    """Business decision returned to the official SDK callback adapter."""
+
+    selected_option_id: str | None
+    allowed: bool
+
+
+def _payload(value):
+    if isinstance(value, dict):
+        return value
+    dump = getattr(value, "model_dump", None)
+    if callable(dump):
+        return dump(mode="json", by_alias=True, exclude_none=True)
+    raise TypeError("ACP permission request must be an official schema model")
+
+
 def _kind(option):
     return str(option.get("kind") or option.get("name") or "").lower()
 
@@ -42,6 +60,7 @@ def _option(options, allow, *, once_only=False):
 
 def selected_option_allows(params, option_id):
     """Classify a decision by the offered option, never by opaque optionId text."""
+    params = _payload(params)
     options = params.get("options") if isinstance(params, dict) else None
     for option in options if isinstance(options, list) else []:
         if not isinstance(option, dict) or option.get("optionId") != option_id:
@@ -204,6 +223,7 @@ def decide_permission(
     additional_directories=None,
     runtime_entrypoint=None,
 ):
+    params = _payload(params)
     options = params.get("options") if isinstance(params, dict) else None
     options = options if isinstance(options, list) else []
     runtime_exception = False
@@ -234,5 +254,8 @@ def decide_permission(
     if option_id is None and allow:
         option_id = _option(options, False)
     if option_id is None:
-        return {"outcome": {"outcome": "cancelled"}}
-    return {"outcome": {"outcome": "selected", "optionId": option_id}}
+        return PermissionDecision(selected_option_id=None, allowed=False)
+    return PermissionDecision(
+        selected_option_id=option_id,
+        allowed=selected_option_allows(params, option_id),
+    )

@@ -1,174 +1,116 @@
+import contextlib
 import json
 import os
-import re
+import pathlib
+import sqlite3
+import subprocess
+import sys
 import unittest
-from unittest import mock
 
-from helpers import isolated_runtime
+from helpers import SCRIPTS_DIR, isolated_runtime
 
 import agent_orchestrator
 import state_store
 
 
 class Phase0SchemaTests(unittest.TestCase):
-    def test_schema_adds_execution_snapshot_and_session_fencing_columns(self):
+    def test_clean_break_schema_has_task_attempt_launch_session_layers(self):
         with isolated_runtime():
             state_store.initialize_schema()
-            con = state_store.connect()
-            try:
-                run_columns = {
-                    row["name"] for row in con.execute("PRAGMA table_info(runs)").fetchall()
-                }
-                agent_columns = {
-                    row["name"] for row in con.execute("PRAGMA table_info(agents)").fetchall()
-                }
-                execution_columns = {
+            with contextlib.closing(state_store.connect()) as con:
+                tables = {
                     row["name"]
-                    for row in con.execute("PRAGMA table_info(execution_sessions)").fetchall()
+                    for row in con.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
                 }
-            finally:
-                con.close()
+                self.assertTrue(
+                    {
+                        "runs",
+                        "tasks",
+                        "task_dependencies",
+                        "attempts",
+                        "launches",
+                        "agent_profiles",
+                        "acp_sessions",
+                        "effects",
+                    }.issubset(tables)
+                )
+                self.assertTrue(
+                    {"agents", "task_attempts", "execution_sessions", "side_effect_outbox"}.isdisjoint(tables)
+                )
+                self.assertEqual(
+                    1,
+                    con.execute("SELECT version FROM schema_migrations").fetchone()["version"],
+                )
 
-            self.assertIn("execution_json", run_columns)
-            self.assertTrue({"backend_id", "agent_key"}.issubset(agent_columns))
-            self.assertTrue(
-                {
-                    "attempt_id",
-                    "backend_id",
-                    "generation",
-                    "owner_nonce",
-                    "execution_id",
-                    "config_json",
-                    "status",
-                    "stop_requested_at",
-                    "reconciled_at",
-                }.issubset(execution_columns)
-            )
-
-    def test_default_init_persists_claude_cli_execution_config(self):
-        with isolated_runtime() as (_, cwd), mock.patch.object(
-            agent_orchestrator.hook_manager, "ensure_project_hooks"
-        ):
-            identity = agent_orchestrator.initialize_run("goal", str(cwd))
+    def test_default_init_uses_only_root_id_as_generated_structural_id(self):
+        with isolated_runtime() as (_, cwd):
+            identity = agent_orchestrator.initialize_run("schema", str(cwd))
+            self.assertTrue(identity["root_id"].startswith("root_"))
+            self.assertIsInstance(identity["task_id"], int)
+            self.assertIsInstance(identity["attempt_id"], int)
             run = state_store.get_run(identity["root_id"])
-            execution = json.loads(run["execution_json"])
-            self.assertEqual("claude_cli", execution["backend"])
+            self.assertEqual(identity["task_id"], run["root_task_id"])
+            self.assertEqual("claude_cli", json.loads(run["execution_config_json"])["backend"])
+            self.assertEqual([], state_store.list_launches(identity["root_id"]))
+
+    def test_tree_is_reconstructable_from_parent_task_and_attempt_history(self):
+        with isolated_runtime() as (_, cwd):
+            identity = agent_orchestrator.initialize_run("tree", str(cwd))
+            with state_store.transaction() as con:
+                cursor = con.execute(
+                    """INSERT INTO tasks(
+                         root_id, parent_task_id, goal, intent_hint, status, priority,
+                         complexity_hint, output_contract, constraints_json,
+                         delegation_depth, replan_count, created_at
+                       ) VALUES (?, ?, 'child', 'implement', 'ready', 50, 'medium',
+                                 'report', '{}', 1, 0, ?)""",
+                    (identity["root_id"], identity["task_id"], state_store.now()),
+                )
+                child_id = cursor.lastrowid
+            self.assertEqual(identity["task_id"], state_store.get_task(child_id)["parent_task_id"])
+            self.assertEqual([identity["task_id"], child_id], [item["task_id"] for item in state_store.list_tasks(identity["root_id"])])
 
     def test_owner_token_is_safe_as_a_separate_cli_argument(self):
-        with isolated_runtime() as (_, cwd), mock.patch.object(
-            agent_orchestrator.hook_manager, "ensure_project_hooks"
-        ), mock.patch.object(
-            agent_orchestrator.secrets, "token_urlsafe", return_value="-leading"
-        ):
-            identity = agent_orchestrator.initialize_run("goal", str(cwd))
-
-        self.assertEqual("as_-leading", identity["actor_token"])
-
-    def test_explicit_init_config_wins_over_environment_and_is_persisted(self):
-        with isolated_runtime() as (_, cwd), mock.patch.dict(
-            os.environ,
-            {
-                "AGENT_SWARM_BACKEND": "claude_cli",
-                "AGENT_SWARM_ACP_AGENT": "claude",
-            },
-        ), mock.patch.object(agent_orchestrator.hook_manager, "ensure_project_hooks"):
-            identity = agent_orchestrator.initialize_run(
-                "goal",
-                str(cwd),
-                backend="acp",
-                acp_agent="codex",
-                acp_command="codex-acp",
-                acp_args=["--stdio"],
-                acp_permission_policy="deny_all",
+        with isolated_runtime() as (_, cwd):
+            identity = agent_orchestrator.initialize_run("safe token", str(cwd))
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS_DIR / "agent_orchestrator.py"),
+                    "inspect",
+                    "--run",
+                    identity["root_id"],
+                    "--actor-token",
+                    identity["actor_token"],
+                ],
+                cwd=cwd,
+                text=True,
+                capture_output=True,
+                check=False,
+                env=os.environ.copy(),
             )
-            run = state_store.get_run(identity["root_id"])
-            execution = json.loads(run["execution_json"])
+            self.assertEqual(0, completed.returncode, completed.stderr)
+            payload = json.loads(completed.stdout)
+            self.assertEqual(identity["root_id"], payload["run"]["root_id"])
 
-            self.assertEqual("acp", execution["backend"])
-            self.assertEqual("codex", execution["acp"]["agent"])
-            self.assertEqual("codex-acp", execution["acp"]["command"])
-            self.assertEqual(["--stdio"], execution["acp"]["args"])
-            self.assertEqual("deny_all", execution["acp"]["permission_policy"])
-
-    def test_existing_v2_database_is_additively_backfilled_as_claude_cli(self):
-        with isolated_runtime():
-            legacy_sql = state_store.SCHEMA_SQL
-            legacy_sql = legacy_sql.replace("  execution_json TEXT NOT NULL DEFAULT '{}',\n", "")
-            legacy_sql = legacy_sql.replace("  backend_id TEXT,\n", "")
-            legacy_sql = legacy_sql.replace("  agent_key TEXT,\n", "")
-            legacy_sql = re.sub(
-                r"CREATE TABLE IF NOT EXISTS execution_sessions \(.*?"
-                r"CREATE INDEX IF NOT EXISTS idx_execution_sessions_root_status\n"
-                r"ON execution_sessions\(root_id, status\);\n",
-                "",
-                legacy_sql,
-                flags=re.S,
-            )
-            path = state_store.db_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            con = state_store.sqlite3.connect(str(path), isolation_level=None)
-            try:
-                con.executescript(legacy_sql)
-                now = state_store.now()
-                con.execute(
-                    """INSERT INTO runs(
-                         root_id, task, cwd, model_tiers_json, created_at, updated_at
-                       ) VALUES ('root_old', 'goal', '/tmp/old', '{}', ?, ?)""",
-                    (now, now),
-                )
-                con.execute(
-                    """INSERT INTO tasks(
-                         task_id, root_id, goal, intent_hint, status, constraints_json, created_at
-                       ) VALUES ('task_old', 'root_old', 'goal', 'implement', 'active', '{}', ?)""",
-                    (now,),
-                )
-                con.execute(
-                    """INSERT INTO side_effect_outbox(
-                         root_id, effect_type, payload_json, idempotency_key,
-                         status, attempts, created_at
-                       ) VALUES (
-                         'root_old', 'stop_agent',
-                         '{"root_id":"root_old","attempt_id":null,"job_id":"orphan-job"}',
-                         'stop:orphan:root_old:orphan-job', 'pending', 0, ?
-                       )""",
-                    (now,),
-                )
-                con.execute(
-                    """INSERT INTO task_attempts(
-                         attempt_id, root_id, task_id, attempt_no, agent_id, status
-                       ) VALUES ('attempt_old', 'root_old', 'task_old', 1, 'agent_old', 'running')"""
-                )
-                con.execute(
-                    """INSERT INTO agents(
-                         agent_id, root_id, task_id, attempt_id, state, actor_token_hash,
-                         session_name, job_id, model_name, created_at
-                       ) VALUES (
-                         'agent_old', 'root_old', 'task_old', 'attempt_old', 'evaluating',
-                         'hash', 'agent-swarm-old', 'job-old', 'sonnet', ?
-                       )""",
-                    (now,),
-                )
-            finally:
-                con.close()
-
+    def test_old_runtime_database_name_is_not_migrated_or_copied(self):
+        with isolated_runtime() as (runtime_home, _):
+            runtime_home.mkdir(parents=True)
+            old = runtime_home / "runtime-v2.sqlite3"
+            with contextlib.closing(sqlite3.connect(old)) as con:
+                with con:
+                    con.execute("CREATE TABLE agents(agent_id TEXT PRIMARY KEY)")
             state_store.initialize_schema()
-            run = state_store.get_run("root_old")
-            agent = state_store.get_agent("agent_old")
-            execution = state_store.get_execution("attempt_old")
-
-            self.assertEqual("claude_cli", json.loads(run["execution_json"])["backend"])
-            self.assertEqual("claude_cli", agent["backend_id"])
-            self.assertEqual("claude", agent["agent_key"])
-            self.assertEqual("claude_cli", execution["backend_id"])
-            self.assertEqual("job-old", agent["job_id"])
-            legacy_effect = state_store.list_outbox("root_old")[0]
-            migrated_payload = json.loads(legacy_effect["payload_json"])
-            self.assertEqual("claude_cli", migrated_payload["backend_id"])
-            self.assertEqual(1, migrated_payload["generation"])
-            self.assertTrue(migrated_payload["execution_id"].startswith("legacy-orphan:"))
-            self.assertEqual(
-                "claude_cli", json.loads(migrated_payload["config_json"])["backend"]
-            )
+            self.assertEqual((runtime_home / "runtime.sqlite3").resolve(), state_store.db_path())
+            self.assertTrue(old.exists())
+            with contextlib.closing(state_store.connect()) as con:
+                names = {
+                    row["name"]
+                    for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                }
+            self.assertNotIn("agents", names)
 
 
 if __name__ == "__main__":

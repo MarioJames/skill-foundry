@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Agent Swarm Runtime v2 command-line interface."""
+"""Agent Swarm Runtime command-line interface."""
 
 import argparse
 import json
@@ -14,6 +14,7 @@ import execution_secrets
 import hook_manager
 import outbox
 import recovery
+import session_history
 import state_store
 
 
@@ -73,7 +74,7 @@ ACTION_SCHEMAS = {
                                 "type": "object",
                                 "properties": {
                                     "task_key": {"type": "string"},
-                                    "task_id": {"type": "string"},
+                                    "task_id": {"type": "integer"},
                                     "condition": {"enum": ["success", "terminal"]},
                                 },
                             },
@@ -100,7 +101,7 @@ ACTION_SCHEMAS = {
         "type": "object",
         "required": ["task_ids", "condition", "listen_seconds"],
         "properties": {
-            "task_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+            "task_ids": {"type": "array", "minItems": 1, "items": {"type": "integer"}},
             "condition": {"enum": ["all_done", "all_terminal", "any_failed"]},
             "listen_seconds": {"type": "number", "minimum": 0, "maximum": 300},
         },
@@ -156,12 +157,6 @@ def initialize_run(
     cwd = os.path.realpath(cwd)
     if not os.path.isdir(cwd):
         raise ValueError("cwd does not exist: %s" % cwd)
-    legacy = state_store.legacy_active_runs_for_cwd(cwd)
-    if legacy:
-        raise ValueError(
-            "cwd has an unfinished legacy Agent Swarm run %s; stop or diagnose it before v2 init"
-            % legacy[0]["root_id"]
-        )
     _positive("max_concurrent_agents", max_concurrent_agents, 1, 256)
     _positive("max_total_tasks", max_total_tasks, 1, 10000)
     _positive("max_attempts_per_task", max_attempts_per_task, 1, 20)
@@ -186,9 +181,6 @@ def initialize_run(
         raise ValueError("model_tiers must map strong, balanced, and fast")
 
     root_id = _id("root")
-    task_id = _id("task")
-    attempt_id = _id("attempt")
-    agent_id = _id("agent")
     actor_token = "as_" + secrets.token_urlsafe(32)
     created = state_store.now()
     seed_reference = None
@@ -207,77 +199,79 @@ def initialize_run(
                     % (conflict["root_id"], conflict["status"])
                 )
             con.execute(
-            """INSERT INTO runs(
-                 root_id, task, cwd, status, root_task_id, root_agent_id,
-                 max_concurrent_agents, max_total_tasks, max_attempts_per_task,
-                 max_delegation_depth, max_replans_per_task, max_children_per_action,
-                 require_final_review, model_tiers_json, execution_json,
-                 child_token_seed_ref, child_token_seed_hash, owner_token_hash,
-                 lease_epoch, lease_expires_at, created_at, updated_at
-               ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)""",
-            (
-                root_id,
-                task.strip(),
-                cwd,
-                task_id,
-                agent_id,
-                max_concurrent_agents,
-                max_total_tasks,
-                max_attempts_per_task,
-                max_delegation_depth,
-                max_replans_per_task,
-                max_children_per_action,
-                1 if require_final_review else 0,
-                json.dumps(tiers, sort_keys=True),
-                json.dumps(execution, sort_keys=True),
-                seed_reference,
-                seed_hash,
-                state_store.hash_token(actor_token),
-                created + OWNER_LEASE_SECONDS,
-                created,
-                created,
-            ),
-        )
+                """INSERT INTO runs(
+                     root_id, goal, cwd, status, root_task_id,
+                     max_concurrent_agents, max_total_tasks, max_attempts_per_task,
+                     max_delegation_depth, max_replans_per_task, max_children_per_action,
+                     require_final_review, model_tiers_json, execution_config_json,
+                     token_seed_ref, token_seed_hash, owner_token_hash,
+                     lease_epoch, lease_expires_at, created_at, updated_at
+                   ) VALUES (?, ?, ?, 'running', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)""",
+                (
+                    root_id,
+                    task.strip(),
+                    cwd,
+                    max_concurrent_agents,
+                    max_total_tasks,
+                    max_attempts_per_task,
+                    max_delegation_depth,
+                    max_replans_per_task,
+                    max_children_per_action,
+                    1 if require_final_review else 0,
+                    json.dumps(tiers, sort_keys=True),
+                    json.dumps(execution, sort_keys=True),
+                    seed_reference,
+                    seed_hash,
+                    state_store.hash_token(actor_token),
+                    created + OWNER_LEASE_SECONDS,
+                    created,
+                    created,
+                ),
+            )
+            cursor = con.execute(
+                """INSERT INTO tasks(
+                     root_id, goal, intent_hint, status, priority, complexity_hint,
+                     output_contract, constraints_json, delegation_depth,
+                     replan_count, created_at
+                   ) VALUES (?, ?, 'implement', 'active', 100, 'high', ?, ?, 0, 0, ?)""",
+                (root_id, task.strip(), task.strip(), json.dumps({}), created),
+            )
+            task_id = cursor.lastrowid
+            root_run = state_store.get_run(root_id, con)
+            root_config = execution_config.snapshot_attempt(root_run, model=tiers["strong"])
+            cursor = con.execute(
+                """INSERT INTO attempts(
+                     task_id, attempt_no, state, actor_token_hash, backend_id, agent_type,
+                     model_tier, model_name, config_json, heartbeat_at,
+                     created_at, started_at
+                   ) VALUES (?, 1, 'evaluating', ?, ?, ?, 'strong', ?, ?, ?, ?, ?)""",
+                (
+                    task_id,
+                    state_store.hash_token(actor_token),
+                    execution["backend"],
+                    execution.get("acp", {}).get("agent")
+                    if execution["backend"] == "acp"
+                    else "claude",
+                    tiers["strong"],
+                    json.dumps(root_config, sort_keys=True),
+                    created,
+                    created,
+                    created,
+                ),
+            )
+            attempt_id = cursor.lastrowid
             con.execute(
-            """INSERT INTO tasks(
-                 task_id, root_id, goal, intent_hint, status, priority, complexity_hint,
-                 output_contract, constraints_json, current_attempt_id, delegation_depth,
-                 replan_count, created_at
-               ) VALUES (?, ?, ?, 'implement', 'active', 100, 'high', ?, ?, ?, 0, 0, ?)""",
-            (task_id, root_id, task.strip(), task.strip(), json.dumps({}), attempt_id, created),
-        )
-            con.execute(
-            """INSERT INTO task_attempts(
-                 attempt_id, root_id, task_id, attempt_no, agent_id, status, started_at
-               ) VALUES (?, ?, ?, 1, ?, 'running', ?)""",
-            (attempt_id, root_id, task_id, agent_id, created),
-        )
-            con.execute(
-            """INSERT INTO agents(
-                 agent_id, root_id, task_id, attempt_id, state, actor_token_hash,
-                 backend_id, agent_key, model_tier, model_name, heartbeat_at, created_at
-               ) VALUES (?, ?, ?, ?, 'evaluating', ?, ?, ?, 'strong', ?, ?, ?)""",
-            (
-                agent_id,
-                root_id,
-                task_id,
-                attempt_id,
-                state_store.hash_token(actor_token),
-                execution["backend"],
-                execution.get("acp", {}).get("agent") if execution["backend"] == "acp" else "claude",
-                tiers["strong"],
-                created,
-                created,
-            ),
-        )
+                "UPDATE runs SET root_task_id=? WHERE root_id=?",
+                (task_id, root_id),
+            )
             state_store.append_event(
                 con, root_id, "RunInitialized", {"task": task.strip()}, task_id=task_id,
-                attempt_id=attempt_id, agent_id=agent_id,
+                attempt_id=attempt_id,
             )
     except Exception:
         if seed_reference:
             execution_secrets.remove_run_seed(
-                {"child_token_seed_ref": seed_reference}
+                {"token_seed_ref": seed_reference}
             )
         raise
     if execution_config.supports_hooks(execution):
@@ -287,14 +281,13 @@ def initialize_run(
             with state_store.transaction() as con:
                 con.execute("DELETE FROM runs WHERE root_id=?", (root_id,))
             execution_secrets.remove_run_seed(
-                {"child_token_seed_ref": seed_reference}
+                {"token_seed_ref": seed_reference}
             )
             raise
     return {
         "root_id": root_id,
         "task_id": task_id,
         "attempt_id": attempt_id,
-        "agent_id": agent_id,
         "actor_token": actor_token,
         "lease_epoch": 0,
         "lease_expires_at": created + OWNER_LEASE_SECONDS,
@@ -311,6 +304,17 @@ def _resolve(explicit, env_name, label, required=True):
     return value
 
 
+def _resolve_int(explicit, env_name, label):
+    value = _resolve(explicit, env_name, label)
+    try:
+        value = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("%s must be an integer" % label) from exc
+    if value <= 0:
+        raise ValueError("%s must be a positive integer" % label)
+    return value
+
+
 def _refresh_run_hooks(root_id, cwd=None):
     run = state_store.get_run(root_id)
     if run is not None and execution_config.supports_hooks(execution_config.load_run_execution(run)):
@@ -323,9 +327,8 @@ def _print(data):
 
 def _action_command(args):
     root_id = _resolve(args.root_id, "AGENT_SWARM_ROOT_ID", "root_id")
-    task_id = _resolve(args.task_id, "AGENT_SWARM_TASK_ID", "task_id")
-    attempt_id = _resolve(args.attempt_id, "AGENT_SWARM_ATTEMPT_ID", "attempt_id")
-    agent_id = _resolve(args.agent_id, "AGENT_SWARM_AGENT_ID", "agent_id")
+    task_id = _resolve_int(args.task_id, "AGENT_SWARM_TASK_ID", "task_id")
+    attempt_id = _resolve_int(args.attempt_id, "AGENT_SWARM_ATTEMPT_ID", "attempt_id")
     token = _resolve(args.actor_token, "AGENT_SWARM_ACTOR_TOKEN", "actor_token")
     _refresh_run_hooks(root_id, cwd=os.getcwd())
     try:
@@ -338,7 +341,6 @@ def _action_command(args):
         "root_id": root_id,
         "task_id": task_id,
         "attempt_id": attempt_id,
-        "agent_id": agent_id,
         "actor_token": token,
         "type": args.type,
         "payload": payload,
@@ -357,8 +359,8 @@ def _authorize_read(root_id, actor_token):
     if run is None:
         raise ValueError("run not found")
     valid = any(
-        state_store.token_matches(actor_token, agent["actor_token_hash"])
-        for agent in state_store.list_agents(root_id)
+        state_store.token_matches(actor_token, attempt["actor_token_hash"])
+        for attempt in state_store.list_attempts(root_id)
     )
     if not valid:
         raise ValueError("invalid actor token")
@@ -395,33 +397,34 @@ def _inspect_command(args):
             ),
         }
     elif args.current:
-        task_id = _resolve(args.task_id, "AGENT_SWARM_TASK_ID", "task_id")
+        task_id = _resolve_int(args.task_id, "AGENT_SWARM_TASK_ID", "task_id")
         task = state_store.get_task(task_id)
         if task is None or task["root_id"] != root_id:
             raise ValueError("current task does not belong to the authorized run")
-        attempt = state_store.get_attempt(task["current_attempt_id"])
+        attempt = state_store.get_current_attempt(task_id)
         if (
             attempt is None
             or attempt["root_id"] != root_id
             or attempt["task_id"] != task_id
         ):
             raise ValueError("current attempt binding is invalid")
-        agent = state_store.get_agent(attempt["agent_id"])
-        if (
-            agent is None
-            or agent["root_id"] != root_id
-            or agent["task_id"] != task_id
-            or agent["attempt_id"] != attempt["attempt_id"]
-        ):
-            raise ValueError("current agent binding is invalid")
-        data = {"run": run, "task": task, "attempt": attempt, "agent": agent}
+        launch = state_store.get_current_launch(attempt["attempt_id"])
+        session = state_store.get_session_for_launch(launch["launch_id"]) if launch else None
+        data = {
+            "run": run,
+            "task": task,
+            "attempt": attempt,
+            "launch": launch,
+            "session": session,
+        }
     else:
         data = {
             "run": run,
             "tasks": state_store.list_tasks(root_id),
             "attempts": state_store.list_attempts(root_id),
-            "agents": state_store.list_agents(root_id),
-            "outbox": state_store.list_outbox(root_id),
+            "launches": state_store.list_launches(root_id),
+            "sessions": state_store.list_sessions(root_id),
+            "effects": state_store.list_effects(root_id),
         }
     _print(data)
 
@@ -429,9 +432,8 @@ def _inspect_command(args):
 def _identity_values(args):
     return {
         "root_id": _resolve(args.root_id, "AGENT_SWARM_ROOT_ID", "root_id"),
-        "task_id": _resolve(args.task_id, "AGENT_SWARM_TASK_ID", "task_id"),
-        "attempt_id": _resolve(args.attempt_id, "AGENT_SWARM_ATTEMPT_ID", "attempt_id"),
-        "agent_id": _resolve(args.agent_id, "AGENT_SWARM_AGENT_ID", "agent_id"),
+        "task_id": _resolve_int(args.task_id, "AGENT_SWARM_TASK_ID", "task_id"),
+        "attempt_id": _resolve_int(args.attempt_id, "AGENT_SWARM_ATTEMPT_ID", "attempt_id"),
         "actor_token": _resolve(args.actor_token, "AGENT_SWARM_ACTOR_TOKEN", "actor_token"),
     }
 
@@ -466,15 +468,13 @@ def _discover_root(cwd):
            ORDER BY created_at DESC""",
         (os.path.realpath(cwd),),
     )
-    if not rows and state_store.legacy_active_runs_for_cwd(cwd):
-        raise ValueError("a legacy Agent Swarm run exists in cwd and cannot be reinterpreted as v2")
     if len(rows) != 1:
         raise ValueError("recover requires exactly one recoverable run in cwd or --root-id")
     return rows[0]["root_id"]
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(prog="agent_orchestrator.py", description="Agent Swarm Runtime v2")
+    parser = argparse.ArgumentParser(prog="agent_orchestrator.py", description="Agent Swarm Runtime")
     commands = parser.add_subparsers(dest="command", required=True)
 
     init = commands.add_parser("init", help="initialize a foreground root run")
@@ -501,7 +501,7 @@ def build_parser():
     action.add_argument("--type", required=True, choices=sorted(ACTION_SCHEMAS))
     action.add_argument("--stdin", action="store_true", required=True)
     action.add_argument("--action-id")
-    for name in ("root-id", "task-id", "attempt-id", "agent-id", "actor-token"):
+    for name in ("root-id", "task-id", "attempt-id", "actor-token"):
         action.add_argument("--" + name)
 
     schema = commands.add_parser("action-schema", help="print an action JSON schema")
@@ -511,7 +511,7 @@ def build_parser():
     group = inspect.add_mutually_exclusive_group()
     group.add_argument("--run")
     group.add_argument("--current", action="store_true")
-    group.add_argument("--children")
+    group.add_argument("--children", type=int)
     group.add_argument("--notes")
     group.add_argument("--events")
     inspect.add_argument("--limit", type=int, default=50)
@@ -529,26 +529,26 @@ def build_parser():
     )
     reap.add_argument("--root-id")
     reap.add_argument("--actor-token")
-    reap.add_argument("--kill-attempt", action="append", default=[])
+    reap.add_argument("--kill-attempt", action="append", type=int, default=[])
 
     stop = commands.add_parser("stop", help="stop a run and its live sessions")
     stop.add_argument("--root-id")
     stop.add_argument("--actor-token")
 
     heartbeat = commands.add_parser("heartbeat", help="refresh the current agent heartbeat")
-    for name in ("root-id", "task-id", "attempt-id", "agent-id", "actor-token"):
+    for name in ("root-id", "task-id", "attempt-id", "actor-token"):
         heartbeat.add_argument("--" + name)
 
     worktree_init = commands.add_parser(
         "worktree-init", help="authenticate and install local hooks in the current worktree"
     )
-    for name in ("root-id", "task-id", "attempt-id", "agent-id", "actor-token"):
+    for name in ("root-id", "task-id", "attempt-id", "actor-token"):
         worktree_init.add_argument("--" + name)
 
     bootstrap_cwd = commands.add_parser(
         "bootstrap-cwd", help="authenticate and bootstrap the current Backend working directory"
     )
-    for name in ("root-id", "task-id", "attempt-id", "agent-id", "actor-token"):
+    for name in ("root-id", "task-id", "attempt-id", "actor-token"):
         bootstrap_cwd.add_argument("--" + name)
 
     doctor = commands.add_parser("doctor", help="diagnose stale agents and outbox effects")
@@ -559,7 +559,15 @@ def build_parser():
     metrics.add_argument("--root-id")
     metrics.add_argument("--actor-token")
 
-    prune = commands.add_parser("prune", help="delete old terminal v2 runs")
+    history = commands.add_parser(
+        "session-history", help="load one ACP conversation directly from its Agent"
+    )
+    history.add_argument("--agent-type", required=True)
+    history.add_argument("--session-id", required=True)
+    history.add_argument("--root-id")
+    history.add_argument("--actor-token")
+
+    prune = commands.add_parser("prune", help="delete old terminal runs")
     prune.add_argument("--older-than-hours", type=float, default=168.0)
     return parser
 
@@ -632,6 +640,26 @@ def main(argv=None):
             token = _resolve(args.actor_token, "AGENT_SWARM_ACTOR_TOKEN", "actor_token")
             _authorize_read(root_id, token)
             _print(recovery.doctor(root_id) if args.command == "doctor" else recovery.metrics(root_id))
+        elif args.command == "session-history":
+            root_id = _resolve(
+                args.root_id, "AGENT_SWARM_ROOT_ID", "root_id", required=False
+            )
+            records = session_history.find_records(
+                args.agent_type, args.session_id, root_id=root_id
+            )
+            authorized_root = root_id or (records[0]["root_id"] if len(records) == 1 else None)
+            if authorized_root:
+                token = _resolve(
+                    args.actor_token,
+                    "AGENT_SWARM_ACTOR_TOKEN",
+                    "actor_token",
+                )
+                _authorize_read(authorized_root, token)
+            _print(
+                session_history.load_history(
+                    args.agent_type, args.session_id, root_id=root_id
+                )
+            )
         elif args.command == "prune":
             cutoff = state_store.now() - max(0, args.older_than_hours) * 3600
             with state_store.transaction() as con:

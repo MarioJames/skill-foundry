@@ -1,7 +1,43 @@
-"""Pinned ACP Agent profiles and explicit executable preflight."""
+"""Pinned ACP Agent and bundled official SDK preflight."""
 
+import importlib.metadata
+import importlib.util
 import os
 import shutil
+
+from backends.acp.dependencies import activate as activate_bundled_sdk
+
+
+SDK_DISTRIBUTION = "agent-client-protocol"
+SDK_VERSION = "0.11.0"
+SDK_REQUIREMENT = "%s==%s" % (SDK_DISTRIBUTION, SDK_VERSION)
+
+
+def ensure_sdk_available():
+    """Activate and verify the offline official SDK shipped with the skill."""
+    bundled = activate_bundled_sdk()
+    if importlib.util.find_spec("acp") is None:
+        raise RuntimeError(
+            "bundled ACP Python SDK is unavailable; reinstall the agent-swarm skill"
+        )
+    try:
+        version = importlib.metadata.version(SDK_DISTRIBUTION)
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise RuntimeError(
+            "bundled ACP Python SDK metadata is unavailable; reinstall the agent-swarm skill"
+        ) from exc
+    if version != SDK_VERSION:
+        raise RuntimeError(
+            "bundled ACP Python SDK version %s is unsupported; reinstall the agent-swarm skill"
+            % version
+        )
+    return {
+        "distribution": SDK_DISTRIBUTION,
+        "version": version,
+        "requirement": SDK_REQUIREMENT,
+        "source": bundled["source"],
+        "bundle_key": bundled["key"],
+    }
 
 
 PROFILES = {
@@ -111,7 +147,7 @@ def resolve_profile(agent, *, command=None, args=None):
 
 
 def freeze_profile(profile, *, environment=None):
-    """Resolve the executable exactly once; Workers never repeat PATH lookup."""
+    """Resolve PATH exactly once while preserving the selected executable entry."""
     frozen = dict(profile)
     frozen["args"] = list(profile.get("args") or [])
     frozen["model_tiers"] = dict(profile.get("model_tiers") or {})
@@ -123,10 +159,10 @@ def freeze_profile(profile, *, environment=None):
         raise ValueError("custom ACP command must be an absolute path")
     environment = os.environ if environment is None else environment
     if os.path.isabs(command):
-        resolved = os.path.realpath(command)
+        resolved = os.path.abspath(command)
     else:
         candidate = shutil.which(command, path=environment.get("PATH"))
-        resolved = os.path.realpath(candidate) if candidate else None
+        resolved = os.path.abspath(candidate) if candidate else None
     frozen["requested_command"] = command
     frozen["resolved_command"] = resolved
     return frozen
@@ -172,8 +208,16 @@ def preflight(profile, *, environment=None):
         "available": False,
     }
     try:
+        report["sdk"] = ensure_sdk_available()
+    except RuntimeError as exc:
+        report["sdk"] = {
+            "requirement": SDK_REQUIREMENT,
+            "available": False,
+            "error": str(exc),
+        }
+    try:
         report["executable"] = ensure_available(profile, environment=environment)
-        report["available"] = True
+        report["available"] = report["sdk"].get("version") == SDK_VERSION
     except RuntimeError as exc:
         report["error"] = str(exc)
     return report

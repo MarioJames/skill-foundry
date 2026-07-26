@@ -19,7 +19,7 @@ if [ "$EVENT_NAME" != "PostToolUseFailure" ]; then
   exit 0
 fi
 
-for name in AGENT_SWARM_ROOT_ID AGENT_SWARM_TASK_ID AGENT_SWARM_ATTEMPT_ID AGENT_SWARM_AGENT_ID AGENT_SWARM_ACTOR_TOKEN; do
+for name in AGENT_SWARM_ROOT_ID AGENT_SWARM_TASK_ID AGENT_SWARM_ATTEMPT_ID AGENT_SWARM_ACTOR_TOKEN; do
   if [ -z "${!name:-}" ]; then
     printf '{"skipped":true,"reason":"missing orchestration identity"}\n'
     exit 0

@@ -1,38 +1,28 @@
 # Recovery, child reaping, and stop protocol
 
-## Recover a missing Root instead of reinitialize
+## Recover a missing Root
 
-**NEVER** call `init` for recovery intent. **ALWAYS** invoke `recover` and let the Runtime decide whether a
-Run is recoverable. **DO NOT** query SQLite, inspect internal tables, or infer recoverability before
-calling the command.
-
-When the Run ID is unknown, discover the single recoverable Run for the current working directory:
+Never call `init` for recovery intent. Invoke `recover` directly and let the Runtime resolve the
+single recoverable Run:
 
 ```bash
 python3 <skill_dir>/scripts/agent_orchestrator.py recover --cwd "$(pwd)"
 ```
 
-When the Run ID is known, use it explicitly:
+Or specify the known Run:
 
 ```bash
-python3 <skill_dir>/scripts/agent_orchestrator.py recover \
-  --root-id <root_id>
+python3 <skill_dir>/scripts/agent_orchestrator.py recover --root-id <root_id>
 ```
 
-If the current directory has zero or multiple recoverable Runs, the command fails without creating
-a Run. Report that result as-is; **DO NOT** fall back to `init`.
+Zero or multiple matching Runs is an error and must not fall back to `init`. A live owner lease
+prevents takeover; use `--force-takeover` only after confirming the old foreground owner is gone.
 
-A live owner lease prevents accidental takeover. Use `--force-takeover` only when the prior
-foreground owner is known to be gone. Recovery creates a new Root Attempt and actor token; it **NEVER**
-reuses the previous Session's Attempt.
+Recovery cancels the prior live Root Attempt, appends a new Root Attempt, rotates the actor token,
+increments the lease epoch, and keeps the same Run and root Task. It does not create an `agent_id` or
+reuse the old Attempt.
 
-Recovery creates a new Root Attempt. It is not a child watchdog and **MUST NOT** be used while the
-foreground Root is still healthy.
-
-## Reap stale children while the Root is healthy
-
-Use `reap` with the current Root identity. It **NEVER** changes the Root Attempt, owner token, or lease
-epoch:
+## Reap children while Root is healthy
 
 ```bash
 python3 <skill_dir>/scripts/agent_orchestrator.py reap \
@@ -40,25 +30,23 @@ python3 <skill_dir>/scripts/agent_orchestrator.py reap \
   --actor-token "$AGENT_SWARM_ACTOR_TOKEN"
 ```
 
-Root `wait` runs this child watchdog immediately and then at most once every 30 seconds, returning
-its diagnostics to the Parent. `reap` remains available for an immediate manual check or a
-Parent-selected kill.
+`reap` does not replace the Root identity. It:
 
-For a running child, the watchdog applies this bounded policy:
+- recovers stale Effect claims;
+- observes each current child Launch without holding a database write transaction;
+- closes terminal Attempts' Launches only after backend absence is proven;
+- converts a closed/ended Launch with an unfinished Attempt into one retryable failure;
+- leaves unknown or contradictory backend facts unchanged;
+- reports a present child whose Attempt heartbeat is older than five minutes;
+- schedules ready Tasks after reconciliation.
 
-- a heartbeat newer than five minutes is kept;
-- after five minutes, a successful persisted-Backend observation that has no matching `job_id` or
-  `session_name` marks the old Attempt retryable and dispatches a new Attempt within its budget;
-- after five minutes, a live matching Session is reported in `stalled_agents` for the Parent to
-  diagnose; it is not silently kept forever and it is not automatically killed;
-- an unavailable or malformed session observation changes nothing and is reported in
-  `session_observation_errors`.
+An unready starting ACP Launch remains assigned so the ACP adapter can apply its bounded startup
+grace. Only after Worker, Agent process, and socket are all absent does it close the old Launch and
+append a replacement. Launch rows are never advanced in place.
 
-`state.json` under Claude's job directory is diagnostic-only; it cannot override a successful
-`agents --json` absence observation. A child that has not yet reached its first live session is
-handled by launch/outbox recovery, not this running-child watchdog.
+Root `wait` invokes this watchdog immediately and at most every 30 seconds while waiting.
 
-After inspecting a reported stalled child, the Parent may choose a bounded kill-and-retry:
+To stop and retry a diagnosed child:
 
 ```bash
 python3 <skill_dir>/scripts/agent_orchestrator.py reap \
@@ -67,40 +55,34 @@ python3 <skill_dir>/scripts/agent_orchestrator.py reap \
   --kill-attempt <attempt_id>
 ```
 
-The Runtime invalidates that old Attempt, stops its Session through the outbox, then schedules the
-retry. **DO NOT** use `--force-takeover` for this path.
+The Runtime marks the Attempt failed, fences its current Launch, emits one idempotent stop Effect,
+and schedules the new Attempt only after stop completes.
 
-Agent Swarm itself does not create worktrees. It records `.claude/settings.local.json` in
-`.worktreeinclude` for future Claude-created worktrees and refreshes currently registered ones on
-child launch, Action, and heartbeat. Every child **MUST** run `bootstrap-cwd` in the exact worktree
-before substantial work, and again immediately after entering another worktree:
-
-```bash
-python3 "$AGENT_SWARM_SKILL_DIR/scripts/agent_orchestrator.py" bootstrap-cwd
-```
-
-The command authenticates the injected identity and refreshes its heartbeat. Claude CLI also merges
-the local Hook settings; ACP intentionally skips `.claude` mutation. A missing worktree Hook
-configuration on a hook-capable Backend is a deployment issue to fix before treating an
-otherwise-live Session's stale heartbeat as evidence to kill it.
-
-Inspect before continuing:
+## Inspect
 
 ```bash
 python3 <skill_dir>/scripts/agent_orchestrator.py inspect --run <root_id>
 python3 <skill_dir>/scripts/agent_orchestrator.py doctor --root-id <root_id>
+python3 <skill_dir>/scripts/agent_orchestrator.py metrics --root-id <root_id>
 ```
 
-For ACP Runs, `doctor` includes the frozen agent key and absolute executable, command args, pinned
-profile version, executable availability, declared authentication and sandbox prerequisites,
-protocol/capabilities, recent RPC error, Hook skipped status, nonce-backed process identity, and a
-fenced control handshake. A stale endpoint, mismatched PID/nonce, or handshake identity mismatch
-makes the report unhealthy. It performs no install, network login, or Agent launch.
+Full inspection returns Tasks, Attempts, Launches, ACP Sessions, and Effects. This is enough to
+reconstruct the logical tree and every execution attempt. It intentionally does not include local
+conversation history.
 
-Pass or export the newly returned identity/token for subsequent Root Actions. **DO NOT** repeat work
-already proven done by current Task results.
+For ACP history, query the actual Agent store:
 
-## Stop
+```bash
+python3 <skill_dir>/scripts/agent_orchestrator.py session-history \
+  --agent-type <agent-type> \
+  --session-id <external-session-id> \
+  --actor-token <actor-token>
+```
+
+If the Agent no longer has the Session, the command returns `available: false` with
+`reason: session_missing`; no recovery or retry is triggered.
+
+## Stop a Run
 
 ```bash
 python3 <skill_dir>/scripts/agent_orchestrator.py stop \
@@ -108,14 +90,12 @@ python3 <skill_dir>/scripts/agent_orchestrator.py stop \
   --actor-token <root_actor_token>
 ```
 
-Stop first fences every nonterminal execution—including ACP Workers that have not produced a
-`job_id`—then cancels pending spawns, reconciles deterministic outcomes without scheduling retries,
-emits idempotent stop effects, and marks the Run cancelled only after Worker, Agent Process, and
-control socket cleanup is proven. If cleanup is incomplete, retry stop
-or diagnose the failed stop effects. Once stop reports `terminal: true`, **DO NOT** execute more business
-Actions for that Run.
+Stop fences every open Launch, including an ACP Worker that has not reached `session/new`, cancels
+live Attempts and Tasks, and emits one stop Effect per Launch. The Run becomes `cancelled` only when
+all Launch resources are closed. If the result remains `stopping`, retry stop or inspect failed
+Effects and open Launches.
 
-SessionEnd is observation only. It **NEVER** forges Task completion or makes the Runtime reuse an
-Attempt. Heartbeats come from Actions, the SessionStart/PostToolUse hooks, and the explicit
-`heartbeat` command. The Stop hook can request a missing `finish`, but **NEVER** writes a terminal
-state itself.
+After `status: cancelled`, do not submit more business Actions for that Run.
+
+`SessionEnd` and ACP turn end remain observations. They never forge Task completion. Heartbeats come
+from Actions, Claude Hooks, the explicit heartbeat command, and the ACP Worker.

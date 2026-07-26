@@ -9,6 +9,8 @@ MODE_PREFERENCES = {
 
 
 def _values(option):
+    if not isinstance(option, dict):
+        option = option.model_dump(mode="json", by_alias=True, exclude_none=True)
     values = []
     for entry in option.get("options") or []:
         if not isinstance(entry, dict):
@@ -25,19 +27,25 @@ def _values(option):
 def _find(options, category):
     for option in options or []:
         if not isinstance(option, dict):
+            option = option.model_dump(mode="json", by_alias=True, exclude_none=True)
+        if not isinstance(option, dict):
             continue
         if option.get("category") == category or option.get("id") == category:
             return option
     return None
 
 
-def _set(client, session_id, option, value):
+async def _set(client, session_id, option, value):
     if option.get("currentValue") != value:
-        client.set_config_option(session_id, option["id"], value, timeout=10)
+        await client.set_config_option(
+            session_id=session_id,
+            config_id=option["id"],
+            value=value,
+        )
     return value
 
 
-def configure_session(client, session_id, options, *, model, permission_policy):
+async def configure_session(client, session_id, options, *, model, permission_policy):
     """Set model/mode if advertised; reject unsupported explicit model choices."""
     configured = {}
     model_option = _find(options, "model")
@@ -47,7 +55,7 @@ def configure_session(client, session_id, options, *, model, permission_policy):
             raise RuntimeError("ACP model is not offered by Agent: %s" % model)
         target = model if model in offered else model_option.get("currentValue")
         if target is not None:
-            configured["model"] = _set(client, session_id, model_option, target)
+            configured["model"] = await _set(client, session_id, model_option, target)
     elif model not in {None, "default"}:
         raise RuntimeError("ACP Agent did not offer model configuration for %s" % model)
 
@@ -66,5 +74,5 @@ def configure_session(client, session_id, options, *, model, permission_policy):
                 % permission_policy
             )
         if target is not None:
-            configured["mode"] = _set(client, session_id, mode_option, target)
+            configured["mode"] = await _set(client, session_id, mode_option, target)
     return configured

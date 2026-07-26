@@ -16,8 +16,9 @@ explicit opt-in. Resolve `<skill_dir>` from this file's directory.
 - **NEVER** silently replace a failed recovery with `init`.
 - With `[ORCHESTRATION IDENTITY]`, **MUST** use that identity; **NEVER** initialize another Run.
 - **MUST** delegate children only via `create_tasks`; **DO NOT** launch child Agent processes yourself.
-- **NEVER** reuse an Attempt for a new Session.
-- After `stop` reports `terminal: true`, **DO NOT** execute further business Actions for that Run.
+- **NEVER** reuse a terminal Attempt for a business retry. A pre-ready infrastructure retry appends
+  a new Launch; it does not rewrite the failed Launch.
+- After `stop` reports `status: cancelled`, **DO NOT** execute further business Actions for that Run.
 - Every child **MUST** run `bootstrap-cwd` before substantial work in its current directory, and again immediately after creating or entering another worktree. `worktree-init` remains a compatibility alias.
 
 ## Activation
@@ -44,7 +45,8 @@ recovery protocol instead of `recover`; `recover --force-takeover` replaces the 
 Read [runtime-contract.md](references/runtime-contract.md) before operating the Runtime. Read
 [recovery-protocol.md](references/recovery-protocol.md) for recovery or stop work. Query exact
 payload shapes with `action-schema`; read [action-schemas.md](references/action-schemas.md) only
-when examples are useful.
+when examples are useful. Read [acp-sdk.md](references/acp-sdk.md) when configuring, diagnosing, or
+changing the ACP backend.
 
 ## Start a Root
 
@@ -74,8 +76,20 @@ Built-in profiles currently pin `claude-agent-acp` 0.62.0,
 `@agentclientprotocol/codex-acp` 1.1.7, and Gemini CLI 0.41.0 (`gemini --acp`). A missing
 executable fails cleanly with an exact pinned installation hint; the Runtime never downloads an
 adapter or runs a floating `latest` package.
-At Run initialization the selected built-in executable is resolved once to an absolute real path;
-the persisted Attempt never repeats `PATH` lookup. Custom Agents require an absolute executable.
+At Run initialization the selected built-in executable is resolved once to an absolute entrypoint;
+the persisted Attempt never repeats `PATH` lookup. Virtual-environment and wrapper symlinks are
+preserved because dereferencing them can change interpreter behavior. Custom Agents require an
+absolute executable.
+
+ACP requires CPython 3.10–3.14 but no user-installed Python package. The skill ships a hash-verified
+offline runtime bundle containing the exact official `agent-client-protocol==0.11.0` distribution,
+its pure-Python dependencies, and matching `pydantic-core` payloads for macOS/Linux on arm64 and
+x86_64 (glibc and musl Linux). The first ACP use extracts only the matching native payload into
+`$AGENT_SWARM_HOME/dependencies/acp-runtime`; it does not invoke pip/uv, install globally, or access
+the network. A missing/corrupt/unsupported payload fails before Agent launch and requires
+reinstalling the skill. The official SDK remains the only ACP framing, JSON-RPC, schema, dispatch,
+and connection implementation; Agent Swarm retains only typed callbacks and Runtime lifecycle
+policy.
 
 Claude and Codex ACP profiles default to trusted-machine full access: Claude selects
 `bypassPermissions`, while the official Codex adapter selects `agent-full-access`. Use
@@ -98,7 +112,7 @@ credentials.
 
 Keep every returned identity field and actor token. Because `init` cannot alter the parent shell,
 either export the returned values as `AGENT_SWARM_ROOT_ID`, `AGENT_SWARM_TASK_ID`,
-`AGENT_SWARM_ATTEMPT_ID`, `AGENT_SWARM_AGENT_ID`, and `AGENT_SWARM_ACTOR_TOKEN`, or pass the
+`AGENT_SWARM_ATTEMPT_ID`, and `AGENT_SWARM_ACTOR_TOKEN`, or pass the
 matching explicit identity arguments to every Action.
 
 Before substantive work, submit `submit_estimate` with `strategy=direct|split`.
@@ -161,6 +175,19 @@ hook, because that hook replaces Claude's normal `.worktreeinclude` copy path.
 Hooks **NEVER** initialize, recover, complete, or spawn a Run on their own. Runtime Actions remain the
 only authority for lifecycle state and task-tree changes.
 
+Each ACP Launch stores the real ACP `session_id` together with its Agent profile. To view history
+without persisting dialogue content locally, load it directly from the Agent:
+
+```bash
+python3 <skill_dir>/scripts/agent_orchestrator.py session-history \
+  --agent-type <claude|codex|gemini|custom> \
+  --session-id <acp-session-id> \
+  --actor-token "$AGENT_SWARM_ACTOR_TOKEN"
+```
+
+The Runtime calls `session/load` and keeps replayed messages only in memory for that command. A
+missing session or an Agent without load support returns a normal structured unavailable result.
+
 ACP detects prompt turn end without forging `finish`, performs one bounded finish reprompt by
 default, and reconciles a still-unfinished Attempt as retryable exactly once. Its permission policy
 selects only options offered by the Agent and first selects a compatible advertised Session mode
@@ -183,12 +210,12 @@ selected Agent profile, container, or operating system.
 ## Discipline
 
 - **MUST** delegate only with `create_tasks`; **DO NOT** launch a child Agent process yourself.
-- Treat Task, Attempt, and Agent Session as different objects. **NEVER** reuse an Attempt for a new
-  Session.
+- Treat Task, Attempt, Launch, and ACP Session as different objects. Business retries create a new
+  Attempt; pre-ready process retries append a new Launch.
 - Use Notes only for reusable decisions and pitfalls, not work logs.
 - A timed-out `wait` window is not a Task failure; inspect results and wait again when needed.
 - Review and fix are Intents, not fixed identities or leaf-only roles.
-- Use only the v2 Actions and lifecycle described here.
-- After `stop` returns terminal, **DO NOT** execute further business action for that Run.
+- Use only the Actions and lifecycle described here.
+- After `stop` returns `status: cancelled`, **DO NOT** execute further business action for that Run.
 - Runtime checks observable structure and lifecycle facts. **DO NOT** claim it proves semantic quality,
   complete file isolation, or the truth of validation text.

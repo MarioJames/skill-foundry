@@ -53,7 +53,7 @@ def create_run_seed(root_id):
 
 
 def _read_seed(run):
-    path = resolve_seed_path(run.get("child_token_seed_ref"))
+    path = resolve_seed_path(run.get("token_seed_ref"))
     try:
         mode = path.stat().st_mode & 0o777
         if mode != 0o600:
@@ -63,21 +63,21 @@ def _read_seed(run):
         raise RuntimeError("Run child token seed is unavailable") from exc
     if len(seed) != SEED_BYTES:
         raise RuntimeError("Run child token seed has an invalid length")
-    expected = run.get("child_token_seed_hash")
+    expected = run.get("token_seed_hash")
     if not expected or not hmac.compare_digest(hashlib.sha256(seed).hexdigest(), expected):
         raise RuntimeError("Run child token seed hash does not match")
     return seed
 
 
-def derive_attempt_token(run, attempt_id, agent_id):
+def derive_attempt_token(run, attempt_id):
     seed = _read_seed(run)
-    message = "%s|%s|%s" % (run["root_id"], attempt_id, agent_id)
+    message = "%s|%s" % (run["root_id"], attempt_id)
     digest = hmac.new(seed, message.encode("utf-8"), hashlib.sha256).digest()
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
 def remove_run_seed(run):
-    reference = run.get("child_token_seed_ref") if run else None
+    reference = run.get("token_seed_ref") if run else None
     if not reference:
         return True
     path = resolve_seed_path(reference)
@@ -94,14 +94,16 @@ def cleanup_run_seed_if_safe(root_id):
         if run is None or run["status"] not in {"done", "failed", "cancelled"}:
             return False
         open_effects = con.execute(
-            """SELECT COUNT(*) AS n FROM side_effect_outbox
+            """SELECT COUNT(*) AS n FROM effects
                WHERE root_id=? AND effect_type IN ('spawn_agent','stop_agent')
                  AND status IN ('pending','running')""",
             (root_id,),
         ).fetchone()["n"]
         open_executions = con.execute(
-            """SELECT COUNT(*) AS n FROM execution_sessions
-               WHERE root_id=? AND status != 'closed'""",
+            """SELECT COUNT(*) AS n FROM launches l
+               JOIN attempts a ON a.attempt_id=l.attempt_id
+               JOIN tasks t ON t.task_id=a.task_id
+               WHERE t.root_id=? AND l.status != 'closed'""",
             (root_id,),
         ).fetchone()["n"]
     if open_effects or open_executions:

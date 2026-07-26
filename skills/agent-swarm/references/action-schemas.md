@@ -73,7 +73,7 @@ message never substitutes for a successful Action response.
 
 ```json
 {
-  "task_ids": ["task_data", "task_review"],
+  "task_ids": [2, 3],
   "condition": "all_terminal",
   "listen_seconds": 45
 }

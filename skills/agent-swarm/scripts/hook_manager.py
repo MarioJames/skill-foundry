@@ -8,7 +8,7 @@ import state_store
 
 
 OWNER_FIELD = "agent_swarm_owner"
-OWNER_VALUE = "agent-swarm-v2"
+OWNER_VALUE = "agent-swarm"
 ROOT_FIELD = "agent_swarm_root_id"
 WORKTREE_SETTINGS_PATH = ".claude/settings.local.json"
 WORKTREE_INCLUDE_FILE = ".worktreeinclude"

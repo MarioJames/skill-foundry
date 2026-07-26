@@ -2,6 +2,7 @@ import json
 import os
 import pathlib
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -96,6 +97,26 @@ class Phase1RegistryTests(unittest.TestCase):
                 environment={"PATH": "/usr/bin"},
             )
 
+    def test_freeze_profile_preserves_symlinked_executable_entrypoint(self):
+        from backends.acp import registry
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            target = directory / "python-real"
+            target.write_text("#!/bin/sh\nexit 0\n")
+            target.chmod(0o700)
+            entrypoint = directory / "python-venv"
+            entrypoint.symlink_to(target)
+
+            frozen = registry.freeze_profile(
+                registry.resolve_profile(
+                    "custom", command=str(entrypoint), args=[]
+                )
+            )
+
+            self.assertEqual(str(entrypoint), frozen["resolved_command"])
+            self.assertEqual(str(entrypoint), registry.ensure_available(frozen))
+
     def test_missing_builtin_executable_has_exact_install_hint_without_installing(self):
         profile = registry.resolve_profile("codex")
         with mock.patch("backends.acp.registry.shutil.which", return_value=None):
@@ -119,12 +140,12 @@ class Phase1RegistryTests(unittest.TestCase):
                 backend="acp", acp_agent="codex", environment={"PATH": str(first)}
             )
             snapshot = execution_config.snapshot_attempt(
-                {"execution_json": __import__("json").dumps(resolved)}
+                {"execution_config_json": __import__("json").dumps(resolved)}
             )
 
-        self.assertEqual(str((first / "codex-acp").resolve()), snapshot["command"])
+        self.assertEqual(str(first / "codex-acp"), snapshot["command"])
         self.assertEqual("codex-acp", snapshot["requested_command"])
-        self.assertNotEqual(str((second / "codex-acp").resolve()), snapshot["command"])
+        self.assertNotEqual(str(second / "codex-acp"), snapshot["command"])
         self.assertEqual("1.1.7", snapshot["profile_version"])
         self.assertEqual("@agentclientprotocol/codex-acp", snapshot["package"])
         self.assertEqual([], snapshot["args"])
@@ -146,12 +167,12 @@ class Phase1RegistryTests(unittest.TestCase):
                 insert_ready_child(con, run)
             child = scheduler.schedule(identity["root_id"])[0]
             snapshot = __import__("json").loads(
-                state_store.get_execution(child["attempt_id"])["config_json"]
+                state_store.get_attempt(child["attempt_id"])["config_json"]
             )
 
         self.assertEqual("gpt-5.6-terra", snapshot["model"])
 
-    def test_doctor_reports_execution_fencing_and_process_facts(self):
+    def test_doctor_reports_attempt_launch_and_effect_facts(self):
         with isolated_runtime() as (_, cwd):
             identity = agent_orchestrator.initialize_run(
                 "root",
@@ -168,144 +189,18 @@ class Phase1RegistryTests(unittest.TestCase):
 
             report = recovery.doctor(identity["root_id"])
 
-        self.assertEqual("acp", report["backend_preflight"]["backend"])
-        self.assertEqual("custom", report["backend_preflight"]["agent"])
-        self.assertTrue(report["backend_preflight"]["available"])
-        self.assertEqual(
-            "Agent-specific authentication",
-            report["backend_preflight"]["auth_prerequisites"][0],
+        self.assertEqual("running", report["run_status"])
+        self.assertEqual(child["launch_id"], report["open_launches"][0]["launch_id"])
+        self.assertEqual("spawn_agent", report["pending_effects"][0]["effect_type"])
+
+    def test_registry_preflight_reports_bundled_sdk_without_installing(self):
+        profile = registry.freeze_profile(
+            registry.resolve_profile("custom", command=sys.executable)
         )
-        self.assertEqual(1, len(report["executions"]))
-        execution = report["executions"][0]
-        self.assertEqual(child["attempt_id"], execution["attempt_id"])
-        self.assertEqual(1, execution["generation"])
-        self.assertEqual("starting", execution["status"])
-        self.assertFalse(execution["worker_alive"])
-        self.assertFalse(execution["agent_alive"])
-        self.assertFalse(execution["control_endpoint_exists"])
-        self.assertEqual("skipped", report["hooks"]["status"])
-        self.assertEqual("agent-specific", report["backend_preflight"]["sandbox"]["mechanism"])
-
-    def test_doctor_rejects_stale_endpoint_without_fenced_handshake(self):
-        with isolated_runtime() as (_, cwd):
-            identity = agent_orchestrator.initialize_run(
-                "root",
-                str(cwd),
-                backend="acp",
-                acp_agent="custom",
-                acp_command=sys.executable,
-            )
-            with state_store.transaction() as con:
-                run = state_store.get_run(identity["root_id"], con)
-                insert_ready_child(con, run)
-            child = scheduler.schedule(identity["root_id"])[0]
-            endpoint = cwd / "stale.sock"
-            endpoint.write_text("not a socket")
-            with state_store.transaction() as con:
-                con.execute(
-                    """UPDATE execution_sessions
-                       SET owner_nonce='owned', worker_pid=?, agent_pid=?, control_endpoint=?
-                       WHERE attempt_id=?""",
-                    (os.getpid(), os.getpid(), str(endpoint), child["attempt_id"]),
-                )
-
-            with mock.patch(
-                "backends.acp.processes.process_has_nonce", return_value=True
-            ), mock.patch(
-                "backends.acp.worker_protocol.control_request",
-                side_effect=RuntimeError("stale endpoint"),
-            ):
-                report = recovery.doctor(identity["root_id"])
-
-        self.assertFalse(report["healthy"])
-        self.assertEqual([child["attempt_id"]], report["execution_conflicts"])
-        diagnostic = report["executions"][0]
-        self.assertFalse(diagnostic["control_handshake"]["ok"])
-        self.assertEqual("stale endpoint", diagnostic["control_handshake"]["error"])
-        self.assertTrue(diagnostic["worker_identity_matches"])
-        self.assertTrue(diagnostic["agent_identity_matches"])
-        self.assertIn("recent_rpc_error", diagnostic)
-        self.assertIn("capabilities", diagnostic)
-
-    def test_doctor_does_not_apply_acp_process_contract_to_live_claude_execution(self):
-        class ClaudeView:
-            def list_sessions(self, cwd=None):
-                return [{"name": session_name, "job_id": "job-live", "status": "running"}]
-
-        with isolated_runtime() as (_, cwd), mock.patch.object(
-            agent_orchestrator.hook_manager, "ensure_project_hooks"
-        ):
-            identity = agent_orchestrator.initialize_run("root", str(cwd))
-            with state_store.transaction() as con:
-                run = state_store.get_run(identity["root_id"], con)
-                insert_ready_child(con, run)
-            child = scheduler.schedule(identity["root_id"])[0]
-            agent = state_store.get_agent(child["agent_id"])
-            session_name = agent["session_name"]
-            with state_store.transaction() as con:
-                con.execute(
-                    "UPDATE agents SET state='evaluating', job_id='job-live', heartbeat_at=? WHERE agent_id=?",
-                    (state_store.now(), child["agent_id"]),
-                )
-                con.execute(
-                    "UPDATE execution_sessions SET status='running', ready_at=? WHERE attempt_id=?",
-                    (state_store.now(), child["attempt_id"]),
-                )
-                con.execute(
-                    "UPDATE side_effect_outbox SET status='completed' WHERE root_id=?",
-                    (identity["root_id"],),
-                )
-
-            report = recovery.doctor(identity["root_id"], adapter=ClaudeView())
-
-        self.assertEqual([], report["execution_conflicts"])
-        self.assertTrue(report["healthy"], report)
-        diagnostic = report["executions"][0]
-        self.assertEqual("claude_cli", diagnostic["backend_id"])
-        self.assertEqual("not_applicable", diagnostic["control_handshake"]["status"])
-
-    def test_doctor_accepts_acp_starting_handshake_before_agent_popen(self):
-        with isolated_runtime() as (_, cwd):
-            identity = agent_orchestrator.initialize_run(
-                "root",
-                str(cwd),
-                backend="acp",
-                acp_agent="custom",
-                acp_command=sys.executable,
-            )
-            with state_store.transaction() as con:
-                run = state_store.get_run(identity["root_id"], con)
-                insert_ready_child(con, run)
-            child = scheduler.schedule(identity["root_id"])[0]
-            endpoint = cwd / "starting.sock"
-            endpoint.write_text("placeholder")
-            with state_store.transaction() as con:
-                execution = state_store.get_execution(child["attempt_id"], con)
-                con.execute(
-                    """UPDATE execution_sessions
-                       SET owner_nonce='owned', worker_pid=?, agent_pid=NULL, control_endpoint=?
-                       WHERE attempt_id=?""",
-                    (os.getpid(), str(endpoint), child["attempt_id"]),
-                )
-
-            with mock.patch(
-                "backends.acp.processes.process_has_nonce", return_value=True
-            ), mock.patch(
-                "backends.acp.worker_protocol.control_request",
-                return_value={
-                    "ok": True,
-                    "execution_id": execution["execution_id"],
-                    "generation": execution["generation"],
-                    "worker_pid": os.getpid(),
-                    "agent_pid": None,
-                    "status": "starting",
-                    "prompt_state": "pending",
-                },
-            ):
-                report = recovery.doctor(identity["root_id"])
-
-        self.assertEqual([], report["execution_conflicts"])
-        self.assertTrue(report["executions"][0]["control_handshake"]["ok"])
+        report = registry.preflight(profile)
+        self.assertTrue(report["available"])
+        self.assertEqual("bundled", report["sdk"]["source"])
+        self.assertEqual("0.11.0", report["sdk"]["version"])
 
 
 if __name__ == "__main__":

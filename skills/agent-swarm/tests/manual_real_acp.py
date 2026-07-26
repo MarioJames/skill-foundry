@@ -2,6 +2,7 @@
 """Manual Phase 1b smoke harness for an installed real ACP Agent."""
 
 import argparse
+import contextlib
 import json
 import os
 import pathlib
@@ -14,6 +15,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import agent_orchestrator
+import execution_secrets
 import outbox
 import recovery
 import scheduler
@@ -41,6 +43,17 @@ GOALS = {
     "stop": (
         "Follow the injected Runtime instructions, submit a direct estimate, then run a shell "
         "sleep for 60 seconds before submitting finish. Do not skip or shorten the sleep."
+    ),
+    "agent-crash": (
+        "Follow the injected Runtime instructions, submit a direct estimate, then run a shell "
+        "sleep for 60 seconds before submitting finish. This adapter process will be terminated "
+        "externally to verify retryable failure reconciliation."
+    ),
+    "orchestration": (
+        "Follow the injected Runtime instructions. Submit a split estimate, create exactly two "
+        "independent child Tasks named leaf-a and leaf-b, wait for both to finish, verify their "
+        "results, then submit finish(status=done) with a passed integration_check. Do not modify "
+        "project files. Each leaf must submit its own direct estimate and legal Runtime finish."
     ),
 }
 
@@ -102,10 +115,10 @@ def bounded_cleanup(identity):
         result["stop"] = recovery.stop_run(identity["root_id"], identity["actor_token"])
     except Exception as exc:
         result["error"] = {"type": type(exc).__name__, "message": str(exc)}
-    for execution in state_store.list_executions(identity["root_id"]):
-        nonce = execution.get("owner_nonce")
+    for launch in state_store.list_launches(identity["root_id"]):
+        nonce = launch.get("owner_nonce")
         for field in ("agent_pid", "worker_pid"):
-            pid = execution.get(field)
+            pid = launch.get(field)
             if process_group_alive(pid):
                 cleaned = terminate_process_group(
                     pid, grace=1.0, expected_nonce=nonce
@@ -113,11 +126,11 @@ def bounded_cleanup(identity):
                 result["fallback"].append(
                     {"process": field, "cleaned": bool(cleaned)}
                 )
-        endpoint = execution.get("control_endpoint")
+        endpoint = launch.get("control_endpoint")
         if (
             endpoint
-            and not process_group_alive(execution.get("worker_pid"))
-            and not process_group_alive(execution.get("agent_pid"))
+            and not process_group_alive(launch.get("worker_pid"))
+            and not process_group_alive(launch.get("agent_pid"))
         ):
             try:
                 pathlib.Path(endpoint).unlink()
@@ -134,28 +147,51 @@ def create_child(root_id, goal):
     with state_store.transaction() as con:
         run = state_store.get_run(root_id, con)
         created = state_store.now()
-        con.execute(
+        cursor = con.execute(
             """INSERT INTO tasks(
-                 task_id, root_id, parent_task_id, goal, intent_hint, status, priority,
+                 root_id, parent_task_id, goal, intent_hint, status, priority,
                  complexity_hint, output_contract, constraints_json, delegation_depth,
                  replan_count, created_at
-               ) VALUES ('task_real_acp', ?, ?, ?, 'implement', 'ready', 50,
+               ) VALUES (?, ?, ?, 'implement', 'ready', 50,
                          'low', 'Complete the Runtime smoke contract.', '{}', 1, 0, ?)""",
             (root_id, run["root_task_id"], goal, created),
         )
     return scheduler.schedule(root_id)[0]
 
 
-def execution_clean(execution):
-    if not execution:
+def execution_clean(launch):
+    if not launch:
         return False
-    endpoint = execution.get("control_endpoint")
+    endpoint = launch.get("control_endpoint")
     return bool(
-        execution["status"] == "closed"
-        and not process_group_alive(execution.get("worker_pid"))
-        and not process_group_alive(execution.get("agent_pid"))
+        launch["status"] == "closed"
+        and not process_group_alive(launch.get("worker_pid"))
+        and not process_group_alive(launch.get("agent_pid"))
         and not (endpoint and pathlib.Path(endpoint).exists())
     )
+
+
+def wait_until(predicate, timeout, interval=0.25):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        value = predicate()
+        if value:
+            return value
+        time.sleep(interval)
+    raise RuntimeError("timed out waiting for real ACP condition")
+
+
+def token_residue(runtime_home, plaintext_tokens):
+    encoded = [token.encode() for token in plaintext_tokens if token]
+    residue = []
+    for path in runtime_home.rglob("*"):
+        if not path.is_file():
+            continue
+        with contextlib.suppress(OSError):
+            data = path.read_bytes()
+            if any(token in data for token in encoded):
+                residue.append(str(path.relative_to(runtime_home)))
+    return sorted(residue)
 
 
 def main(argv=None):
@@ -183,6 +219,8 @@ def main(argv=None):
     child = None
     drain_result = None
     failure = None
+    adapter_terminated = False
+    plaintext_tokens = []
     cleanup = {"stop": None, "error": None, "fallback": []}
     outside = workspace.parent / (workspace.name + "-outside-permission-proof.txt")
     outside_preexisting = outside.exists()
@@ -196,7 +234,7 @@ def main(argv=None):
             require_final_review=False,
             backend="acp",
             acp_agent=args.profile,
-            acp_command=str(pathlib.Path(args.command).resolve()),
+            acp_command=os.path.abspath(args.command),
             acp_args=args.command_arg,
             acp_permission_policy=args.permission_policy,
         )
@@ -206,8 +244,52 @@ def main(argv=None):
             else GOALS[args.mode]
         )
         child = create_child(identity["root_id"], goal)
+        run = state_store.get_run(identity["root_id"])
+        attempt = state_store.get_attempt(child["attempt_id"])
+        plaintext_tokens = [
+            identity["actor_token"],
+            execution_secrets.derive_attempt_token(run, child["attempt_id"]),
+        ]
         drain_result = outbox.drain(identity["root_id"], max_effects=1)
-        if args.mode != "stop":
+        if args.mode == "agent-crash":
+            running = wait_until(
+                lambda: (
+                    record
+                    if (record := state_store.get_launch(child["launch_id"]))[
+                        "status"
+                    ]
+                    == "running"
+                    else None
+                ),
+                args.timeout,
+            )
+            adapter_terminated = terminate_process_group(
+                running["agent_pid"],
+                grace=2.0,
+                expected_nonce=running.get("owner_nonce"),
+            )
+            if not adapter_terminated:
+                raise RuntimeError("failed to terminate real ACP adapter process group")
+            wait_until(
+                lambda: state_store.get_launch(child["launch_id"])["status"]
+                == "closed",
+                args.timeout,
+            )
+            wait_until(
+                lambda: (
+                    {"reconciled": True}
+                    if (
+                        recovery.reap_children(
+                            identity["root_id"], identity["actor_token"]
+                        )
+                        and state_store.get_attempt(child["attempt_id"])["state"]
+                        == "failed"
+                    )
+                    else None
+                ),
+                args.timeout,
+            )
+        elif args.mode != "stop":
             deadline = time.monotonic() + args.timeout
             while time.monotonic() < deadline:
                 task = state_store.get_task(child["task_id"])
@@ -220,7 +302,7 @@ def main(argv=None):
     finally:
         cleanup = bounded_cleanup(identity)
 
-    execution = state_store.get_execution(child["attempt_id"]) if child else None
+    execution = state_store.get_launch(child["launch_id"]) if child else None
     task = state_store.get_task(child["task_id"]) if child else None
     events = state_store.list_events(identity["root_id"], 500) if identity else []
     permission_events = [
@@ -252,16 +334,53 @@ def main(argv=None):
             safe_workspace_mode=safe_workspace_mode,
         )
     stop_result = cleanup.get("stop") or {}
+    executions = state_store.list_launches(identity["root_id"]) if identity else []
+    tasks = state_store.list_tasks(identity["root_id"]) if identity else []
+    attempts = state_store.list_attempts(identity["root_id"]) if identity else []
+    all_executions_clean = bool(executions) and all(
+        execution_clean(item) for item in executions
+    )
+    residue = token_residue(runtime_home, plaintext_tokens)
+    retryable_failure = bool(
+        child and state_store.get_attempt(child["attempt_id"])["state"] == "failed"
+    )
+    descendant_tasks = [
+        item for item in tasks if child and item["task_id"] != child["task_id"]
+        and item.get("parent_task_id") == child["task_id"]
+    ]
+    mode_outcome = (
+        bool(
+            adapter_terminated
+            and retryable_failure
+            and task
+            and task["status"] == "failed"
+            and execution
+            and (execution.get("exit_reason") or "").startswith("acp_error:")
+        )
+        if args.mode == "agent-crash"
+        else (
+            bool(
+                task
+                and task["status"] == "done"
+                and len(descendant_tasks) == 2
+                and all(item["status"] == "done" for item in descendant_tasks)
+            )
+            if args.mode == "orchestration"
+            else (
+                task and task["status"] == "done"
+                if args.mode != "stop"
+                else identity
+                and state_store.get_run(identity["root_id"])["status"] == "cancelled"
+            )
+        )
+    )
     expected = (
         failure is None
         and cleanup.get("error") is None
-        and stop_result.get("terminal")
-        and execution_clean(execution)
-        and (
-            task and task["status"] == "done"
-            if args.mode != "stop"
-            else identity and state_store.get_run(identity["root_id"])["status"] == "cancelled"
-        )
+        and stop_result.get("status") == "cancelled"
+        and all_executions_clean
+        and mode_outcome
+        and not residue
         and (
             normalized_mode not in {"permission-allow", "permission-deny"}
             or bool(permission_evidence and permission_evidence["passed"])
@@ -281,16 +400,15 @@ def main(argv=None):
         "cleanup": cleanup,
         "error": failure,
         "task_status": task["status"] if task else None,
-        "attempt_status": state_store.get_attempt(child["attempt_id"])["status"] if child else None,
+        "attempt_status": state_store.get_attempt(child["attempt_id"])["state"] if child else None,
         "execution": {
             key: execution.get(key) if execution else None
             for key in (
                 "status",
                 "prompt_state",
-                "generation",
+                "launch_no",
                 "exit_reason",
                 "ready_at",
-                "reconciled_at",
                 "closed_at",
             )
         },
@@ -299,6 +417,38 @@ def main(argv=None):
         "session_events": session_events,
         "proof_exists": proof.exists(),
         "outside_proof_exists": outside.exists(),
+        "adapter_terminated": adapter_terminated,
+        "retryable_failure": retryable_failure,
+        "launch_count": len(executions),
+        "all_executions_clean": all_executions_clean,
+        "launch_summaries": [
+            {
+                "attempt_id": item["attempt_id"],
+                "status": item["status"],
+                "exit_reason": item.get("exit_reason"),
+                "launch_id": item["launch_id"],
+            }
+            for item in executions
+        ],
+        "attempt_summaries": [
+            {
+                "attempt_id": item["attempt_id"],
+                "task_id": item["task_id"],
+                "state": item["state"],
+                "retryable": bool(item.get("retryable")),
+            }
+            for item in attempts
+        ],
+        "task_summaries": [
+            {
+                "task_id": item["task_id"],
+                "parent_task_id": item.get("parent_task_id"),
+                "status": item["status"],
+            }
+            for item in tasks
+        ],
+        "descendant_task_statuses": [item["status"] for item in descendant_tasks],
+        "token_residue_files": residue,
         "runtime_home": str(runtime_home),
         "workspace": str(workspace),
     }

@@ -1,8 +1,7 @@
-"""Validation, idempotency, and transactional handling for the five v2 actions."""
+"""Validation, idempotency, and transactional handling for runtime actions."""
 
 import json
 import time
-import uuid
 
 import hook_manager
 import notes
@@ -40,7 +39,7 @@ def _require_fields(payload, fields, label):
 
 
 def _capabilities(context):
-    state = context["agent"]["state"]
+    state = context["attempt"]["state"]
     if state == "evaluating":
         return ["submit_estimate", "write_note"]
     if state == "waiting":
@@ -55,7 +54,7 @@ def _capabilities(context):
 
 
 def _load_context(con, envelope, allow_cached=True):
-    required = ("root_id", "task_id", "attempt_id", "agent_id", "actor_token", "action_id", "type")
+    required = ("root_id", "task_id", "attempt_id", "actor_token", "action_id", "type")
     missing = [name for name in required if not envelope.get(name)]
     if missing:
         _error("missing envelope fields: %s" % ", ".join(missing))
@@ -67,37 +66,33 @@ def _load_context(con, envelope, allow_cached=True):
     run = state_store.get_run(envelope["root_id"], con)
     task = state_store.get_task(envelope["task_id"], con)
     attempt = state_store.get_attempt(envelope["attempt_id"], con)
-    agent = state_store.get_agent(envelope["agent_id"], con)
-    if not all((run, task, attempt, agent)):
-        _error("invalid run/task/attempt/agent binding")
+    if not all((run, task, attempt)):
+        _error("invalid run/task/attempt binding")
     if not (
         task["root_id"] == run["root_id"]
         and attempt["root_id"] == run["root_id"]
         and attempt["task_id"] == task["task_id"]
-        and agent["root_id"] == run["root_id"]
-        and agent["task_id"] == task["task_id"]
-        and agent["attempt_id"] == attempt["attempt_id"]
-        and attempt["agent_id"] == agent["agent_id"]
     ):
-        _error("invalid run/task/attempt/agent binding")
-    if not state_store.token_matches(envelope["actor_token"], agent["actor_token_hash"]):
+        _error("invalid run/task/attempt binding")
+    if not state_store.token_matches(envelope["actor_token"], attempt["actor_token_hash"]):
         _error("invalid actor token")
 
     cached = con.execute(
-        "SELECT agent_id, response_json FROM processed_actions WHERE root_id=? AND action_id=?",
+        "SELECT attempt_id, response_json FROM processed_actions WHERE root_id=? AND action_id=?",
         (run["root_id"], envelope["action_id"]),
     ).fetchone()
     if cached is not None and allow_cached:
-        if cached["agent_id"] != agent["agent_id"]:
-            _error("action_id was already used by a different agent")
+        if cached["attempt_id"] != attempt["attempt_id"]:
+            _error("action_id was already used by a different attempt")
         return None, json.loads(cached["response_json"])
 
     if run["status"] != "running":
         _error("run is not running")
-    if task["current_attempt_id"] != attempt["attempt_id"]:
+    current_attempt = state_store.get_current_attempt(task["task_id"], con)
+    if current_attempt is None or current_attempt["attempt_id"] != attempt["attempt_id"]:
         _error("attempt is not the task current attempt")
-    if agent["state"] == "terminal":
-        _error("agent is terminal")
+    if attempt["state"] in {"done", "failed", "cancelled"}:
+        _error("attempt is terminal")
     if task["task_id"] == run["root_task_id"]:
         if not state_store.token_matches(envelope["actor_token"], run["owner_token_hash"]):
             _error("root owner lease token is invalid")
@@ -107,26 +102,33 @@ def _load_context(con, envelope, allow_cached=True):
             "UPDATE runs SET lease_expires_at=?, updated_at=? WHERE root_id=?",
             (state_store.now() + OWNER_LEASE_SECONDS, state_store.now(), run["root_id"]),
         )
-    capabilities = _capabilities({"run": run, "task": task, "attempt": attempt, "agent": agent})
+    capabilities = _capabilities({"run": run, "task": task, "attempt": attempt})
     if envelope["type"] not in capabilities:
-        _error("action %s is not an available capability in state %s" % (envelope["type"], agent["state"]))
+        _error("action %s is not an available capability in state %s" % (envelope["type"], attempt["state"]))
     con.execute(
-        "UPDATE agents SET heartbeat_at=? WHERE agent_id=?",
-        (state_store.now(), agent["agent_id"]),
+        "UPDATE attempts SET heartbeat_at=? WHERE attempt_id=?",
+        (state_store.now(), attempt["attempt_id"]),
     )
-    agent["heartbeat_at"] = state_store.now()
-    return {"run": run, "task": task, "attempt": attempt, "agent": agent}, None
+    attempt["heartbeat_at"] = state_store.now()
+    return {"run": run, "task": task, "attempt": attempt}, None
 
 
 def _record_response(con, context, envelope, response):
+    launch = state_store.get_current_launch(context["attempt"]["attempt_id"], con)
+    session = (
+        state_store.get_session_for_launch(launch["launch_id"], con)
+        if launch is not None
+        else None
+    )
     con.execute(
         """INSERT INTO processed_actions(
-             root_id, action_id, agent_id, response_json, processed_at
-           ) VALUES (?, ?, ?, ?, ?)""",
+             root_id, action_id, attempt_id, source_session_pk, response_json, processed_at
+           ) VALUES (?, ?, ?, ?, ?, ?)""",
         (
             context["run"]["root_id"],
             envelope["action_id"],
-            context["agent"]["agent_id"],
+            context["attempt"]["attempt_id"],
+            session.get("session_pk") if session else None,
             _json(response),
             state_store.now(),
         ),
@@ -135,7 +137,7 @@ def _record_response(con, context, envelope, response):
 
 def _estimate(con, context, payload, action_id):
     task = context["task"]
-    agent = context["agent"]
+    attempt = context["attempt"]
     run = context["run"]
     _require_fields(
         payload,
@@ -168,7 +170,7 @@ def _estimate(con, context, payload, action_id):
     if not isinstance(payload.get("reason"), str) or not payload["reason"].strip():
         _error("estimate reason is required")
 
-    if agent["state"] == "evaluating":
+    if attempt["state"] == "evaluating":
         if revision:
             _error("first estimate cannot be a revision")
         supplied_intent = payload.get("resolved_intent")
@@ -215,18 +217,21 @@ def _estimate(con, context, payload, action_id):
            WHERE task_id=?""",
         (resolved_intent, _json(stored), task["task_id"]),
     )
-    con.execute("UPDATE agents SET state='active' WHERE agent_id=?", (agent["agent_id"],))
+    con.execute(
+        "UPDATE attempts SET state='active', started_at=COALESCE(started_at, ?) WHERE attempt_id=?",
+        (state_store.now(), attempt["attempt_id"]),
+    )
+    con.execute("UPDATE tasks SET status='active' WHERE task_id=?", (task["task_id"],))
     task["resolved_intent"] = resolved_intent
     task["estimate_json"] = _json(stored)
-    agent["state"] = "active"
+    attempt["state"] = "active"
     state_store.append_event(
         con,
         run["root_id"],
         "EstimateSubmitted",
         {"strategy": effective, "revision": revision, "complexity": payload["complexity"]},
         task_id=task["task_id"],
-        attempt_id=context["attempt"]["attempt_id"],
-        agent_id=agent["agent_id"],
+        attempt_id=attempt["attempt_id"],
         action_id=action_id,
     )
     capabilities = _capabilities(context)
@@ -356,7 +361,6 @@ def _create_tasks(con, context, payload, action_id):
     if any(not isinstance(key, str) or not key.strip() for key in keys) or len(set(keys)) != len(keys):
         _error("task keys must be non-empty and unique within the action")
     parent_constraints = json.loads(parent.get("constraints_json") or "{}")
-    ids = {key: "task_%s" % uuid.uuid4().hex[:12] for key in keys}
     dependency_keys = {}
     normalized = []
     for spec in specs:
@@ -393,48 +397,57 @@ def _create_tasks(con, context, payload, action_id):
                 _error("dependency must be an object")
             task_key = dependency.get("task_key")
             task_id_reference = dependency.get("task_id")
-            if bool(task_key) == bool(task_id_reference):
+            has_task_key = task_key is not None
+            has_task_id = task_id_reference is not None
+            if has_task_key == has_task_id:
                 _error("dependency must provide exactly one of task_key or task_id")
             condition = dependency.get("condition", "success")
             if condition not in {"success", "terminal"}:
                 _error("dependency condition must be success or terminal")
-            if task_key:
-                if not isinstance(task_key, str) or task_key not in ids:
+            if has_task_key:
+                if not isinstance(task_key, str) or task_key not in keys:
                     _error("dependency task_key must reference this action")
-                dependency_id = ids[task_key]
                 new_refs.append(task_key)
+                dependency_ref = ("key", task_key)
             else:
-                if not isinstance(task_id_reference, str) or not task_id_reference:
-                    _error("dependency task_id must be a non-empty string")
-                dependency_id = task_id_reference
-                existing = state_store.get_task(dependency_id, con) if dependency_id else None
+                if isinstance(task_id_reference, bool) or not isinstance(task_id_reference, int):
+                    _error("dependency task_id must be an integer")
+                existing = state_store.get_task(task_id_reference, con)
                 if existing is None or existing["root_id"] != run["root_id"]:
                     _error("dependency must reference this action or an existing task in the run")
-            if dependency_id == ids[spec["key"]]:
+                dependency_ref = ("id", task_id_reference)
+            if has_task_key and task_key == spec["key"]:
                 _error("task cannot depend on itself")
-            if dependency_id in seen_dependency_ids:
+            if dependency_ref in seen_dependency_ids:
                 _error("duplicate dependency for child task")
-            seen_dependency_ids.add(dependency_id)
-            resolved_dependencies.append((dependency_id, condition))
+            seen_dependency_ids.add(dependency_ref)
+            resolved_dependencies.append((dependency_ref, condition))
         dependency_keys[spec["key"]] = new_refs
         normalized.append((spec, constraints, resolved_dependencies))
     _detect_cycle(set(keys), dependency_keys)
 
     created_at = state_store.now()
+    launch = state_store.get_current_launch(context["attempt"]["attempt_id"], con)
+    session = (
+        state_store.get_session_for_launch(launch["launch_id"], con)
+        if launch is not None
+        else None
+    )
+    ids = {}
     response_tasks = []
     for index, (spec, constraints, dependencies) in enumerate(normalized):
-        task_id = ids[spec["key"]]
         task_created_at = created_at + index * 0.000001
-        con.execute(
+        cursor = con.execute(
             """INSERT INTO tasks(
-                 task_id, root_id, parent_task_id, goal, intent_hint, status, priority,
+                 root_id, parent_task_id, created_by_session_pk, goal, intent_hint,
+                 status, priority,
                  complexity_hint, model_tier_hint, output_contract, constraints_json,
                  delegation_depth, replan_count, created_at
                ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, 0, ?)""",
             (
-                task_id,
                 run["root_id"],
                 parent["task_id"],
+                session.get("session_pk") if session else None,
                 spec["goal"].strip(),
                 spec["intent_hint"],
                 spec.get("priority", 50),
@@ -446,20 +459,25 @@ def _create_tasks(con, context, payload, action_id):
                 task_created_at,
             ),
         )
+        task_id = cursor.lastrowid
+        ids[spec["key"]] = task_id
         state_store.append_event(
             con,
             run["root_id"],
             "TaskCreated",
             {"key": spec["key"], "intent_hint": spec["intent_hint"]},
             task_id=task_id,
-            agent_id=context["agent"]["agent_id"],
+            attempt_id=context["attempt"]["attempt_id"],
+            session_pk=session.get("session_pk") if session else None,
             action_id=action_id,
         )
         response_tasks.append({"key": spec["key"], "task_id": task_id})
     for spec, constraints, dependencies in normalized:
         del constraints
         task_id = ids[spec["key"]]
-        for dependency_id, condition in dependencies:
+        for dependency_ref, condition in dependencies:
+            kind, value = dependency_ref
+            dependency_id = ids[value] if kind == "key" else value
             con.execute(
                 "INSERT INTO task_dependencies(task_id, depends_on_task_id, condition) VALUES (?, ?, ?)",
                 (task_id, dependency_id, condition),
@@ -472,7 +490,7 @@ def _create_tasks(con, context, payload, action_id):
         {"task_ids": [item["task_id"] for item in response_tasks]},
         task_id=parent["task_id"],
         attempt_id=context["attempt"]["attempt_id"],
-        agent_id=context["agent"]["agent_id"],
+        session_pk=session.get("session_pk") if session else None,
         action_id=action_id,
     )
     return {"accepted": True, "tasks": response_tasks}
@@ -490,7 +508,6 @@ def _write_note(con, context, payload, action_id):
         {"note_id": note_id, "category": payload.get("category")},
         task_id=context["task"]["task_id"],
         attempt_id=context["attempt"]["attempt_id"],
-        agent_id=context["agent"]["agent_id"],
         action_id=action_id,
     )
     return {"accepted": True, "note_id": note_id}
@@ -539,7 +556,9 @@ def _validate_done_payload(con, context, payload):
     if root_task and context["run"]["require_final_review"]:
         changed_anywhere = bool(changed_files)
         for row in state_store.fetchall(
-            "SELECT result_json FROM task_attempts WHERE root_id=? AND result_json IS NOT NULL",
+            """SELECT a.result_json FROM attempts a
+               JOIN tasks t ON t.task_id=a.task_id
+               WHERE t.root_id=? AND a.result_json IS NOT NULL""",
             (context["run"]["root_id"],),
             con,
         ):
@@ -555,7 +574,9 @@ def _validate_done_payload(con, context, payload):
 
     if isinstance(review, dict):
         source = review.get("source")
-        if isinstance(source, str) and source.startswith("task_"):
+        if source is not None:
+            if isinstance(source, bool) or not isinstance(source, int):
+                _error("review source must be an integer task_id")
             source_task = state_store.get_task(source, con)
             if (
                 source_task is None
@@ -599,7 +620,6 @@ def _finish(con, context, payload, action_id):
     run = context["run"]
     task = context["task"]
     attempt = context["attempt"]
-    agent = context["agent"]
     finished = state_store.now()
     warnings = []
 
@@ -617,15 +637,11 @@ def _finish(con, context, payload, action_id):
             state_store.append_event(
                 con, run["root_id"], "ScopeWarning", {"warning": warning},
                 task_id=task["task_id"], attempt_id=attempt["attempt_id"],
-                agent_id=agent["agent_id"], action_id=action_id,
+                action_id=action_id,
             )
         con.execute(
-            "UPDATE task_attempts SET status='done', retryable=0, result_json=?, finished_at=? WHERE attempt_id=?",
+            "UPDATE attempts SET state='done', retryable=0, result_json=?, finished_at=? WHERE attempt_id=?",
             (_json(payload), finished, attempt["attempt_id"]),
-        )
-        con.execute(
-            "UPDATE agents SET state='terminal', finished_at=? WHERE agent_id=?",
-            (finished, agent["agent_id"]),
         )
         con.execute(
             "UPDATE tasks SET status='done', finished_at=? WHERE task_id=?",
@@ -634,12 +650,12 @@ def _finish(con, context, payload, action_id):
         state_store.append_event(
             con, run["root_id"], "AttemptFinished", {"status": "done"},
             task_id=task["task_id"], attempt_id=attempt["attempt_id"],
-            agent_id=agent["agent_id"], action_id=action_id,
+            action_id=action_id,
         )
         state_store.append_event(
             con, run["root_id"], "TaskFinished", {"summary": payload["summary"]},
             task_id=task["task_id"], attempt_id=attempt["attempt_id"],
-            agent_id=agent["agent_id"], action_id=action_id,
+            action_id=action_id,
         )
         retry_scheduled = False
         if task["task_id"] == run["root_task_id"]:
@@ -649,22 +665,27 @@ def _finish(con, context, payload, action_id):
                 (run["root_id"],),
             ).fetchone()["n"]
             live = con.execute(
-                "SELECT COUNT(*) AS n FROM task_attempts WHERE root_id=? AND status IN ('assigned','running')",
+                """SELECT COUNT(*) AS n FROM attempts a
+                   JOIN tasks t ON t.task_id=a.task_id
+                   WHERE t.root_id=? AND a.state IN
+                     ('assigned','evaluating','active','waiting','stopping')""",
                 (run["root_id"],),
             ).fetchone()["n"]
             effects = con.execute(
-                """SELECT COUNT(*) AS n FROM side_effect_outbox
+                """SELECT COUNT(*) AS n FROM effects
                    WHERE root_id=? AND effect_type IN ('spawn_agent','stop_agent')
                      AND status IN ('pending','running')""",
                 (run["root_id"],),
             ).fetchone()["n"]
-            executions = con.execute(
-                """SELECT COUNT(*) AS n FROM execution_sessions
-                   WHERE root_id=? AND status != 'closed'""",
+            launches = con.execute(
+                """SELECT COUNT(*) AS n FROM launches l
+                   JOIN attempts a ON a.attempt_id=l.attempt_id
+                   JOIN tasks t ON t.task_id=a.task_id
+                   WHERE t.root_id=? AND l.status != 'closed'""",
                 (run["root_id"],),
             ).fetchone()["n"]
-            if executions:
-                _error("root closeout requires no non-terminal execution records")
+            if launches:
+                _error("root closeout requires no open launches")
             if remaining or live or effects:
                 _error("root closeout requires all tasks done and no live attempts or pending effects")
             con.execute(
@@ -679,12 +700,8 @@ def _finish(con, context, payload, action_id):
     else:
         retryable = payload.get("retryable") is True
         con.execute(
-            "UPDATE task_attempts SET status='failed', retryable=?, result_json=?, finished_at=? WHERE attempt_id=?",
+            "UPDATE attempts SET state='failed', retryable=?, result_json=?, finished_at=? WHERE attempt_id=?",
             (1 if retryable else 0, _json(payload), finished, attempt["attempt_id"]),
-        )
-        con.execute(
-            "UPDATE agents SET state='terminal', finished_at=? WHERE agent_id=?",
-            (finished, agent["agent_id"]),
         )
         if task["task_id"] == run["root_task_id"]:
             con.execute(
@@ -703,7 +720,7 @@ def _finish(con, context, payload, action_id):
             )
             state_store.append_event(
                 con, run["root_id"], "TaskRetryScheduled", {"previous_attempt": attempt["attempt_id"]},
-                task_id=task["task_id"], attempt_id=attempt["attempt_id"], agent_id=agent["agent_id"],
+                task_id=task["task_id"], attempt_id=attempt["attempt_id"],
             )
             scheduler.schedule_with_connection(con, run["root_id"])
             retry_scheduled = True
@@ -714,7 +731,7 @@ def _finish(con, context, payload, action_id):
             )
             state_store.append_event(
                 con, run["root_id"], "TaskFailed", {"summary": payload["summary"]},
-                task_id=task["task_id"], attempt_id=attempt["attempt_id"], agent_id=agent["agent_id"],
+                task_id=task["task_id"], attempt_id=attempt["attempt_id"],
             )
             scheduler.schedule_with_connection(con, run["root_id"])
             retry_scheduled = False
@@ -722,7 +739,7 @@ def _finish(con, context, payload, action_id):
         state_store.append_event(
             con, run["root_id"], "AttemptFinished", {"status": "failed", "retryable": retryable},
             task_id=task["task_id"], attempt_id=attempt["attempt_id"],
-            agent_id=agent["agent_id"], action_id=action_id,
+            action_id=action_id,
         )
 
     return {
@@ -740,7 +757,7 @@ def _task_summaries(con, root_id, task_ids):
     summaries = []
     for task_id in task_ids:
         task = state_store.get_task(task_id, con)
-        attempt = state_store.get_attempt(task.get("current_attempt_id"), con) if task else None
+        attempt = state_store.get_current_attempt(task["task_id"], con) if task else None
         result = json.loads(attempt["result_json"]) if attempt and attempt.get("result_json") else None
         summaries.append(
             {
@@ -789,7 +806,9 @@ def _wait(envelope, poll_interval):
     task_ids = payload.get("task_ids")
     condition = payload.get("condition")
     listen_seconds = payload.get("listen_seconds")
-    if not isinstance(task_ids, list) or not task_ids or not all(isinstance(item, str) for item in task_ids):
+    if not isinstance(task_ids, list) or not task_ids or not all(
+        isinstance(item, int) and not isinstance(item, bool) for item in task_ids
+    ):
         _error("wait task_ids must be a non-empty array")
     if condition not in {"all_done", "all_terminal", "any_failed"}:
         _error("wait condition must be all_done, all_terminal, or any_failed")
@@ -809,11 +828,15 @@ def _wait(envelope, poll_interval):
             task = state_store.get_task(task_id, con)
             if task is None or task["root_id"] != context["run"]["root_id"]:
                 _error("wait tasks must belong to the current run")
-        con.execute("UPDATE agents SET state='waiting' WHERE agent_id=?", (context["agent"]["agent_id"],))
+        con.execute(
+            "UPDATE attempts SET state='waiting' WHERE attempt_id=?",
+            (context["attempt"]["attempt_id"],),
+        )
+        context["attempt"]["state"] = "waiting"
         state_store.append_event(
             con, context["run"]["root_id"], "AgentWaiting", {"task_ids": task_ids, "condition": condition},
             task_id=context["task"]["task_id"], attempt_id=context["attempt"]["attempt_id"],
-            agent_id=context["agent"]["agent_id"], action_id=envelope["action_id"],
+            action_id=envelope["action_id"],
         )
 
     watchdog = _run_root_watchdog(context, envelope["actor_token"])
@@ -836,11 +859,11 @@ def _wait(envelope, poll_interval):
         context, cached = _load_context(con, envelope)
         if cached is not None:
             return cached
-        if context["agent"]["state"] != "waiting":
-            _error("waiting agent state changed unexpectedly")
+        if context["attempt"]["state"] != "waiting":
+            _error("waiting attempt state changed unexpectedly")
         con.execute(
-            "UPDATE agents SET state='active', heartbeat_at=? WHERE agent_id=?",
-            (state_store.now(), context["agent"]["agent_id"]),
+            "UPDATE attempts SET state='active', heartbeat_at=? WHERE attempt_id=?",
+            (state_store.now(), context["attempt"]["attempt_id"]),
         )
         response = {
             "complete": complete,
@@ -852,7 +875,7 @@ def _wait(envelope, poll_interval):
         state_store.append_event(
             con, context["run"]["root_id"], "AgentResumed", {"complete": complete},
             task_id=context["task"]["task_id"], attempt_id=context["attempt"]["attempt_id"],
-            agent_id=context["agent"]["agent_id"], action_id=envelope["action_id"],
+            action_id=envelope["action_id"],
         )
         _record_response(con, context, envelope, response)
         return response
@@ -909,12 +932,14 @@ def _audit_rejection(envelope, message):
     try:
         with state_store.transaction() as con:
             run = state_store.get_run(envelope.get("root_id"), con)
-            agent = state_store.get_agent(envelope.get("agent_id"), con)
+            attempt = state_store.get_attempt(envelope.get("attempt_id"), con)
             if (
                 run is None
-                or agent is None
-                or agent["root_id"] != run["root_id"]
-                or not state_store.token_matches(envelope.get("actor_token"), agent["actor_token_hash"])
+                or attempt is None
+                or attempt["root_id"] != run["root_id"]
+                or not state_store.token_matches(
+                    envelope.get("actor_token"), attempt["actor_token_hash"]
+                )
             ):
                 return
             state_store.append_event(
@@ -924,7 +949,6 @@ def _audit_rejection(envelope, message):
                 {"action_type": envelope.get("type"), "reason": message},
                 task_id=envelope.get("task_id"),
                 attempt_id=envelope.get("attempt_id"),
-                agent_id=envelope.get("agent_id"),
                 action_id=envelope.get("action_id"),
             )
     except Exception:

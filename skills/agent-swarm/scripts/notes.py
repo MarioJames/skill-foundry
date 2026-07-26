@@ -88,13 +88,13 @@ def write_note(con, context, payload):
 
     cursor = con.execute(
         """INSERT INTO run_notes(
-             root_id, task_id, agent_id, category, scope, content, pinned,
+             root_id, task_id, created_by_attempt_id, category, scope, content, pinned,
              supersedes_id, active, created_at
            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
         (
             context["run"]["root_id"],
             context["task"]["task_id"],
-            context["agent"]["agent_id"],
+            context["attempt"]["attempt_id"],
             category,
             scope,
             content.strip(),

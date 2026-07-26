@@ -24,9 +24,7 @@ class Phase1BootstrapTests(unittest.TestCase):
             child = scheduler.schedule(identity["root_id"])[0]
             task = state_store.get_task(child["task_id"])
             attempt = state_store.get_attempt(child["attempt_id"])
-            agent = state_store.get_agent(child["agent_id"])
-
-            prompt = prompt_builder.build_prompt(run, task, attempt, agent)
+            prompt = prompt_builder.build_prompt(run, task, attempt)
 
             self.assertIn('"$AGENT_SWARM_SKILL_DIR/SKILL.md"', prompt)
 
@@ -45,9 +43,7 @@ class Phase1BootstrapTests(unittest.TestCase):
             child = scheduler.schedule(identity["root_id"])[0]
             task = state_store.get_task(child["task_id"])
             attempt = state_store.get_attempt(child["attempt_id"])
-            agent = state_store.get_agent(child["agent_id"])
-
-            prompt = prompt_builder.build_prompt(run, task, attempt, agent)
+            prompt = prompt_builder.build_prompt(run, task, attempt)
 
             self.assertIn("bootstrap-cwd", prompt)
             self.assertNotIn("claude --bg", prompt)
@@ -75,14 +71,11 @@ class Phase1BootstrapTests(unittest.TestCase):
                 insert_ready_child(con, run)
             child = scheduler.schedule(identity["root_id"])[0]
             run = state_store.get_run(identity["root_id"])
-            token = execution_secrets.derive_attempt_token(
-                run, child["attempt_id"], child["agent_id"]
-            )
+            token = execution_secrets.derive_attempt_token(run, child["attempt_id"])
             environment = {
                 "AGENT_SWARM_ROOT_ID": identity["root_id"],
-                "AGENT_SWARM_TASK_ID": child["task_id"],
-                "AGENT_SWARM_ATTEMPT_ID": child["attempt_id"],
-                "AGENT_SWARM_AGENT_ID": child["agent_id"],
+                "AGENT_SWARM_TASK_ID": str(child["task_id"]),
+                "AGENT_SWARM_ATTEMPT_ID": str(child["attempt_id"]),
                 "AGENT_SWARM_ACTOR_TOKEN": token,
             }
             output = io.StringIO()

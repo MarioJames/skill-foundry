@@ -23,17 +23,17 @@ def _ensure_private_directory(directory):
     os.chmod(str(directory), 0o700)
 
 
-def endpoint_path(runtime_root, root_id, attempt_id, generation):
+def endpoint_path(runtime_root, root_id, launch_id):
     runtime_root = pathlib.Path(runtime_root)
     directory = runtime_root / "control" / root_id
-    filename = "%s-%d.sock" % (attempt_id, int(generation))
+    filename = "launch-%d.sock" % int(launch_id)
     candidate = directory / filename
     # macOS sockaddr_un.sun_path is only 104 bytes. Keep the descriptive
     # default when it fits, otherwise use a deterministic, non-secret digest
     # under the same protected Runtime home.
     if len(os.fsencode(str(candidate))) > UNIX_SOCKET_PATH_LIMIT:
         digest = hashlib.sha256(
-            ("%s|%s|%d" % (root_id, attempt_id, int(generation))).encode("utf-8")
+            ("%s|%d" % (root_id, int(launch_id))).encode("utf-8")
         ).hexdigest()[:16]
         directory = runtime_root / "control" / ".s"
         candidate = directory / (digest + ".sock")
@@ -45,8 +45,8 @@ def endpoint_path(runtime_root, root_id, attempt_id, generation):
         runtime_identity = os.path.realpath(str(runtime_root))
         digest = hashlib.sha256(
             (
-                "%s|%s|%s|%d"
-                % (runtime_identity, root_id, attempt_id, int(generation))
+                "%s|%s|%d"
+                % (runtime_identity, root_id, int(launch_id))
             ).encode("utf-8")
         ).hexdigest()[:24]
         uid = getattr(os, "getuid", lambda: "unknown")()

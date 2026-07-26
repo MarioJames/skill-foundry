@@ -1,7 +1,5 @@
 import json
 import unittest
-import uuid
-from unittest import mock
 
 from helpers import insert_ready_child, isolated_runtime
 
@@ -16,53 +14,35 @@ from backends.base import (
     BackendPendingError,
     BackendUnknownError,
     ObserveResult,
+    SpawnResult,
 )
 
 
-class DeferredBackend(AgentBackend):
-    backend_id = "test"
+class StubBackend(AgentBackend):
+    backend_id = "stub"
 
-    def __init__(self, error_type):
-        self.error_type = error_type
+    def __init__(self, presence="present", spawn_error=None):
+        self.presence = presence
+        self.spawn_error = spawn_error
+        self.stops = []
 
     def spawn(self, request):
-        raise self.error_type("deterministic deferred spawn")
-
-    def stop(self, request):
-        return {"stopped": True}
-
-    def observe(self, *, job_id=None, session_name=None, cwd=None):
-        return ObserveResult("unknown")
-
-    def list_sessions(self, *, cwd=None):
-        return []
-
-    def supports_hooks(self):
-        return False
-
-
-class RecordingStopBackend(DeferredBackend):
-    def __init__(self):
-        super().__init__(BackendPendingError)
-        self.stops = []
+        if self.spawn_error:
+            raise self.spawn_error
+        return SpawnResult("job-%s" % request.metadata["launch_id"], request.session_name)
 
     def stop(self, request):
         self.stops.append(request)
         return {"stopped": True}
 
-
-class PresenceBackend(DeferredBackend):
-    def __init__(self, presence):
-        super().__init__(BackendPendingError)
-        self.presence = presence
-
-    def observe(self, *, job_id=None, session_name=None, cwd=None):
+    def observe(self, **kwargs):
         return ObserveResult(self.presence)
 
+    def list_sessions(self, **kwargs):
+        return []
 
-def initialize(cwd, **overrides):
-    with mock.patch.object(agent_orchestrator.hook_manager, "ensure_project_hooks"):
-        return agent_orchestrator.initialize_run("root", str(cwd), **overrides)
+    def supports_hooks(self):
+        return False
 
 
 def create_child(identity):
@@ -72,259 +52,130 @@ def create_child(identity):
     return scheduler.schedule(identity["root_id"])[0]
 
 
-def envelope(identity, action_type, payload):
-    return {
-        "schema_version": 1,
-        "action_id": "action_" + uuid.uuid4().hex,
-        "root_id": identity["root_id"],
-        "task_id": identity["task_id"],
-        "attempt_id": identity["attempt_id"],
-        "agent_id": identity["agent_id"],
-        "actor_token": identity["actor_token"],
-        "type": action_type,
-        "payload": payload,
-    }
-
-
-ESTIMATE = {
-    "revision": False,
-    "strategy": "direct",
-    "resolved_intent": "implement",
-    "complexity": "low",
-    "concerns": [],
-    "unknowns": [],
-    "estimated_files": [],
-    "reason": "test",
-}
-
-
-FINISH = {
-    "status": "done",
-    "retryable": False,
-    "summary": "done",
-    "changed_files": [],
-    "artifacts": [],
-    "validation": None,
-    "review": None,
-    "integration_check": None,
-    "caveats": [],
-}
-
-
 class Phase1ReconciliationTests(unittest.TestCase):
-    def test_reap_closes_terminal_claude_execution_only_after_session_is_absent(self):
+    def _run(self, cwd, **kwargs):
+        return agent_orchestrator.initialize_run(
+            "root", str(cwd), backend="claude_cli", require_final_review=False, **kwargs
+        )
+
+    def test_terminal_launch_closes_only_after_backend_absence(self):
         with isolated_runtime() as (_, cwd):
-            identity = initialize(cwd)
+            identity = self._run(cwd)
             child = create_child(identity)
+            backend = StubBackend("present")
+            outbox.drain(identity["root_id"], adapter=backend)
             with state_store.transaction() as con:
-                finished = state_store.now()
-                con.execute(
-                    "UPDATE task_attempts SET status='done', finished_at=? WHERE attempt_id=?",
-                    (finished, child["attempt_id"]),
-                )
-                con.execute(
-                    "UPDATE tasks SET status='done', finished_at=? WHERE task_id=?",
-                    (finished, child["task_id"]),
-                )
-                con.execute(
-                    "UPDATE agents SET state='terminal', finished_at=? WHERE agent_id=?",
-                    (finished, child["agent_id"]),
-                )
-                con.execute(
-                    "UPDATE execution_sessions SET status='running', ready_at=? WHERE attempt_id=?",
-                    (finished, child["attempt_id"]),
-                )
+                con.execute("UPDATE attempts SET state='done' WHERE attempt_id=?", (child["attempt_id"],))
+                con.execute("UPDATE tasks SET status='done' WHERE task_id=?", (child["task_id"],))
+            recovery.reap_children(identity["root_id"], identity["actor_token"], adapter=backend)
+            self.assertEqual("running", state_store.get_launch(child["launch_id"])["status"])
+            backend.presence = "absent"
+            recovery.reap_children(identity["root_id"], identity["actor_token"], adapter=backend)
+            self.assertEqual("closed", state_store.get_launch(child["launch_id"])["status"])
 
-            present = recovery.reap_children(
-                identity["root_id"], identity["actor_token"],
-                adapter=PresenceBackend("present"),
-            )
-            self.assertEqual(
-                "running", state_store.get_execution(child["attempt_id"])["status"]
-            )
-            self.assertEqual(0, present["execution_outcomes"]["reconciled_terminal"])
-
-            absent = recovery.reap_children(
-                identity["root_id"], identity["actor_token"],
-                adapter=PresenceBackend("absent"),
-            )
-
-            execution = state_store.get_execution(child["attempt_id"])
-            self.assertEqual("closed", execution["status"])
-            self.assertEqual("attempt_terminal", execution["exit_reason"])
-            self.assertIsNotNone(execution["closed_at"])
-            self.assertEqual(1, absent["execution_outcomes"]["reconciled_terminal"])
-
-    def test_pending_and_unknown_spawn_do_not_fail_attempt_or_consume_retry(self):
-        for error_type in (BackendPendingError, BackendUnknownError):
-            with self.subTest(error_type=error_type.__name__), isolated_runtime() as (_, cwd):
-                identity = initialize(cwd)
+    def test_pending_and_unknown_spawn_do_not_consume_attempt(self):
+        for error in (BackendPendingError("pending"), BackendUnknownError("unknown")):
+            with self.subTest(error=type(error).__name__), isolated_runtime() as (_, cwd):
+                identity = self._run(cwd)
                 child = create_child(identity)
-
-                summary = outbox.drain(
-                    identity["root_id"], adapter=DeferredBackend(error_type), max_effects=1
+                result = outbox.drain(
+                    identity["root_id"], adapter=StubBackend(spawn_error=error)
                 )
-
-                effect = state_store.list_outbox(identity["root_id"])[0]
-                self.assertEqual("pending", effect["status"])
-                self.assertEqual("assigned", state_store.get_attempt(child["attempt_id"])["status"])
-                self.assertEqual(1, len(state_store.list_attempts(identity["root_id"])) - 1)
-                self.assertEqual(1, summary["deferred"])
-                self.assertEqual(0, summary["failed"])
+                self.assertEqual(1, result["deferred"])
+                self.assertEqual("assigned", state_store.get_attempt(child["attempt_id"])["state"])
+                self.assertEqual(1, len([a for a in state_store.list_attempts(identity["root_id"]) if a["task_id"] == child["task_id"]]))
 
     def test_turn_end_reconciliation_is_idempotent_and_schedules_one_retry(self):
         with isolated_runtime() as (_, cwd):
-            identity = initialize(cwd, max_attempts_per_task=2)
+            identity = self._run(cwd)
             child = create_child(identity)
+            backend = StubBackend("present")
+            outbox.drain(identity["root_id"], adapter=backend)
             with state_store.transaction() as con:
                 con.execute(
-                    """UPDATE execution_sessions
-                       SET status='closed', prompt_state='ended',
-                           exit_reason='without_finish:end_turn', closed_at=?
-                       WHERE attempt_id=?""",
-                    (state_store.now(), child["attempt_id"]),
+                    """UPDATE launches SET status='closed', prompt_state='ended',
+                         exit_reason='without_finish', closed_at=? WHERE launch_id=?""",
+                    (state_store.now(), child["launch_id"]),
                 )
-
-            first = recovery.reconcile_execution_outcomes(identity["root_id"])
-            second = recovery.reconcile_execution_outcomes(identity["root_id"])
-
+            recovery.reap_children(identity["root_id"], identity["actor_token"], adapter=backend)
+            recovery.reap_children(identity["root_id"], identity["actor_token"], adapter=backend)
             attempts = [
-                item
-                for item in state_store.list_attempts(identity["root_id"])
-                if item["task_id"] == child["task_id"]
-            ]
-            self.assertEqual(1, first["reconciled_failures"])
-            self.assertEqual(0, second["reconciled_failures"])
-            self.assertEqual(2, len(attempts))
-            self.assertEqual("failed", state_store.get_attempt(child["attempt_id"])["status"])
-            self.assertIsNotNone(state_store.get_execution(child["attempt_id"])["reconciled_at"])
-
-    def test_legitimate_terminal_attempt_is_only_marked_reconciled(self):
-        with isolated_runtime() as (_, cwd):
-            identity = initialize(cwd)
-            child = create_child(identity)
-            with state_store.transaction() as con:
-                finished = state_store.now()
-                con.execute(
-                    "UPDATE task_attempts SET status='done', finished_at=? WHERE attempt_id=?",
-                    (finished, child["attempt_id"]),
-                )
-                con.execute(
-                    "UPDATE tasks SET status='done', finished_at=? WHERE task_id=?",
-                    (finished, child["task_id"]),
-                )
-                con.execute(
-                    "UPDATE agents SET state='terminal', finished_at=? WHERE agent_id=?",
-                    (finished, child["agent_id"]),
-                )
-                con.execute(
-                    """UPDATE execution_sessions
-                       SET status='closed', exit_reason='attempt_terminal', closed_at=?
-                       WHERE attempt_id=?""",
-                    (finished, child["attempt_id"]),
-                )
-
-            result = recovery.reconcile_execution_outcomes(identity["root_id"])
-
-            self.assertEqual(1, result["reconciled_terminal"])
-            self.assertEqual("done", state_store.get_attempt(child["attempt_id"])["status"])
-            self.assertEqual(1, len([
                 item for item in state_store.list_attempts(identity["root_id"])
                 if item["task_id"] == child["task_id"]
-            ]))
+            ]
+            self.assertEqual(2, len(attempts))
+            self.assertEqual("failed", attempts[0]["state"])
+            self.assertEqual("assigned", attempts[1]["state"])
 
-    def test_root_finish_rejects_nonterminal_execution_record(self):
+    def test_root_finish_rejects_open_launch(self):
         with isolated_runtime() as (_, cwd):
-            identity = initialize(cwd, require_final_review=False)
-            action_processor.process_action(envelope(identity, "submit_estimate", ESTIMATE))
-            run = state_store.get_run(identity["root_id"])
-            with state_store.transaction() as con:
-                con.execute(
-                    """INSERT INTO execution_sessions(
-                         attempt_id, root_id, backend_id, generation, session_name,
-                         execution_id, config_json, status, prompt_state, created_at, last_event_at
-                       ) VALUES (?, ?, 'acp', 1, 'root-test', ?, '{}', 'running',
-                                 'in_flight', ?, ?)""",
-                    (
-                        identity["attempt_id"],
-                        identity["root_id"],
-                        "acp:%s:1" % identity["attempt_id"],
-                        state_store.now(),
-                        state_store.now(),
-                    ),
-                )
-
-            with self.assertRaisesRegex(
-                action_processor.ActionError, "non-terminal execution"
-            ):
-                action_processor.process_action(envelope(identity, "finish", FINISH))
-
-            self.assertEqual("running", state_store.get_run(run["root_id"])["status"])
-
-    def test_stop_fences_and_cleans_every_nonterminal_execution(self):
-        with isolated_runtime() as (_, cwd):
-            identity = initialize(cwd)
+            identity = self._run(cwd)
             child = create_child(identity)
+            backend = StubBackend("present")
+            outbox.drain(identity["root_id"], adapter=backend)
             with state_store.transaction() as con:
-                con.execute(
-                    "UPDATE agents SET state='terminal' WHERE agent_id=?",
-                    (child["agent_id"],),
-                )
-            backend = RecordingStopBackend()
+                con.execute("UPDATE attempts SET state='done' WHERE attempt_id=?", (child["attempt_id"],))
+                con.execute("UPDATE tasks SET status='done' WHERE task_id=?", (child["task_id"],))
+            estimate = {
+                **identity,
+                "schema_version": 1,
+                "action_id": "estimate-root",
+                "type": "submit_estimate",
+                "payload": {
+                    "revision": False,
+                    "strategy": "direct",
+                    "resolved_intent": "implement",
+                    "complexity": "low",
+                    "concerns": [],
+                    "unknowns": [],
+                    "estimated_files": [],
+                    "reason": "finish test",
+                },
+            }
+            action_processor.process_action(estimate)
+            finish = {
+                **identity,
+                "schema_version": 1,
+                "action_id": "finish-root",
+                "type": "finish",
+                "payload": {
+                    "status": "done",
+                    "summary": "done",
+                    "changed_files": [],
+                    "caveats": [],
+                    "integration_check": {"status": "passed", "summary": "ok"},
+                },
+            }
+            with self.assertRaisesRegex(action_processor.ActionError, "open launches"):
+                action_processor.process_action(finish)
 
+    def test_stop_fences_and_closes_every_launch(self):
+        with isolated_runtime() as (_, cwd):
+            identity = self._run(cwd)
+            first = create_child(identity)
+            backend = StubBackend("present")
+            outbox.drain(identity["root_id"], adapter=backend)
+            with state_store.transaction() as con:
+                run = state_store.get_run(identity["root_id"], con)
+                insert_ready_child(con, run)
+            second = scheduler.schedule(identity["root_id"])[0]
+            outbox.drain(identity["root_id"], adapter=backend)
             result = recovery.stop_run(
                 identity["root_id"], identity["actor_token"], adapter=backend
             )
+            self.assertEqual("cancelled", result["status"])
+            self.assertEqual(2, len(backend.stops))
+            self.assertTrue(all(item["status"] == "closed" for item in state_store.list_launches(identity["root_id"])))
 
-            execution = state_store.get_execution(child["attempt_id"])
-            self.assertTrue(result["terminal"], result)
-            self.assertEqual(1, len(backend.stops))
-            self.assertIsNotNone(execution["stop_requested_at"])
-            self.assertEqual("closed", execution["status"])
-
-    def test_stop_reconciles_deterministic_failure_without_creating_retry(self):
+    def test_unready_starting_launch_is_not_treated_as_failed_session(self):
         with isolated_runtime() as (_, cwd):
-            identity = initialize(cwd, max_attempts_per_task=3)
+            identity = self._run(cwd)
             child = create_child(identity)
-            with state_store.transaction() as con:
-                con.execute(
-                    """UPDATE execution_sessions
-                       SET status='closed', prompt_state='ended',
-                           exit_reason='without_finish:end_turn', closed_at=?
-                       WHERE attempt_id=?""",
-                    (state_store.now(), child["attempt_id"]),
-                )
-
-            result = recovery.stop_run(identity["root_id"], identity["actor_token"])
-
-            attempts = [
-                item for item in state_store.list_attempts(identity["root_id"])
-                if item["task_id"] == child["task_id"]
-            ]
-            self.assertTrue(result["terminal"], result)
-            self.assertEqual(1, result["execution_outcomes"]["reconciled_failures"])
-            self.assertEqual(1, len(attempts))
-            self.assertIsNotNone(
-                state_store.get_execution(child["attempt_id"])["reconciled_at"]
+            report = recovery.reap_children(
+                identity["root_id"], identity["actor_token"], adapter=StubBackend("absent")
             )
-
-    def test_recovery_does_not_treat_unready_starting_execution_as_session(self):
-        with isolated_runtime() as (_, cwd):
-            identity = initialize(
-                cwd,
-                backend="acp",
-                acp_agent="custom",
-                acp_command=__import__("sys").executable,
-                acp_args=["fake-agent.py"],
-            )
-            child = create_child(identity)
-
-            report = recovery.recover_run(
-                identity["root_id"], identity["actor_token"]
-            )
-
-            self.assertEqual(0, report["sessions_reconciled"])
-            self.assertEqual("assigned", state_store.get_attempt(child["attempt_id"])["status"])
+            self.assertEqual("starting_absent", report["reconciled"][0]["outcome"])
+            self.assertEqual("assigned", state_store.get_attempt(child["attempt_id"])["state"])
 
 
 if __name__ == "__main__":

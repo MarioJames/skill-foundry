@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import unittest
 from unittest import mock
 
@@ -11,111 +12,65 @@ import state_store
 
 
 class Phase0ExecutionConfigTests(unittest.TestCase):
-    def _create_run(self, cwd, **kwargs):
-        with mock.patch.object(agent_orchestrator.hook_manager, "ensure_project_hooks"):
-            return agent_orchestrator.initialize_run("root goal", str(cwd), **kwargs)
-
     def test_headless_acp_prompt_permission_policy_is_rejected_at_init(self):
         with isolated_runtime() as (_, cwd):
-            with self.assertRaisesRegex(ValueError, "no headless UI"):
-                self._create_run(
-                    cwd,
+            with self.assertRaisesRegex(ValueError, "headless UI"):
+                agent_orchestrator.initialize_run(
+                    "root",
+                    str(cwd),
                     backend="acp",
                     acp_agent="custom",
-                    acp_command=__import__("sys").executable,
+                    acp_command=sys.executable,
                     acp_permission_policy="prompt",
                 )
 
+    def _child(self, cwd, **kwargs):
+        identity = agent_orchestrator.initialize_run("root", str(cwd), **kwargs)
+        with state_store.transaction() as con:
+            run = state_store.get_run(identity["root_id"], con)
+            insert_ready_child(con, run)
+        return identity, scheduler.schedule(identity["root_id"])[0]
+
     def test_attempt_creation_freezes_persisted_run_config(self):
-        with isolated_runtime() as (_, cwd), mock.patch.dict(
-            os.environ,
-            {"AGENT_SWARM_BACKEND": "acp", "AGENT_SWARM_ACP_AGENT": "codex"},
-        ):
-            identity = self._create_run(cwd)
-            with state_store.transaction() as con:
-                run = state_store.get_run(identity["root_id"], con)
-                insert_ready_child(con, run)
-
-            with mock.patch.dict(
-                os.environ,
-                {"AGENT_SWARM_BACKEND": "claude_cli", "AGENT_SWARM_ACP_AGENT": "claude"},
-            ):
-                created = scheduler.schedule(identity["root_id"])
-
-            self.assertEqual(1, len(created))
-            execution = state_store.get_execution(created[0]["attempt_id"])
-            snapshot = json.loads(execution["config_json"])
-            self.assertEqual("acp", execution["backend_id"])
-            self.assertEqual("codex", execution["agent_key"])
-            self.assertEqual("acp", snapshot["backend"])
-            self.assertEqual("codex", snapshot["agent"])
-            self.assertEqual(1, execution["generation"])
-            self.assertIsNone(execution["owner_nonce"])
+        with isolated_runtime() as (_, cwd):
+            identity, child = self._child(cwd, backend="claude_cli")
+            attempt = state_store.get_attempt(child["attempt_id"])
+            launch = state_store.get_launch(child["launch_id"])
+            config = json.loads(attempt["config_json"])
+            self.assertEqual("claude_cli", attempt["backend_id"])
+            self.assertEqual("claude", attempt["agent_type"])
+            self.assertEqual(config, json.loads(launch["config_json"]))
+            self.assertEqual(1, launch["launch_no"])
 
     def test_attempt_snapshot_does_not_change_after_environment_mutation(self):
-        with isolated_runtime() as (_, cwd), mock.patch.dict(
-            os.environ,
-            {
-                "AGENT_SWARM_BACKEND": "acp",
-                "AGENT_SWARM_ACP_AGENT": "codex",
-                "AGENT_SWARM_ACP_PERMISSION_POLICY": "deny_all",
-            },
-        ):
-            identity = self._create_run(cwd)
-            with state_store.transaction() as con:
-                run = state_store.get_run(identity["root_id"], con)
-                insert_ready_child(con, run)
-            created = scheduler.schedule(identity["root_id"])
-            before = state_store.get_execution(created[0]["attempt_id"])["config_json"]
-
-            with mock.patch.dict(
-                os.environ,
-                {
-                    "AGENT_SWARM_BACKEND": "claude_cli",
-                    "AGENT_SWARM_ACP_AGENT": "claude",
-                    "AGENT_SWARM_ACP_PERMISSION_POLICY": "allow_all",
-                },
-            ):
-                after = state_store.get_execution(created[0]["attempt_id"])["config_json"]
-
+        with isolated_runtime() as (_, cwd):
+            with mock.patch.dict(os.environ, {"AGENT_SWARM_CLAUDE_BIN": "/first/claude"}):
+                identity, child = self._child(cwd, backend="claude_cli")
+            before = state_store.get_attempt(child["attempt_id"])["config_json"]
+            with mock.patch.dict(os.environ, {"AGENT_SWARM_CLAUDE_BIN": "/second/claude"}):
+                after = state_store.get_attempt(child["attempt_id"])["config_json"]
             self.assertEqual(before, after)
+            self.assertEqual("/first/claude", json.loads(after)["command"])
 
-    def test_generation_ownership_cas_allows_exactly_one_worker(self):
-        with isolated_runtime() as (_, cwd), mock.patch.dict(
-            os.environ, {"AGENT_SWARM_BACKEND": "acp", "AGENT_SWARM_ACP_AGENT": "codex"}
-        ):
-            identity = self._create_run(cwd)
-            with state_store.transaction() as con:
-                run = state_store.get_run(identity["root_id"], con)
-                insert_ready_child(con, run)
-            attempt_id = scheduler.schedule(identity["root_id"])[0]["attempt_id"]
+    def test_launch_ownership_cas_allows_exactly_one_worker(self):
+        with isolated_runtime() as (_, cwd):
+            _, child = self._child(cwd, backend="claude_cli")
+            self.assertTrue(state_store.claim_launch_ownership(child["launch_id"], "one", 1234))
+            self.assertFalse(state_store.claim_launch_ownership(child["launch_id"], "two", 5678))
+            launch = state_store.get_launch(child["launch_id"])
+            self.assertEqual("one", launch["owner_nonce"])
+            self.assertEqual(1234, launch["worker_pid"])
 
-            won = state_store.claim_execution_ownership(attempt_id, 1, "nonce-a", 111)
-            lost = state_store.claim_execution_ownership(attempt_id, 1, "nonce-b", 222)
-
-            self.assertTrue(won)
-            self.assertFalse(lost)
-            execution = state_store.get_execution(attempt_id)
-            self.assertEqual("nonce-a", execution["owner_nonce"])
-            self.assertEqual(111, execution["worker_pid"])
-
-    def test_stop_fence_rejects_unowned_worker_claim(self):
-        with isolated_runtime() as (_, cwd), mock.patch.dict(
-            os.environ, {"AGENT_SWARM_BACKEND": "acp", "AGENT_SWARM_ACP_AGENT": "codex"}
-        ):
-            identity = self._create_run(cwd)
-            with state_store.transaction() as con:
-                run = state_store.get_run(identity["root_id"], con)
-                insert_ready_child(con, run)
-            attempt_id = scheduler.schedule(identity["root_id"])[0]["attempt_id"]
+    def test_stop_fence_rejects_unowned_or_stopped_launch(self):
+        with isolated_runtime() as (_, cwd):
+            _, child = self._child(cwd, backend="claude_cli")
             with state_store.transaction() as con:
                 con.execute(
-                    "UPDATE execution_sessions SET stop_requested_at=? WHERE attempt_id=?",
-                    (state_store.now(), attempt_id),
+                    "UPDATE launches SET stop_requested_at=? WHERE launch_id=?",
+                    (state_store.now(), child["launch_id"]),
                 )
-
             self.assertFalse(
-                state_store.claim_execution_ownership(attempt_id, 1, "late", 333)
+                state_store.claim_launch_ownership(child["launch_id"], "late", 9999)
             )
 
 

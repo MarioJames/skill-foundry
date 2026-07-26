@@ -1,180 +1,172 @@
 # Runtime contract
 
-## Objects and lifecycle
+## Object model
 
 ```text
-Run → Task → Attempt → Agent Session
+Run(root_id)
+└── Task(task_id, parent_task_id)
+    └── Attempt(attempt_id, attempt_no)
+        └── Launch(launch_id, launch_no)
+            └── ACP Session(profile_id, external_session_id)   # ACP only
 ```
 
-- A Task is a stable goal. A retry keeps the Task and creates a new Attempt.
-- An Attempt belongs to exactly one Task and one Agent Session.
-- A new Session always requires a new Attempt.
+- `root_id` is the only application-generated structural identifier.
+- Task, Attempt, Launch, profile, and local Session keys are SQLite integer primary keys.
+- `tasks.parent_task_id` is the logical tree edge. It remains stable when an Attempt or Session is
+  retried, so it is the authoritative way to reconstruct the tree.
+- A business retry keeps the Task and appends a new Attempt.
+- A pre-ready process retry keeps the Attempt and appends a new Launch. Old Launch rows are closed,
+  never rewritten into a new generation.
+- ACP stores the Agent-issued `external_session_id` directly. `created_by_session_pk` is provenance,
+  not the tree edge.
+
+The foreground Root has a Task and Attempt but no background Launch. Child execution uses either a
+Claude CLI Launch or an ACP Worker/Agent/Session Launch.
 
 ## Persistent state
 
-Runtime facts and audit events live in `runtime-v2.sqlite3` under `AGENT_SWARM_HOME` when that
-variable is set, otherwise at `~/.agent-swarm/runtime-v2.sqlite3`. On first use of the default new
-location, the Runtime copies a valid previous default v2 database into it without mutating the
-source, then records the current schema version. To migrate any source into an explicit new home,
-set `AGENT_SWARM_MIGRATE_FROM` to that old directory for the first launch. The separate legacy
-`state.sqlite3` file is consulted read-only only to prevent a v2 Run from starting beside an
-unfinished legacy Run; v2 never reinterprets legacy Kind/Round rows.
+Runtime facts live in `$AGENT_SWARM_HOME/runtime.sqlite3`, defaulting to
+`~/.agent-swarm/runtime.sqlite3`. This is a clean-break schema: the Runtime does not copy, migrate,
+or reinterpret older database files.
 
-The copy preserves existing rows and recorded external session names so a live pre-rename Session
-can still be observed or stopped. Every new Attempt uses the `agent-swarm-…` session-name prefix,
-and every new injected identity/configuration boundary uses `AGENT_SWARM_*` / `agent_swarm_*`.
+Core tables:
 
-Schema initialization installs only the minimal Hook runtime—`scripts/hook_runtime.py`,
-`scripts/hook_manager.py`, `scripts/state_store.py`, and the Hook shell files—into
-`$AGENT_SWARM_HOME/{scripts,hooks}` (or `$HOME/.agent-swarm/{scripts,hooks}` by default). It does
-not copy the Root/child action CLI or its other modules. Hook commands resolve that home at execution
-time through
-`${AGENT_SWARM_HOME:-$HOME/.agent-swarm}`; they **NEVER** depend on the installed skill's relative
-directory. The child launcher exports the resolved `AGENT_SWARM_HOME` so a custom runtime home is
-used consistently.
+| Table | Purpose |
+| --- | --- |
+| `runs` | root goal, cwd, limits, frozen Run config, owner lease |
+| `tasks` / `task_dependencies` | logical task tree and dependency graph |
+| `attempts` | immutable backend/profile snapshot plus business outcome |
+| `launches` | append-only process/worker ownership and cleanup facts |
+| `agent_profiles` | Agent type, package/version, command, state namespace |
+| `acp_sessions` | real external ACP Session identity and capabilities |
+| `effects` | idempotent spawn/stop side effects |
+| `processed_actions` | Action idempotency responses |
+| `run_notes` / `events` | bounded reusable notes and structural audit facts |
 
-The Runtime does not issue `git worktree add` or `claude --worktree`; the Agent, child, or project
-owns worktree creation. The default Claude CLI Backend installs project hooks and writes
-`.claude/settings.local.json` to `.worktreeinclude` for future Claude-created worktrees, and
-refreshes every registered worktree before and after child spawn. ACP does not mutate `.claude`
-settings. Every child **MUST** run
-`bootstrap-cwd` before substantial work in its current directory and again immediately after
-entering or creating another worktree. That command authenticates the current identity and refreshes
-its heartbeat; hook-capable Backends also merge local settings in the exact worktree.
-`worktree-init` remains an alias. A user-defined Claude `WorktreeCreate` hook replaces Claude's
-default creation path and does not process `.worktreeinclude`; the explicit `bootstrap-cwd` gate is
-therefore authoritative.
-The Runtime does not add a CLI `--settings` overlay, so user-level settings stay independent of Hook
-deployment.
+Dialogue content is deliberately absent. There are no message, transcript, or conversation-event
+tables. `session-history` resolves `agent_type + external_session_id` (and optional `root_id`), starts
+the matching Agent profile, calls ACP `session/load`, and returns replayed updates from memory. A
+missing/lost Session or missing capability is a normal unavailable result.
 
-Agent lifecycle:
+Schema initialization also installs only the minimal Claude Hook runtime—`hook_runtime.py`,
+`hook_manager.py`, `state_store.py`, and Hook shell files—under `$AGENT_SWARM_HOME`. Child Actions
+continue to use the installed skill entrypoint exported as `AGENT_SWARM_SKILL_DIR`.
+
+## Identity and secrets
+
+An Action identity contains:
 
 ```text
-received → evaluating → active ↔ waiting → terminal
+AGENT_SWARM_ROOT_ID
+AGENT_SWARM_TASK_ID
+AGENT_SWARM_ATTEMPT_ID
+AGENT_SWARM_ACTOR_TOKEN
 ```
 
-Task lifecycle:
+There is no intermediate `agent_id`. Child tokens are derived as
+`base64url(HMAC-SHA256(seed, root_id|attempt_id))`; only hashes are stored in SQLite. The Run seed is
+mode 0600 and removed only after a terminal Run has no pending spawn/stop Effect and no open Launch.
+
+## Lifecycle
+
+Attempt:
+
+```text
+assigned → evaluating → active ↔ waiting → done|failed
+                              ↘ stopping → cancelled|failed
+```
+
+Launch:
+
+```text
+starting → running → turn_ended|error → closed
+                 ↘ stopping ───────────→ closed
+```
+
+Task:
 
 ```text
 pending → ready → assigned → active → done|failed
-active → stopping → ready  (Parent-selected kill after a stalled heartbeat)
-pending|blocked|active → cancelled
+active → stopping → ready                 # explicit stop-and-retry
+pending|ready|assigned|active → cancelled
 ```
+
+Only Runtime Actions may complete Attempts and Tasks. Claude `SessionEnd` and ACP prompt turn end are
+observations; neither forges `finish`.
 
 ## Backend lifecycle guards
 
-The detailed ACP design, implementation status, and real-agent acceptance record live in
-[acp-backend-spec.md](../../docs/specs/acp-backend-spec.md). The default Backend remains Claude CLI;
-ACP is an explicit Run-initialization choice and is frozen into each Attempt's execution record.
+The Run execution configuration is resolved at `init` and stored in `runs.execution_config_json`.
+Each Attempt stores its immutable snapshot in `attempts.config_json`; later environment changes do
+not alter it.
 
-The Runtime installs project-local Hooks only while it owns an active Run:
+Scheduler creation is one transaction:
 
-- `SessionStart` and `PostToolUse` refresh an identified Agent heartbeat.
-- `PostToolUseFailure` adds recovery guidance to the current Agent; it does not mutate task state.
-- `Stop` checks the current identified Attempt. If it is unfinished, the Hook blocks the stop once
-  and tells the Agent to submit the Runtime `finish` Action. A guarded repeat is allowed to avoid a
-  permanent Hook loop.
-- `SessionEnd` records that a Session ended but **NEVER** forges Task completion.
+1. insert Attempt and hashed actor token;
+2. insert Launch number 1;
+3. insert `spawn:<launch_id>` Effect;
+4. mark the Task assigned.
 
-Every Hook skips sessions without the complete `AGENT_SWARM_*` identity. Hooks **NEVER** initialize, recover,
-complete, or spawn Runs: Actions remain the only lifecycle authority.
+An ACP Worker must atomically claim `launch_id + owner_nonce` before starting its Agent process.
+Every endpoint request carries `launch_id`. If a starting Worker, Agent process, and socket are all
+proven absent, recovery closes that Launch and appends a new Launch plus a new spawn Effect. A late
+Worker cannot claim the closed Launch. Unknown/orphan process state never triggers replacement.
 
-ACP does not use Claude Hooks. Each Attempt owns a detached Worker, Agent Process, ACP Session, and
-mode-0600 Unix control socket. The Worker persists generation ownership before launching the Agent,
-negotiates protocol v1, applies only Agent-advertised model/permission config options, marks ready
-only after initialize + session/new + prompt dispatch, and self-cleans after a legal `finish`.
-Unsupported explicit models or unsafe permission modes fail cleanly. Turn end without `finish` is a
-deterministic retryable failure, never success.
+ACP `mark_ready` is atomic: it inserts the real Session/profile mapping, marks the Launch running,
+and transitions the Attempt to evaluating before the Agent can submit an Action. Cleanup closes both
+the Launch and local Session status while keeping `external_session_id` available for later
+`session/load`.
 
-`allow_in_workspace` normally requires every advertised permission location to resolve inside the
-workspace or an additional directory. Non-empty declared location metadata that is malformed or
-out of workspace is denied. A missing, null, or empty location list is treated as no location; for
-those Codex ACP requests, the only allowable exception is an `execute` call from a workspace cwd
-through a trusted absolute system shell that exactly invokes the frozen Runtime entrypoint as
-`bootstrap-cwd`, `action-schema <ACTION_TYPE>`, or the documented single-object
-`printf '%s' ... | ... action --type <ACTION_TYPE> --stdin` form. That exception chooses only
-allow-once; it rejects shell
-composition, alternate entrypoints/producers, unrelated Runtime commands, and allow-always-only
-choices. This approval automation permits authenticated Runtime state updates outside the child
-workspace; it is not an OS filesystem sandbox.
+Claude CLI uses its background job ID as `launches.backend_ref`; ACP uses the Launch as its control
+identity and stores the Agent-issued Session ID separately.
 
-## Child heartbeat watchdog
+## Hooks and worktrees
 
-The Root can run `reap` without changing its own identity. A running child with a heartbeat older
-than five minutes is retried only after its persisted Backend observation confirms the Session is
-absent. A still-live Session is returned to the Parent as a diagnostic candidate; the
-Parent may explicitly request a stop-and-retry for that Attempt. An observation failure is reported
-without changing child state. Root `wait` invokes this watchdog immediately and at most every 30
-seconds while it is waiting.
+The Runtime does not create worktrees. Every child must run `bootstrap-cwd` before substantial work
+and again after entering or creating another worktree.
+
+Claude CLI project Hooks:
+
+- `SessionStart` and `PostToolUse` refresh the Attempt heartbeat.
+- `PostToolUseFailure` adds recovery guidance without changing state.
+- `Stop` blocks one unfinished stop and asks for a legal `finish` Action.
+- `SessionEnd` records observation only.
+
+Hooks skip sessions without the complete four-field identity. ACP does not install Claude Hooks;
+its Worker heartbeat and Action heartbeat are separate facts.
 
 ## Estimate and capabilities
 
 - `evaluating`: `submit_estimate`, `write_note`
-- active direct estimate: revised estimate, `write_note`, `finish`
-- active split estimate: revised estimate, `create_tasks`, `write_note`, `wait`, `finish`
+- active direct: revised estimate, `write_note`, `finish`
+- active split: revised estimate, `create_tasks`, `write_note`, `wait`, `finish`
 - `waiting`: `write_note`, `wait`
-- `terminal`: no Actions
+- terminal: no Actions
 
-`resolved_intent` is set by the first estimate and remains stable for the Task. Supported Intents:
-`implement`, `review`, `fix`, `research`, `design`, and `integrate`.
+Supported Intents are `implement`, `review`, `fix`, `research`, `design`, and `integrate`.
 
-Default hard budgets:
+Default limits:
 
-| Budget | Default |
+| Limit | Default |
 | --- | ---: |
-| concurrent Agents | 8 |
+| concurrent Attempts | 8 |
 | total Tasks | 100 |
 | Attempts per Task | 2 |
 | delegation depth | 5 |
 | replans per Task | 2 |
 | children per Action | 12 |
 
-The foreground Root consumes one concurrent-Agent slot. When that is the only slot, or split is
-otherwise impossible because a hard budget is exhausted, Runtime forces direct execution; finish
-the critical scope directly and report caveats.
+## Dependencies, scheduling, and finish
 
-## Scheduler and dependencies
+`create_tasks` atomically inserts all children, resolves action-local keys to integer task IDs, then
+inserts dependencies. `success` requires upstream `done`; `terminal` accepts any terminal Task.
+Failed required dependencies block downstream Tasks.
 
-`create_tasks` atomically creates all Tasks and dependencies. `success` requires the upstream Task
-to be done; `terminal` accepts any terminal upstream state. A permanently failed `success`
-dependency blocks the downstream Task.
+`finish(done)` requires every non-cancelled direct child to be done. A parent with children must
+include an integration result. Root completion additionally requires all Tasks terminal, no live
+Attempts, no pending spawn/stop Effects, and every Launch closed. Review and final-review structural
+gates remain enforced.
 
-The Runtime schedules by priority, creation time, then shallower depth. It creates the Attempt,
-Agent, immutable execution record, and `spawn:{attempt_id}` outbox effect before invoking the
-selected Backend. Agents **NEVER** manage slots or process lifetimes.
-
-## Completion gates
-
-For `finish(status=done)`:
-
-- `summary`, `changed_files`, and `caveats` are required.
-- Changed files require passed validation, or skipped validation with a reason.
-- A Task with children requires every non-cancelled direct child to be done and must provide an
-  integration check.
-- A review Intent must provide `review.status` and `review.findings`.
-- When final review is enabled and any Task changed files, Root must provide a review. A referenced
-  review Task must be a done review Intent in the same Run.
-- Root closes only when all required Tasks are done, no Attempt is live, no spawn/stop effect is
-  pending, and every execution record is closed.
-
-New child actor tokens are derived from a mode-0600 Run seed. SQLite, Outbox payloads, prompts,
-diagnostic logs, and optional sidecars store identity/hash facts only, never the plaintext token.
-The seed is removed only after a terminal Run has no open execution or spawn/stop effect.
-
-ACP built-in profiles resolve the executable once to an absolute real path and freeze that path,
-args, version, authentication prerequisites, sandbox declaration, and model-tier mapping into the
-Run/Attempt records. Custom Agents require an absolute executable. `doctor` reports that preflight
-without installing or starting the external Agent. The Worker records advertised authentication
-method IDs and capabilities for diagnosis, but never credentials or prompt text.
-
-Failed child Attempts retry only when marked retryable and within budget. A failed Root **NEVER**
-automatically starts a new foreground Root; use `recover`.
-
-## Hard and soft boundaries
-
-Runtime enforces Action shape, identity/token binding, current Attempt, idempotency, lifecycle,
-budgets, dependencies, retries, outbox effects, stop/recovery, and structural finish gates.
-
-Prompt guidance covers semantic decomposition, write scope quality, read-only review behavior,
-validation adequacy, and whether all changed files were reported. Reported out-of-scope paths create
-warnings; the Runtime does not intercept every filesystem write.
+The Runtime enforces identity binding, current Attempt, Action idempotency, lifecycles, budgets,
+dependencies, retries, Effects, recovery, and structural finish gates. It cannot prove semantic
+quality, complete write isolation, or the truth of validation text.

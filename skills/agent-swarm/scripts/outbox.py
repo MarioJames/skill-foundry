@@ -1,6 +1,7 @@
-"""Atomic outbox claims and external process side effects."""
+"""Atomic Effect claims and external process side effects."""
 
 import json
+import pathlib
 
 import backends
 import execution_secrets
@@ -47,12 +48,11 @@ def _spawn_call(backend, request):
 def _stop_call(backend, request):
     if isinstance(backend, AgentBackend):
         return backend.stop(request)
-    else:
-        return backend.stop(
-            job_id=request.job_id,
-            session_name=request.session_name,
-            cwd=request.cwd,
-        )
+    return backend.stop(
+        job_id=request.job_id,
+        session_name=request.session_name,
+        cwd=request.cwd,
+    )
 
 
 def _supports_hooks(backend):
@@ -60,25 +60,10 @@ def _supports_hooks(backend):
     return bool(value()) if callable(value) else True
 
 
-def _validate_effect_execution(payload, execution):
-    expected = {
-        "backend_id": execution.get("backend_id"),
-        "execution_id": execution.get("execution_id"),
-        "generation": execution.get("generation"),
-    }
-    for key, value in expected.items():
-        if payload.get(key) != value:
-            raise StaleEffect(
-                "stale generation/backend effect: %s expected %r, got %r"
-                % (key, value, payload.get(key))
-            )
-
-
 def recover_stale_claims(root_id, stale_before):
     with state_store.transaction() as con:
         cursor = con.execute(
-            """UPDATE side_effect_outbox
-               SET status='pending', claimed_at=NULL
+            """UPDATE effects SET status='pending', claimed_at=NULL
                WHERE root_id=? AND status='running' AND claimed_at < ?""",
             (root_id, stale_before),
         )
@@ -88,7 +73,7 @@ def recover_stale_claims(root_id, stale_before):
 def _claim(effect_id):
     with state_store.transaction() as con:
         cursor = con.execute(
-            """UPDATE side_effect_outbox
+            """UPDATE effects
                SET status='running', claimed_at=?, attempts=attempts+1
                WHERE id=? AND status='pending'""",
             (state_store.now(), effect_id),
@@ -96,251 +81,274 @@ def _claim(effect_id):
         return cursor.rowcount == 1
 
 
+def _binding(con, payload):
+    run = state_store.get_run(payload.get("root_id"), con)
+    task = state_store.get_task(payload.get("task_id"), con)
+    attempt = state_store.get_attempt(payload.get("attempt_id"), con)
+    launch = state_store.get_launch(payload.get("launch_id"), con)
+    if not all((run, task, attempt, launch)):
+        raise StaleEffect("effect references missing runtime facts")
+    current_attempt = state_store.get_current_attempt(task["task_id"], con)
+    current_launch = state_store.get_current_launch(attempt["attempt_id"], con)
+    if not (
+        task["root_id"] == run["root_id"]
+        and attempt["root_id"] == run["root_id"]
+        and attempt["task_id"] == task["task_id"]
+        and launch["root_id"] == run["root_id"]
+        and launch["attempt_id"] == attempt["attempt_id"]
+        and current_attempt
+        and current_attempt["attempt_id"] == attempt["attempt_id"]
+        and current_launch
+        and current_launch["launch_id"] == launch["launch_id"]
+    ):
+        raise StaleEffect("effect is fenced by a newer Attempt or Launch")
+    return run, task, attempt, launch
+
+
+def _enqueue_stop(con, run, task, attempt, launch, reason):
+    payload = {
+        "root_id": run["root_id"],
+        "task_id": task["task_id"],
+        "attempt_id": attempt["attempt_id"],
+        "launch_id": launch["launch_id"],
+        "reason": reason,
+    }
+    con.execute(
+        """INSERT OR IGNORE INTO effects(
+             root_id, attempt_id, launch_id, effect_type, payload_json,
+             idempotency_key, status, attempts, created_at
+           ) VALUES (?, ?, ?, 'stop_agent', ?, ?, 'pending', 0, ?)""",
+        (
+            run["root_id"],
+            attempt["attempt_id"],
+            launch["launch_id"],
+            json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            "stop:%s" % launch["launch_id"],
+            state_store.now(),
+        ),
+    )
+
+
 def _spawn(effect, payload, adapter=None):
     with state_store.transaction(immediate=False) as con:
-        run = state_store.get_run(payload["root_id"], con)
-        task = state_store.get_task(payload["task_id"], con)
-        attempt = state_store.get_attempt(payload["attempt_id"], con)
-        agent = state_store.get_agent(payload["agent_id"], con)
-        execution = state_store.get_execution(payload["attempt_id"], con)
-        if not all((run, task, attempt, agent, execution)) or task["current_attempt_id"] != attempt["attempt_id"]:
-            raise RuntimeError("spawn effect references a stale attempt")
-        _validate_effect_execution(payload, execution)
-        actor_token = payload.get("actor_token")
-        if not actor_token:
-            actor_token = execution_secrets.derive_attempt_token(
-                run, attempt["attempt_id"], agent["agent_id"]
-            )
-        else:
-            redacted_payload = dict(payload)
-            redacted_payload.pop("actor_token", None)
-            redacted_payload["legacy_actor_token_redacted"] = True
-            con.execute(
-                "UPDATE side_effect_outbox SET payload_json=? WHERE id=?",
-                (
-                    json.dumps(redacted_payload, ensure_ascii=False, sort_keys=True),
-                    effect["id"],
-                ),
-            )
-        prompt = prompt_builder.build_prompt(run, task, attempt, agent, con)
+        run, task, attempt, launch = _binding(con, payload)
+        if run["status"] != "running" or attempt["state"] != "assigned":
+            raise StaleEffect("spawn effect no longer targets an assigned Attempt")
+        actor_token = execution_secrets.derive_attempt_token(run, attempt["attempt_id"])
+        prompt = prompt_builder.build_prompt(run, task, attempt, con)
         env = {
             "AGENT_SWARM_ROOT_ID": run["root_id"],
-            "AGENT_SWARM_TASK_ID": task["task_id"],
-            "AGENT_SWARM_ATTEMPT_ID": attempt["attempt_id"],
-            "AGENT_SWARM_AGENT_ID": agent["agent_id"],
+            "AGENT_SWARM_TASK_ID": str(task["task_id"]),
+            "AGENT_SWARM_ATTEMPT_ID": str(attempt["attempt_id"]),
             "AGENT_SWARM_ACTOR_TOKEN": actor_token,
             "AGENT_SWARM_HOME": str(state_store.runtime_root()),
-            "AGENT_SWARM_SKILL_DIR": str(__import__("pathlib").Path(__file__).resolve().parent.parent),
+            "AGENT_SWARM_SKILL_DIR": str(pathlib.Path(__file__).resolve().parent.parent),
         }
         request = SpawnRequest(
             prompt=prompt,
             cwd=run["cwd"],
-            session_name=agent["session_name"],
-            model=agent["model_name"],
+            session_name=launch["session_name"],
+            model=attempt.get("model_name"),
             env=env,
-            backend_config=json.loads(execution["config_json"]),
+            backend_config=json.loads(attempt["config_json"]),
             metadata={
                 "root_id": run["root_id"],
-                "task_id": task["task_id"],
-                "attempt_id": attempt["attempt_id"],
-                "agent_id": agent["agent_id"],
-                "execution_id": execution["execution_id"],
+                "task_id": str(task["task_id"]),
+                "attempt_id": str(attempt["attempt_id"]),
+                "launch_id": str(launch["launch_id"]),
             },
         )
-    backend = adapter or backends.resolve_spawn_backend(execution)
+    backend = adapter or backends.resolve_spawn_backend(launch)
     if _supports_hooks(backend):
         hook_manager.ensure_project_hooks(request.cwd, root_id=payload["root_id"])
     result = _spawn_call(backend, request)
-    # A background launcher may create a worktree during spawn. Refresh again
-    # after it returns so that worktree receives the merged local Hook settings
-    # without adding a CLI --settings overlay that could shadow user Hooks.
     if _supports_hooks(backend):
         hook_manager.ensure_project_hooks(request.cwd, root_id=payload["root_id"])
+
     with state_store.transaction() as con:
         run = state_store.get_run(payload["root_id"], con)
         task = state_store.get_task(payload["task_id"], con)
         attempt = state_store.get_attempt(payload["attempt_id"], con)
-        agent = state_store.get_agent(payload["agent_id"], con)
+        launch = state_store.get_launch(payload["launch_id"], con)
+        current_attempt = state_store.get_current_attempt(payload["task_id"], con) if task else None
+        current_launch = state_store.get_current_launch(payload["attempt_id"], con) if attempt else None
         expected = bool(
             run
             and run["status"] == "running"
             and task
-            and task["current_attempt_id"] == payload["attempt_id"]
-            and task["status"] == "assigned"
             and attempt
-            and attempt["status"] == "assigned"
-            and agent
-            and agent["state"] == "received"
+            and launch
+            and current_attempt
+            and current_attempt["attempt_id"] == attempt["attempt_id"]
+            and current_launch
+            and current_launch["launch_id"] == launch["launch_id"]
+            and attempt["state"] in {"assigned", "evaluating", "active", "waiting"}
+            and launch["status"] in {"starting", "running"}
         )
+        timestamp = state_store.now()
         if not expected:
-            stopped_at = state_store.now()
-            stop_payload = {
-                "root_id": payload["root_id"],
-                "task_id": payload["task_id"],
-                "attempt_id": payload["attempt_id"],
-                "agent_id": payload["agent_id"],
-                "job_id": result.get("job_id"),
-                "session_name": result.get("session_name") or request.session_name,
-                "cwd": request.cwd,
-                "backend_id": execution["backend_id"],
-                "execution_id": execution["execution_id"],
-                "generation": execution["generation"],
-                "config_json": execution["config_json"],
-            }
+            completed_before_ack = bool(
+                launch
+                and launch.get("ready_at") is not None
+                and launch["status"] == "closed"
+                and attempt
+                and attempt["state"] in {"done", "failed", "cancelled"}
+            )
+            if all((run, task, attempt, launch)) and not completed_before_ack:
+                _enqueue_stop(con, run, task, attempt, launch, "spawn_compensation")
             con.execute(
-                """INSERT OR IGNORE INTO side_effect_outbox(
-                     root_id, effect_type, payload_json, idempotency_key, status, attempts, created_at
-                   ) VALUES (?, 'stop_agent', ?, ?, 'pending', 0, ?)""",
+                """UPDATE effects SET status='completed', completed_at=?,
+                     last_error=? WHERE id=?""",
                 (
-                    payload["root_id"],
-                    json.dumps(stop_payload, ensure_ascii=False, sort_keys=True),
-                    "stop:late:%s" % payload["attempt_id"],
-                    stopped_at,
+                    timestamp,
+                    (
+                        "spawn acknowledged after Attempt completed"
+                        if completed_before_ack
+                        else "spawn compensated after state changed"
+                    ),
+                    effect["id"],
                 ),
             )
-            con.execute(
-                """UPDATE side_effect_outbox
-                   SET status='completed', completed_at=?, last_error='spawn compensated after state changed'
-                   WHERE id=?""",
-                (stopped_at, effect["id"]),
-            )
-            state_store.append_event(
-                con,
-                payload["root_id"],
-                "AgentSpawnCompensationRequested",
-                {"job_id": result.get("job_id")},
-                task_id=payload["task_id"],
-                attempt_id=payload["attempt_id"],
-                agent_id=payload["agent_id"],
-            )
             return
-        started = state_store.now()
         con.execute(
-            "UPDATE task_attempts SET status='running', started_at=? WHERE attempt_id=?",
-            (started, payload["attempt_id"]),
-        )
-        con.execute("UPDATE tasks SET status='active' WHERE task_id=?", (payload["task_id"],))
-        con.execute(
-            """UPDATE agents
-               SET state='evaluating', job_id=?, session_name=?, heartbeat_at=?
-               WHERE agent_id=?""",
-            (
-                result.get("job_id"),
-                result.get("session_name") or request.session_name,
-                started,
-                payload["agent_id"],
-            ),
+            """UPDATE launches
+               SET backend_ref=COALESCE(backend_ref, ?),
+                   status=CASE WHEN status='starting' THEN 'running' ELSE status END,
+                   prompt_state=CASE WHEN prompt_state='pending' THEN 'in_flight' ELSE prompt_state END,
+                   ready_at=COALESCE(ready_at, ?), last_event_at=?
+               WHERE launch_id=?""",
+            (result.get("job_id"), timestamp, timestamp, launch["launch_id"]),
         )
         con.execute(
-            """UPDATE execution_sessions
-               SET status='running', prompt_state='in_flight', ready_at=?, last_event_at=?
+            """UPDATE attempts
+               SET state=CASE WHEN state='assigned' THEN 'evaluating' ELSE state END,
+                   started_at=COALESCE(started_at, ?), heartbeat_at=?
                WHERE attempt_id=?""",
-            (started, started, payload["attempt_id"]),
+            (timestamp, timestamp, attempt["attempt_id"]),
         )
         con.execute(
-            "UPDATE side_effect_outbox SET status='completed', completed_at=?, last_error=NULL WHERE id=?",
-            (started, effect["id"]),
+            "UPDATE tasks SET status='active' WHERE task_id=? AND status='assigned'",
+            (task["task_id"],),
+        )
+        con.execute(
+            "UPDATE effects SET status='completed', completed_at=?, last_error=NULL WHERE id=?",
+            (timestamp, effect["id"]),
         )
         state_store.append_event(
             con,
-            payload["root_id"],
+            run["root_id"],
             "AgentProcessStarted",
-            {"job_id": result.get("job_id"), "backend_id": execution["backend_id"]},
-            task_id=payload["task_id"], attempt_id=payload["attempt_id"], agent_id=payload["agent_id"],
+            {
+                "launch_id": launch["launch_id"],
+                "backend_ref": result.get("job_id"),
+                "backend_id": launch["backend_id"],
+            },
+            task_id=task["task_id"],
+            attempt_id=attempt["attempt_id"],
         )
 
 
 def _spawn_failed(effect, payload, error):
     with state_store.transaction() as con:
         con.execute(
-            "UPDATE side_effect_outbox SET status='failed', last_error=? WHERE id=?",
+            "UPDATE effects SET status='failed', last_error=? WHERE id=?",
             (str(error), effect["id"]),
         )
         run = state_store.get_run(payload.get("root_id"), con)
         task = state_store.get_task(payload.get("task_id"), con)
         attempt = state_store.get_attempt(payload.get("attempt_id"), con)
-        agent = state_store.get_agent(payload.get("agent_id"), con)
-        if (
-            not all((run, task, attempt, agent))
-            or run["status"] != "running"
-            or task["current_attempt_id"] != attempt["attempt_id"]
-            or task["status"] != "assigned"
-            or attempt["status"] != "assigned"
-            or agent["state"] != "received"
-        ):
+        launch = state_store.get_launch(payload.get("launch_id"), con)
+        current = state_store.get_current_attempt(task["task_id"], con) if task else None
+        if not all((run, task, attempt, launch, current)) or current["attempt_id"] != attempt["attempt_id"]:
+            return
+        if attempt["state"] not in {"assigned", "evaluating"}:
             return
         finished = state_store.now()
-        result = {"status": "failed", "retryable": True, "summary": str(error), "caveats": []}
+        result = {
+            "status": "failed",
+            "retryable": True,
+            "summary": str(error),
+            "caveats": [],
+        }
         con.execute(
-            "UPDATE task_attempts SET status='failed', retryable=1, result_json=?, finished_at=? WHERE attempt_id=?",
-            (json.dumps(result, ensure_ascii=False), finished, attempt["attempt_id"]),
+            """UPDATE attempts SET state='failed', retryable=1, result_json=?,
+                 last_error=?, finished_at=? WHERE attempt_id=?""",
+            (json.dumps(result, ensure_ascii=False), str(error), finished, attempt["attempt_id"]),
         )
         con.execute(
-            "UPDATE agents SET state='terminal', last_error=?, finished_at=? WHERE agent_id=?",
-            (str(error), finished, agent["agent_id"]),
+            """UPDATE launches SET status='closed', prompt_state='cancelled',
+                 exit_reason=?, closed_at=?, last_event_at=? WHERE launch_id=?""",
+            (str(error), finished, finished, launch["launch_id"]),
         )
         if attempt["attempt_no"] < run["max_attempts_per_task"]:
             con.execute("UPDATE tasks SET status='ready' WHERE task_id=?", (task["task_id"],))
             state_store.append_event(
-                con, run["root_id"], "TaskRetryScheduled", {"reason": "spawn_failed"},
-                task_id=task["task_id"], attempt_id=attempt["attempt_id"], agent_id=agent["agent_id"],
+                con,
+                run["root_id"],
+                "TaskRetryScheduled",
+                {"reason": "spawn_failed"},
+                task_id=task["task_id"],
+                attempt_id=attempt["attempt_id"],
             )
         else:
             con.execute(
-                "UPDATE tasks SET status='failed', finished_at=? WHERE task_id=?", (finished, task["task_id"])
+                "UPDATE tasks SET status='failed', finished_at=? WHERE task_id=?",
+                (finished, task["task_id"]),
             )
         state_store.append_event(
-            con, run["root_id"], "AgentSpawnFailed", {"error": str(error)},
-            task_id=task["task_id"], attempt_id=attempt["attempt_id"], agent_id=agent["agent_id"],
+            con,
+            run["root_id"],
+            "AgentSpawnFailed",
+            {"launch_id": launch["launch_id"], "error": str(error)},
+            task_id=task["task_id"],
+            attempt_id=attempt["attempt_id"],
         )
         scheduler.schedule_with_connection(con, run["root_id"])
 
 
 def _stop(effect, payload, adapter=None):
-    execution = state_store.get_execution(payload.get("attempt_id"))
-    if execution is None and payload.get("backend_id"):
-        execution = {
-            "backend_id": payload["backend_id"],
-            "config_json": payload.get("config_json") or "{}",
-        }
-    if execution is None and adapter is None:
-        raise RuntimeError("stop effect has no execution record")
-    if payload.get("attempt_id") is not None:
-        _validate_effect_execution(payload, execution)
-    backend = adapter or backends.resolve_execution_backend(execution)
+    launch = state_store.get_launch(payload.get("launch_id"))
+    if launch is None:
+        raise StaleEffect("stop effect launch no longer exists")
+    backend = adapter or backends.resolve_execution_backend(launch)
     _stop_call(
         backend,
         StopRequest(
-            job_id=payload.get("job_id"),
-            session_name=payload.get("session_name"),
-            cwd=payload.get("cwd"),
+            job_id=launch.get("backend_ref"),
+            session_name=launch.get("session_name"),
+            cwd=(state_store.get_run(launch["root_id"]) or {}).get("cwd"),
             reason=payload.get("reason"),
         ),
     )
     with state_store.transaction() as con:
+        timestamp = state_store.now()
         con.execute(
-            "UPDATE side_effect_outbox SET status='completed', completed_at=?, last_error=NULL WHERE id=?",
-            (state_store.now(), effect["id"]),
+            """UPDATE launches SET status='closed', prompt_state='cancelled',
+                 closed_at=COALESCE(closed_at, ?), last_event_at=? WHERE launch_id=?""",
+            (timestamp, timestamp, launch["launch_id"]),
         )
-        if execution is not None:
-            closed = state_store.now()
-            con.execute(
-                """UPDATE execution_sessions
-                   SET status='closed', prompt_state='cancelled', closed_at=?, last_event_at=?
-                   WHERE attempt_id=?""",
-                (closed, closed, payload.get("attempt_id")),
-            )
+        con.execute(
+            """UPDATE acp_sessions SET status='closed', closed_at=COALESCE(closed_at, ?)
+               WHERE launch_id=? AND status='active'""",
+            (timestamp, launch["launch_id"]),
+        )
+        con.execute(
+            "UPDATE effects SET status='completed', completed_at=?, last_error=NULL WHERE id=?",
+            (timestamp, effect["id"]),
+        )
         retry_scheduled = False
         retry_task_id = payload.get("retry_task_id")
         if retry_task_id:
             task = state_store.get_task(retry_task_id, con)
-            attempt = state_store.get_attempt(payload.get("attempt_id"), con)
+            attempt = state_store.get_attempt(launch["attempt_id"], con)
+            current = state_store.get_current_attempt(retry_task_id, con) if task else None
             if (
                 task
                 and attempt
-                and task["current_attempt_id"] == attempt["attempt_id"]
+                and current
+                and current["attempt_id"] == attempt["attempt_id"]
                 and task["status"] == "stopping"
-                and attempt["status"] == "failed"
+                and attempt["state"] == "failed"
             ):
                 con.execute("UPDATE tasks SET status='ready' WHERE task_id=?", (retry_task_id,))
                 scheduler.schedule_with_connection(con, payload["root_id"])
@@ -349,30 +357,21 @@ def _stop(effect, payload, adapter=None):
             con,
             payload["root_id"],
             "AgentStopped",
-            {"job_id": payload.get("job_id"), "retry_scheduled": retry_scheduled},
-            task_id=payload.get("task_id"), attempt_id=payload.get("attempt_id"),
-            agent_id=payload.get("agent_id"),
+            {"launch_id": launch["launch_id"], "retry_scheduled": retry_scheduled},
+            task_id=launch["task_id"],
+            attempt_id=launch["attempt_id"],
         )
 
 
 def drain(root_id, adapter=None, max_effects=None):
     run = state_store.get_run(root_id)
-    automatic_limit = (
-        run["max_total_tasks"] * run["max_attempts_per_task"] + 100 if run else 1000
-    )
+    automatic_limit = run["max_total_tasks"] * run["max_attempts_per_task"] + 100 if run else 1000
     limit = automatic_limit if max_effects is None else max(0, int(max_effects))
-    summary = {
-        "claimed": 0,
-        "completed": 0,
-        "failed": 0,
-        "stale": 0,
-        "deferred": 0,
-    }
+    summary = {"claimed": 0, "completed": 0, "failed": 0, "stale": 0, "deferred": 0}
     processed = 0
     while processed < limit:
         rows = state_store.fetchall(
-            """SELECT * FROM side_effect_outbox
-               WHERE root_id=? AND status='pending' ORDER BY id LIMIT 1""",
+            "SELECT * FROM effects WHERE root_id=? AND status='pending' ORDER BY id LIMIT 1",
             (root_id,),
         )
         if not rows:
@@ -389,27 +388,22 @@ def drain(root_id, adapter=None, max_effects=None):
             elif effect["effect_type"] == "stop_agent":
                 _stop(effect, payload, adapter)
             else:
-                raise RuntimeError("unsupported outbox effect: %s" % effect["effect_type"])
+                raise RuntimeError("unsupported effect: %s" % effect["effect_type"])
             summary["completed"] += 1
         except StaleEffect as exc:
             with state_store.transaction() as con:
                 con.execute(
-                    """UPDATE side_effect_outbox
-                       SET status='completed', completed_at=?, last_error=? WHERE id=?""",
+                    "UPDATE effects SET status='completed', completed_at=?, last_error=? WHERE id=?",
                     (state_store.now(), str(exc), effect["id"]),
                 )
             summary["stale"] += 1
         except (BackendPendingError, BackendUnknownError) as exc:
             with state_store.transaction() as con:
                 con.execute(
-                    """UPDATE side_effect_outbox
-                       SET status='pending', claimed_at=NULL, last_error=? WHERE id=?""",
+                    "UPDATE effects SET status='pending', claimed_at=NULL, last_error=? WHERE id=?",
                     (str(exc), effect["id"]),
                 )
             summary["deferred"] += 1
-            # Retrying the same effect again in this drain call would only
-            # burn CPU and the bounded launch grace. A later watchdog/recover
-            # tick observes the persisted execution facts first.
             break
         except Exception as exc:
             if effect["effect_type"] == "spawn_agent":
@@ -417,7 +411,7 @@ def drain(root_id, adapter=None, max_effects=None):
             else:
                 with state_store.transaction() as con:
                     con.execute(
-                        "UPDATE side_effect_outbox SET status='failed', last_error=? WHERE id=?",
+                        "UPDATE effects SET status='failed', last_error=? WHERE id=?",
                         (str(exc), effect["id"]),
                     )
             summary["failed"] += 1
