@@ -14,6 +14,7 @@ from typing import Any
 
 from core import (
     IGNORED_DIRS,
+    MEMORY_DAILY_PATH,
     REPO_DOCS_PATH,
     extract_markdown_link_pairs,
     extract_markdown_links,
@@ -88,6 +89,44 @@ MEMORY_ROUTINE_GRAPH_RE = re.compile(
     r"|\b(?:bootstrap|scan|init|validate)(?:\s*/\s*(?:bootstrap|scan|init|validate)){2,}\b",
     re.IGNORECASE,
 )
+DAILY_FILENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.md$")
+DAILY_ENTRY_RE = re.compile(r"^-\s+(?:repo:\S+|workspace)\s+—\s+\S")
+
+
+def daily_file_warnings(workspace: Path) -> list[str]:
+    """daily 短期价值层的机械格式检查；内容质量与"该记未记"由语义评审判断。"""
+    daily_dir = workspace / MEMORY_DAILY_PATH
+    if not daily_dir.is_dir():
+        return [
+            f"缺少 {MEMORY_DAILY_PATH.as_posix()} 目录。请重跑 init 创建 daily 短期价值层；"
+            "对后续工作有价值的短期信息写在那里。"
+        ]
+    warnings: list[str] = []
+    bad_names = sorted(
+        path.name for path in daily_dir.glob("*.md") if not DAILY_FILENAME_RE.match(path.name)
+    )
+    if bad_names:
+        warnings.append(
+            f"{MEMORY_DAILY_PATH.as_posix()} 下文件名必须是 YYYY-MM-DD.md：{', '.join(bad_names)}。"
+            "一天一个文件按日期命名，时间指称查询才能直接定位。"
+        )
+    for path in sorted(daily_dir.glob("*.md")):
+        if not DAILY_FILENAME_RE.match(path.name):
+            continue
+        bad_lines = [
+            str(idx + 1)
+            for idx, line in enumerate(read_text(path).splitlines())
+            if line.strip()
+            and not line.startswith("# ")
+            and not DAILY_ENTRY_RE.match(line.strip())
+        ]
+        if bad_lines:
+            warnings.append(
+                f"{MEMORY_DAILY_PATH.as_posix()}/{path.name} 有非标准条目行"
+                f"（行 {', '.join(bad_lines[:5])}）。每条应是单行："
+                "`- repo:<repo> — …` 或 `- workspace — …`，标题行除外。"
+            )
+    return warnings
 
 
 def doc_body_first_line(lines: list[str]) -> str:
@@ -821,6 +860,7 @@ def collect_hygiene_warnings(
     warnings.extend(domain_subarea_coverage_warnings(workspace, config, discovery))
     warnings.extend(declaration_summary_warnings(config))
     warnings.extend(memory_placeholder_warnings(workspace))
+    warnings.extend(daily_file_warnings(workspace))
     warnings.extend(memory_quality_warnings(workspace, config))
     warnings.extend(nested_doc_warnings(workspace, config))
     warnings.extend(repo_index_table_warnings(workspace, config))

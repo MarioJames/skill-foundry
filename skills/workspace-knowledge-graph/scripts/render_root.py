@@ -19,6 +19,7 @@ from core import (
     RELATION_REGISTRY_PATH,
     REPO_DOCS_PATH,
     WORKSPACE_INDEX_PATH,
+    ensure_memory_daily_dir,
     escape_cell,
     rel_link,
     render_category_cell,
@@ -55,21 +56,40 @@ LEGACY_MEMORY_GUIDANCE = {
 }
 
 MEMORY_CONSUMPTION_STEP = (
+    "命中时间指称（“昨天/前天/上周/前几天/那次”等）时，先换算为具体日期，"
+    "再打开 [.workspace/memory/daily/](.workspace/memory/daily/) 下对应日期的文件（无文件则看相邻日期），"
+    "按行内 `repo:` / `workspace` 对象标签定位；需要语境时再按 scope 和任务关键词定位并读取"
+    " [MEMORY.md](MEMORY.md) 对应小节，代码细节用 git 兜底。"
     "只有用户提到“上次/继续/之前”、任务明确续接未完成工作、需要恢复用户偏好/纠正/确认取舍/用户操作，"
-    "或对象称呼仍有歧义时，才先按 scope 和任务关键词定位相关条目，再读取 [MEMORY.md](MEMORY.md) 对应小节；"
-    "不要默认读取整个 `MEMORY.md`。"
+    "或对象称呼仍有歧义时，才按上述 scope 路径读取 `MEMORY.md` 对应小节；"
+    "不要默认读取整个 `MEMORY.md` 或整个 `.workspace/memory/daily/` 目录。"
 )
 MEMORY_AUTHORITY_LINE = (
     "- `MEMORY.md`: 按需读取的非权威上下文，仅作历史线索；不能覆盖当前用户指令、当前代码/配置、"
     "git/CI 或 `.workspace/` 事实源，也不授权重复执行历史外部操作；再次依赖前先核验当前状态。"
 )
 MEMORY_BOUNDARY_LINES = [
-    "- 只有信息无法从代码、git/PR/CI、任务系统或图谱可靠恢复，且遗漏会导致重复询问、错误假设或重复操作时，才写入 `MEMORY.md`；优先记录用户偏好、用户纠正、用户完成的外部操作、用户确认的取舍和未决接续状态。",
+    "- `MEMORY.md` 与 `.workspace/memory/daily/` 分工：`.workspace/memory/daily/YYYY-MM-DD.md` 承载与某个日期、阶段、当前任务或短期接续相关的有价值信息；`MEMORY.md` 承载会持续影响工作空间或仓库后续行为的长期结论，如用户偏好、纠正、用户完成的外部操作、确认取舍和长期接续约束。",
+    "- 收尾时不直接转写本轮事件，先提炼为后续可复用的结论、约束、理由、线索或接续状态；是否写入只有一个判断条件：这条信息对后续工作有没有价值。能否从代码、git/PR/CI、任务系统或图谱事实源恢复，不参与是否写入的判断，只在消费时用于事实核验。",
+    "- 价值判断通过后再选择承载层；没有价值就不写，不为满足流程强行创建条目。daily 每条以 `repo:<repo>` 或 `workspace` 对象标签开头，` — ` 分隔后保持单行；一天一个文件，先提炼、全保留、不压缩。",
     "- `MEMORY.md` 按 `## workspace` / `## repo:<repo>` 分节；具体任务嵌套 `### task:<task-key>`。每条使用 `- <日期> [偏好|纠正|用户操作|确认决策|接续] 来源：…；结论：…`。agent 推断不得伪装成用户确认。",
-    "- 不记录改动文件清单、实现摘要、测试结果、精确数量、例行 `scan/init/validate` 或能由 commit/PR/源码直接恢复的内容；用户更正后删除、压缩或明确替代旧结论。",
-    "- 稳定对象映射、仓库入口、命令、业务事实和跨仓关系应晋升到 `.workspace/metadata.yaml` 或 `.workspace/repos/**`；记忆不复制权威事实源。",
-    "- 记忆写入与消费规则只放在 `AGENTS.md`；`MEMORY.md` 只放实际记忆条目，无条目时仅保留标题和占位，不复制本节协议。",
+    "- 改动文件清单、完成摘要、测试结果、精确数量或例行 `scan/init/validate` 不因本轮发生过就自动成为记忆；只有先提炼出对后续工作有价值的信息才记录。用户更正后删除、压缩或明确替代旧结论。",
+    "- 稳定对象映射、仓库入口、命令、业务事实和跨仓关系应晋升到 `.workspace/metadata.yaml` 或 `.workspace/repos/**`；记忆只保留对后续工作有独立价值的提炼信息。",
+    "- 记忆写入与消费规则只放在 `AGENTS.md`；`MEMORY.md` 和 daily 文件只放实际记录，无条目时 `MEMORY.md` 仅保留标题和占位，不复制本节协议。",
 ]
+WRAP_UP_REVIEW_LINES = [
+    "- 交付结论前必须完成记忆评估：1） 从本轮对话、决策和实施结果中提取候选信息；"
+    "2） 不直接复制事件摘要，先提炼为后续可复用的结论、约束、理由、线索或接续状态；"
+    "3） 只以“这条信息对后续工作有没有价值”判断是否写入；"
+    "4） 有价值时再按作用范围和有效期选择 daily 或 `MEMORY.md`，没有价值就不写；"
+    "5） 评估结论为“无该记内容”时显式说明一句，不强行编造。",
+    "- 评估不询问用户：毫无争议该记的内容直接记，无需陈述；有争议或可商榷的内容直接说明记了什么/没记什么及理由，不抛给用户决定。向用户确认“要不要记/记哪条”属于干扰。",
+    "- 记忆发生变化时在最终答复中通知用户，只概括重点、不复述完整条目：daily 使用“记忆已新增：<重点>”或“记忆已更新：<重点>”；`MEMORY.md` 使用“工作空间全局记忆已新增：<重点>”或“工作空间全局记忆已更新：<重点>”。daily 与 `MEMORY.md` 同时变化时分别通知。",
+]
+DAILY_AUTHORITY_LINE = (
+    "- `.workspace/memory/daily/`: 按天的短期价值记录，用于时间锚点回溯；"
+    "不证明当前状态，再次依赖前先核验。"
+)
 SOURCE_AUTHORITY_LINES = [
     "- 当前用户指令，以及当前代码、配置、外部实时状态、git/PR/CI 证据：最高权威。",
     "- `AGENTS.md`: 生成的根路由、消费门禁与维护规则，不是持久事实源。",
@@ -79,6 +99,7 @@ SOURCE_AUTHORITY_LINES = [
     "- `.workspace/repos/<repo>/domains/*.md`: 业务域事实源。",
     "- `.workspace/repos/<repo>/shared/*.md`: 共享或平台机制事实源。",
     MEMORY_AUTHORITY_LINE,
+    DAILY_AUTHORITY_LINE,
     "- `.workspace/state/discovery.json`: 自动扫描快照，只用于排障或审计。",
 ]
 
@@ -105,6 +126,10 @@ def render_bootstrap_agents(workspace_name: str) -> str:
             *MEMORY_BOUNDARY_LINES,
             "- 用户首次提供的稳定对象称呼、项目归属和目录映射，要补进任务路由、仓库 index、业务域或共享文档；无法消歧或缺少证据时不要硬写，先标为阻断或待用户确认。",
             "",
+            "## 收尾记忆评估",
+            "",
+            *WRAP_UP_REVIEW_LINES,
+            "",
             "## 多仓关联维护",
             "",
             "- `AGENTS.md` 只存放每个工作区入口都必须消费的阅读顺序、路由、权威顺序和维护原则；不要放具体仓库细节。",
@@ -130,6 +155,8 @@ def render_bootstrap_memory() -> str:
     return "\n".join(
         [
             "# 工作区记忆",
+            "",
+            "## workspace",
             "",
             MEMORY_PLACEHOLDER,
         ]
@@ -307,6 +334,10 @@ def render_agents(workspace: Path, config: dict[str, Any], discovery: dict[str, 
             "",
             *MEMORY_BOUNDARY_LINES,
             "- 用户首次提供的稳定对象称呼、项目归属和目录映射，要补进任务路由、仓库 index、业务域或共享文档；无法消歧或缺少证据时不要硬写，先标为阻断或待用户确认。",
+            "",
+            "## 收尾记忆评估",
+            "",
+            *WRAP_UP_REVIEW_LINES,
             "",
             "## 多仓关联维护",
             "",
@@ -486,3 +517,4 @@ def bootstrap_workspace(workspace: Path) -> None:
         if not abs_path.exists():
             write_text(abs_path, content)
     (workspace / REPO_DOCS_PATH).mkdir(parents=True, exist_ok=True)
+    ensure_memory_daily_dir(workspace)

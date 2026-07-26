@@ -17,6 +17,7 @@ RELATION_INDEX_PATH = Path(".workspace/relations/index.md")
 WORKSPACE_INDEX_PATH = Path(".workspace/index.md")
 REPO_DOCS_PATH = Path(".workspace/repos")
 ROOT_DOC_PATHS = [Path("AGENTS.md"), Path("CLAUDE.md"), Path("MEMORY.md")]
+MEMORY_DAILY_PATH = Path(".workspace/memory/daily")
 IGNORED_DIRS = {
     ".git",
     ".idea",
@@ -118,6 +119,15 @@ def extract_markdown_links(content: str) -> list[str]:
 def extract_markdown_link_pairs(content: str) -> list[tuple[str, str]]:
     """返回 (label, href) 对，供链接标签卫生检查使用。"""
     return re.findall(r"\[([^\]]+)\]\(([^)]+)\)", content)
+
+
+def ensure_memory_daily_dir(workspace: Path) -> None:
+    """幂等创建 daily 短期价值层目录;已有内容绝不覆盖。"""
+    daily_dir = workspace / MEMORY_DAILY_PATH
+    daily_dir.mkdir(parents=True, exist_ok=True)
+    gitkeep = daily_dir / ".gitkeep"
+    if not gitkeep.exists():
+        gitkeep.write_text("", encoding="utf-8")
 
 
 def shell(*args: str, cwd: Path | None = None) -> str:

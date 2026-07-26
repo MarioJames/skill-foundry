@@ -13,6 +13,7 @@ from typing import Any
 from core import (
     CONFIG_PATH,
     DISCOVERY_PATH,
+    MEMORY_DAILY_PATH,
     RELATION_INDEX_PATH,
     RELATION_REGISTRY_PATH,
     REPO_DOCS_PATH,
@@ -56,7 +57,13 @@ def generated_markdown_paths(workspace: Path) -> list[Path]:
     markdown_files = [workspace / path for path in ROOT_DOC_PATHS if (workspace / path).exists()]
     workspace_dir = workspace / ".workspace"
     if workspace_dir.exists():
-        markdown_files.extend(sorted(workspace_dir.rglob("*.md")))
+        # daily 是按天保留的短期价值记录,相对链接失效不应阻断 validate。
+        memory_root = workspace / MEMORY_DAILY_PATH.parent
+        markdown_files.extend(
+            path
+            for path in sorted(workspace_dir.rglob("*.md"))
+            if memory_root not in path.parents
+        )
     return markdown_files
 
 

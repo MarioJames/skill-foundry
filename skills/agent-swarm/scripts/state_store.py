@@ -1,0 +1,605 @@
+"""SQLite facts for Agent Swarm Runtime v2.
+
+The old Kind/Round runtime used ``state.sqlite3``.  v2 deliberately uses a new
+database file so a breaking protocol upgrade cannot reinterpret live legacy
+rows.  The legacy database remains available for read-only diagnostics.
+"""
+
+import contextlib
+import hashlib
+import json
+import os
+import pathlib
+import shutil
+import tempfile
+import time
+
+try:
+    import sqlite3
+except ModuleNotFoundError as error:
+    if error.name not in {"sqlite3", "_sqlite3"}:
+        raise
+    import pysqlite3 as sqlite3
+
+
+RUNTIME_HOME_ENV = "AGENT_SWARM_HOME"
+MIGRATION_SOURCE_ENV = "AGENT_SWARM_MIGRATE_FROM"
+RUNTIME_HOME_DIRECTORY = ".agent-swarm"
+LEGACY_RUNTIME_HOME_DIRECTORY = ".ultra-team"
+SCHEMA_VERSION = "agent-swarm-runtime-v2"
+BUSY_TIMEOUT_MS = 5000
+RUNTIME_ASSET_MANIFEST = ".runtime-assets.json"
+RUNTIME_HOOK_SCRIPTS = ("hook_runtime.py", "hook_manager.py", "state_store.py")
+RUNTIME_HOOK_FILES = (
+    "heartbeat.sh",
+    "failure_context.sh",
+    "finish_gate.sh",
+    "clean.sh",
+)
+
+
+SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS runs (
+  root_id TEXT PRIMARY KEY,
+  task TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'running',
+  root_task_id TEXT,
+  root_agent_id TEXT,
+  max_concurrent_agents INTEGER NOT NULL DEFAULT 8,
+  max_total_tasks INTEGER NOT NULL DEFAULT 100,
+  max_attempts_per_task INTEGER NOT NULL DEFAULT 2,
+  max_delegation_depth INTEGER NOT NULL DEFAULT 5,
+  max_replans_per_task INTEGER NOT NULL DEFAULT 2,
+  max_children_per_action INTEGER NOT NULL DEFAULT 12,
+  require_final_review INTEGER NOT NULL DEFAULT 1,
+  model_tiers_json TEXT NOT NULL,
+  owner_token_hash TEXT,
+  lease_epoch INTEGER NOT NULL DEFAULT 0,
+  lease_expires_at REAL,
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL,
+  finished_at REAL
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  task_id TEXT PRIMARY KEY,
+  root_id TEXT NOT NULL REFERENCES runs(root_id) ON DELETE CASCADE,
+  parent_task_id TEXT REFERENCES tasks(task_id),
+  goal TEXT NOT NULL,
+  intent_hint TEXT NOT NULL,
+  resolved_intent TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  priority INTEGER NOT NULL DEFAULT 50,
+  complexity_hint TEXT NOT NULL DEFAULT 'medium',
+  model_tier_hint TEXT,
+  output_contract TEXT,
+  constraints_json TEXT NOT NULL DEFAULT '{}',
+  estimate_json TEXT,
+  current_attempt_id TEXT,
+  delegation_depth INTEGER NOT NULL DEFAULT 0,
+  replan_count INTEGER NOT NULL DEFAULT 0,
+  created_at REAL NOT NULL,
+  finished_at REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_root_status
+ON tasks(root_id, status, priority DESC, created_at);
+
+CREATE TABLE IF NOT EXISTS task_dependencies (
+  task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+  depends_on_task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+  condition TEXT NOT NULL DEFAULT 'success',
+  PRIMARY KEY (task_id, depends_on_task_id)
+);
+
+CREATE TABLE IF NOT EXISTS task_attempts (
+  attempt_id TEXT PRIMARY KEY,
+  root_id TEXT NOT NULL REFERENCES runs(root_id) ON DELETE CASCADE,
+  task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+  attempt_no INTEGER NOT NULL,
+  agent_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'assigned',
+  retryable INTEGER,
+  result_json TEXT,
+  started_at REAL,
+  finished_at REAL,
+  UNIQUE(task_id, attempt_no)
+);
+
+CREATE TABLE IF NOT EXISTS agents (
+  agent_id TEXT PRIMARY KEY,
+  root_id TEXT NOT NULL REFERENCES runs(root_id) ON DELETE CASCADE,
+  task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+  attempt_id TEXT NOT NULL REFERENCES task_attempts(attempt_id) ON DELETE CASCADE,
+  state TEXT NOT NULL DEFAULT 'received',
+  actor_token_hash TEXT NOT NULL,
+  session_name TEXT,
+  job_id TEXT,
+  model_tier TEXT,
+  model_name TEXT,
+  heartbeat_at REAL,
+  last_error TEXT,
+  created_at REAL NOT NULL,
+  finished_at REAL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_attempt
+ON agents(attempt_id);
+
+CREATE TABLE IF NOT EXISTS run_notes (
+  note_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  root_id TEXT NOT NULL REFERENCES runs(root_id) ON DELETE CASCADE,
+  task_id TEXT REFERENCES tasks(task_id),
+  agent_id TEXT NOT NULL REFERENCES agents(agent_id),
+  category TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT 'task',
+  content TEXT NOT NULL,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  supersedes_id INTEGER REFERENCES run_notes(note_id),
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS side_effect_outbox (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  root_id TEXT NOT NULL REFERENCES runs(root_id) ON DELETE CASCADE,
+  effect_type TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  claimed_at REAL,
+  last_error TEXT,
+  created_at REAL NOT NULL,
+  completed_at REAL
+);
+
+CREATE TABLE IF NOT EXISTS processed_actions (
+  root_id TEXT NOT NULL,
+  action_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  response_json TEXT NOT NULL,
+  processed_at REAL NOT NULL,
+  PRIMARY KEY (root_id, action_id)
+);
+
+CREATE TABLE IF NOT EXISTS events (
+  event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  root_id TEXT NOT NULL,
+  task_id TEXT,
+  attempt_id TEXT,
+  agent_id TEXT,
+  action_id TEXT,
+  type TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_at REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_root
+ON events(root_id, event_id);
+"""
+
+
+def now():
+    return time.time()
+
+
+def runtime_root():
+    override = os.environ.get(RUNTIME_HOME_ENV, "").strip()
+    if override:
+        return pathlib.Path(override).expanduser().resolve()
+    return (pathlib.Path.home() / RUNTIME_HOME_DIRECTORY).resolve()
+
+
+def db_path():
+    return runtime_root() / "runtime-v2.sqlite3"
+
+
+def legacy_db_path():
+    return runtime_root() / "state.sqlite3"
+
+
+def _legacy_runtime_roots():
+    """Locations used only to import the previous Agent Swarm v2 runtime."""
+    roots = []
+    override = os.environ.get(MIGRATION_SOURCE_ENV, "").strip()
+    if override:
+        roots.append(pathlib.Path(override).expanduser().resolve())
+    # A caller who chooses an explicit new home expects an isolated runtime. In
+    # that case only an explicitly supplied previous-home source may be imported.
+    if not os.environ.get(RUNTIME_HOME_ENV, "").strip():
+        roots.append((pathlib.Path.home() / LEGACY_RUNTIME_HOME_DIRECTORY).resolve())
+    current = runtime_root()
+    return [root for index, root in enumerate(roots) if root != current and root not in roots[:index]]
+
+
+def _legacy_v2_db_paths():
+    target = db_path()
+    return [
+        root / "runtime-v2.sqlite3"
+        for root in _legacy_runtime_roots()
+        if root / "runtime-v2.sqlite3" != target
+    ]
+
+
+def _legacy_kind_round_db_paths():
+    paths = [legacy_db_path()]
+    paths.extend(root / "state.sqlite3" for root in _legacy_runtime_roots())
+    return [path for index, path in enumerate(paths) if path not in paths[:index]]
+
+
+def _is_v2_database(path):
+    try:
+        con = sqlite3.connect("%s?mode=ro" % path.resolve().as_uri(), uri=True)
+        try:
+            tables = {
+                row[0]
+                for row in con.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            return {"runs", "tasks", "task_attempts", "agents"}.issubset(tables)
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return False
+
+
+def _copy_legacy_v2_database(source, target):
+    """Copy a prior v2 database without mutating the source or exposing a partial target."""
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".runtime-v2-migration-", suffix=".sqlite3", dir=str(target.parent)
+    )
+    os.close(descriptor)
+    temporary = pathlib.Path(temporary_name)
+    try:
+        source_con = sqlite3.connect("%s?mode=ro" % source.resolve().as_uri(), uri=True)
+        target_con = sqlite3.connect(str(temporary))
+        try:
+            source_con.backup(target_con)
+        finally:
+            target_con.close()
+            source_con.close()
+        if not target.exists():
+            temporary.replace(target)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+@contextlib.contextmanager
+def _runtime_lock(runtime_home, name):
+    lock_path = runtime_home / name
+    with lock_path.open("a+") as lock:
+        try:
+            import fcntl
+        except ImportError:
+            yield
+            return
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _runtime_asset_source_root():
+    return pathlib.Path(__file__).resolve().parent.parent
+
+
+def _asset_digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _runtime_asset_manifest(source_root):
+    files = [
+        source_root / "scripts" / name
+        for name in RUNTIME_HOOK_SCRIPTS
+    ] + [
+        source_root / "hooks" / name
+        for name in RUNTIME_HOOK_FILES
+    ]
+    return {
+        source.relative_to(source_root).as_posix(): _asset_digest(source)
+        for source in files
+        if source.is_file()
+    }
+
+
+def _read_runtime_asset_manifest(path):
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    files = data.get("files") if isinstance(data, dict) else None
+    return files if isinstance(files, dict) else {}
+
+
+def _safe_runtime_relative_path(relative):
+    path = pathlib.PurePosixPath(relative)
+    if path.is_absolute() or ".." in path.parts:
+        return None
+    return path
+
+
+def _runtime_assets_match(target_root, assets):
+    recorded = _read_runtime_asset_manifest(target_root / RUNTIME_ASSET_MANIFEST)
+    if recorded != assets:
+        return False
+    for relative, digest in assets.items():
+        safe_path = _safe_runtime_relative_path(relative)
+        target = target_root / safe_path if safe_path is not None else None
+        if target is None or not target.is_file() or _asset_digest(target) != digest:
+            return False
+    return True
+
+
+def _copy_runtime_asset(source, target):
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".%s-" % target.name, suffix=".tmp", dir=str(target.parent)
+    )
+    os.close(descriptor)
+    temporary = pathlib.Path(temporary_name)
+    try:
+        shutil.copy2(str(source), str(temporary))
+        temporary.replace(target)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def _write_runtime_asset_manifest(path, assets):
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(json.dumps({"files": assets}, sort_keys=True, indent=2) + "\n")
+    temporary.replace(path)
+
+
+def ensure_runtime_assets():
+    """Install only the minimal Hook runtime beneath the current Agent Swarm home."""
+    source_root = _runtime_asset_source_root()
+    target_root = runtime_root()
+    if source_root == target_root:
+        return target_root
+    assets = _runtime_asset_manifest(source_root)
+    target_root.mkdir(parents=True, exist_ok=True)
+    with _runtime_lock(target_root, ".runtime-assets.lock"):
+        if _runtime_assets_match(target_root, assets):
+            return target_root
+        previous_assets = _read_runtime_asset_manifest(target_root / RUNTIME_ASSET_MANIFEST)
+        for relative in assets:
+            safe_path = _safe_runtime_relative_path(relative)
+            if safe_path is not None:
+                _copy_runtime_asset(source_root / safe_path, target_root / safe_path)
+        for relative in previous_assets:
+            safe_path = _safe_runtime_relative_path(relative)
+            if safe_path is None or relative in assets:
+                continue
+            stale = target_root / safe_path
+            if stale.is_file():
+                stale.unlink()
+        _write_runtime_asset_manifest(target_root / RUNTIME_ASSET_MANIFEST, assets)
+    return target_root
+
+
+def _migrate_previous_v2_database(target):
+    if target.exists():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with _runtime_lock(target.parent, ".runtime-v2-migration.lock"):
+        if target.exists():
+            return
+        for source in _legacy_v2_db_paths():
+            if source.exists() and _is_v2_database(source):
+                _copy_legacy_v2_database(source, target)
+                return
+
+
+def legacy_active_runs_for_cwd(cwd):
+    """Read-only guard against starting v2 beside an unfinished legacy Run."""
+    rows = []
+    for path in _legacy_kind_round_db_paths():
+        if not path.exists():
+            continue
+        con = None
+        try:
+            con = sqlite3.connect("%s?mode=ro" % path.resolve().as_uri(), uri=True)
+            con.row_factory = sqlite3.Row
+            columns = {row["name"] for row in con.execute("PRAGMA table_info(runs)").fetchall()}
+            if not {"root_id", "cwd", "status"}.issubset(columns):
+                continue
+            selected = "root_id, cwd, status"
+            if "normalized_cwd" in columns:
+                selected += ", normalized_cwd"
+            rows.extend(dict(row) for row in con.execute("SELECT %s FROM runs" % selected).fetchall())
+        except sqlite3.Error:
+            continue
+        finally:
+            if con is not None:
+                con.close()
+    expected = os.path.realpath(cwd)
+    return [
+        row
+        for row in rows
+        if os.path.realpath(row.get("normalized_cwd") or row.get("cwd") or "") == expected
+        and row.get("status") not in {"done", "cancelled"}
+    ]
+
+
+def connect():
+    path = db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _migrate_previous_v2_database(path)
+    con = sqlite3.connect(str(path), isolation_level=None)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA busy_timeout = %d" % BUSY_TIMEOUT_MS)
+    con.execute("PRAGMA journal_mode = WAL")
+    con.execute("PRAGMA foreign_keys = ON")
+    return con
+
+
+def initialize_schema():
+    ensure_runtime_assets()
+    con = connect()
+    try:
+        con.executescript(SCHEMA_SQL)
+        con.execute(
+            "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (SCHEMA_VERSION,),
+        )
+    finally:
+        con.close()
+
+
+@contextlib.contextmanager
+def transaction(immediate=True):
+    initialize_schema()
+    con = connect()
+    try:
+        con.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+        yield con
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def _dict(row):
+    return dict(row) if row is not None else None
+
+
+def _one(sql, params=(), con=None):
+    if con is not None:
+        return _dict(con.execute(sql, params).fetchone())
+    owned = connect()
+    try:
+        return _dict(owned.execute(sql, params).fetchone())
+    finally:
+        owned.close()
+
+
+def fetchall(sql, params=(), con=None):
+    if con is not None:
+        return [dict(row) for row in con.execute(sql, params).fetchall()]
+    owned = connect()
+    try:
+        return [dict(row) for row in owned.execute(sql, params).fetchall()]
+    finally:
+        owned.close()
+
+
+def execute(sql, params=()):
+    with transaction() as con:
+        cursor = con.execute(sql, params)
+        return cursor.rowcount
+
+
+def get_run(root_id, con=None):
+    return _one("SELECT * FROM runs WHERE root_id = ?", (root_id,), con)
+
+
+def get_task(task_id, con=None):
+    return _one("SELECT * FROM tasks WHERE task_id = ?", (task_id,), con)
+
+
+def get_attempt(attempt_id, con=None):
+    return _one("SELECT * FROM task_attempts WHERE attempt_id = ?", (attempt_id,), con)
+
+
+def get_agent(agent_id, con=None):
+    return _one("SELECT * FROM agents WHERE agent_id = ?", (agent_id,), con)
+
+
+def get_outbox(effect_id, con=None):
+    return _one("SELECT * FROM side_effect_outbox WHERE id = ?", (effect_id,), con)
+
+
+def list_tasks(root_id, con=None):
+    return fetchall(
+        "SELECT * FROM tasks WHERE root_id = ? ORDER BY created_at, task_id", (root_id,), con
+    )
+
+
+def list_attempts(root_id, con=None):
+    return fetchall(
+        "SELECT * FROM task_attempts WHERE root_id = ? ORDER BY task_id, attempt_no", (root_id,), con
+    )
+
+
+def list_agents(root_id, con=None):
+    return fetchall(
+        "SELECT * FROM agents WHERE root_id = ? ORDER BY created_at, agent_id", (root_id,), con
+    )
+
+
+def list_notes(root_id, include_inactive=False, con=None):
+    active = "" if include_inactive else " AND active = 1"
+    return fetchall(
+        "SELECT * FROM run_notes WHERE root_id = ?" + active + " ORDER BY created_at, note_id",
+        (root_id,),
+        con,
+    )
+
+
+def list_outbox(root_id, con=None):
+    return fetchall(
+        "SELECT * FROM side_effect_outbox WHERE root_id = ? ORDER BY id", (root_id,), con
+    )
+
+
+def list_events(root_id, limit=100, con=None):
+    rows = fetchall(
+        "SELECT * FROM events WHERE root_id = ? ORDER BY event_id DESC LIMIT ?",
+        (root_id, int(limit)),
+        con,
+    )
+    rows.reverse()
+    return rows
+
+
+def append_event(
+    con,
+    root_id,
+    event_type,
+    payload=None,
+    task_id=None,
+    attempt_id=None,
+    agent_id=None,
+    action_id=None,
+):
+    con.execute(
+        """INSERT INTO events(
+             root_id, task_id, attempt_id, agent_id, action_id, type, payload_json, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            root_id,
+            task_id,
+            attempt_id,
+            agent_id,
+            action_id,
+            event_type,
+            json.dumps(payload or {}, ensure_ascii=False, sort_keys=True),
+            now(),
+        ),
+    )
+
+
+def hash_token(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def token_matches(token, expected_hash):
+    if not token or not expected_hash:
+        return False
+    import hmac
+
+    return hmac.compare_digest(hash_token(token), expected_hash)

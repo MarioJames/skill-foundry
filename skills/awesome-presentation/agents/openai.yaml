@@ -1,0 +1,4 @@
+interface:
+  display_name: "Awesome Presentation"
+  short_description: "先 grilling 聊清内容，批准大纲后问目录并用 tnpx cmdai 落成 slide deck"
+  default_prompt: "帮我做一套演示文稿：先一次一问把听众、主张、叙事弧和页级大纲聊清楚并形成 Deck Spec；我批准后先问项目装在哪，再用 tnpx -y @alipay/cmdai presentation init 落项目。"
