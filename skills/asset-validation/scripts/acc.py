@@ -15,7 +15,8 @@ except ImportError:  # works when run directly: `python3 .../scripts/acc.py`
 
 
 def _emit(obj):
-    print(json.dumps(obj, ensure_ascii=False))
+    payload = json.dumps(obj, ensure_ascii=False)
+    print(redact.redact_secrets(payload))
 
 
 def _read(path):
@@ -214,6 +215,7 @@ def main(argv=None) -> int:
     args = _build_parser().parse_args(argv)
     con = db.connect()
     try:
+        rounds.redact_persisted_evidence(con)
         if args.cmd == "bootstrap":
             try:
                 reg = catalog.register_asset(con, args.name, args.type, args.source)

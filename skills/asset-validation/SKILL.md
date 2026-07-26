@@ -77,7 +77,7 @@ Write only the acceptance DB, round sandbox, fixture/evidence paths, and authori
 
 - Correct-looking answer without skill/agent/plugin/command/transcript evidence is a bypass.
 - Direct `sqlite3 .../state.sqlite3` is a bypass; use `acc round list`, `acc history`, `acc show`, or add an `acc` read.
-- **NEVER** print settings files or secret env values; report paths only. `acc capture`/`acc record` redact known secret keys automatically.
+- **NEVER** print settings files or secret env values; report paths only. `acc capture`/`acc record` and every structured `acc` read redact known secret keys and high-confidence bare tokens. The rig also sanitizes evidence persisted by older versions before returning `round list` or `history`; add a regression whenever a new token shape is observed.
 - Bash variables do not persist across tool calls; resolve `ACC` each Bash or store in `"$WORK/.acc-path"`.
 - Self-review is not a negative trigger test. Observer **MUST** watch behavior, not ask the asset to grade its own trigger.
 - One-line toy task is smoke only; not final verdict for complex orchestration/recovery/workflow assets.

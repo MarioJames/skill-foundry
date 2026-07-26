@@ -1,6 +1,6 @@
 import json
 
-from . import catalog, db
+from . import catalog, db, redact
 
 
 class BudgetExceeded(RuntimeError):
@@ -12,6 +12,7 @@ class BudgetExceeded(RuntimeError):
 
 
 def _append(con, table, col, row_id, text):
+    text = redact.redact_secrets(text)
     cur = con.execute(f"SELECT {col} FROM {table} WHERE id=?", (row_id,)).fetchone()
     existing = (cur[0] if cur and cur[0] else "")
     joined = (existing + ("\n" if existing else "") + text)
@@ -128,10 +129,42 @@ def add_task_key(con, round_id, task_key) -> None:
 
 def record(con, round_id, *, transcript=None, report_append=None) -> None:
     if transcript is not None:
+        transcript = redact.redact_secrets(transcript)
         con.execute("UPDATE round SET transcript=? WHERE id=?", (transcript, round_id))
         con.commit()
     if report_append:
         _append(con, "round", "report", round_id, report_append)
+
+
+def redact_persisted_evidence(con) -> int:
+    """Sanitize evidence written by older rig versions before any CLI read."""
+    changed = 0
+    for table, columns in (
+        ("round", ("transcript", "report", "next_round_reco")),
+        ("acceptance", ("issues",)),
+        ("finding", ("summary",)),
+    ):
+        selected = ", ".join(("id", *columns))
+        for row in con.execute(f"SELECT {selected} FROM {table}").fetchall():
+            updates = {}
+            for column in columns:
+                value = row[column]
+                if value is None:
+                    continue
+                sanitized = redact.redact_secrets(value)
+                if sanitized != value:
+                    updates[column] = sanitized
+            if not updates:
+                continue
+            assignments = ", ".join(f"{column}=?" for column in updates)
+            con.execute(
+                f"UPDATE {table} SET {assignments} WHERE id=?",
+                (*updates.values(), row["id"]),
+            )
+            changed += 1
+    if changed:
+        con.commit()
+    return changed
 
 
 def add_finding(con, round_id, *, severity, status, summary, key=None) -> str:
