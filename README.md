@@ -17,9 +17,11 @@
 
 ## The Skills
 
-### `agent-swarm` — task-tree orchestration for multi-agent runs
+### `agents-orchestrator` — task-tree orchestration for multi-agent runs
 
-Successor to `ultra-team`. Coordinates one foreground Root session and background child sessions through a Python Runtime: an explicit Task tree, append-only Attempt/Launch history, durable SQLite facts, idempotent Effects, and recovery that must use `recover` (never silently fall back to `init`). Claude CLI remains the zero-config Backend; the opt-in ACP v1 Backend stores real Agent-issued Session IDs, uses detached Workers and Launch fencing, negotiates advertised model/permission options, and can load conversation history from the Agent without persisting message content locally. Its official ACP Python SDK and native transitive dependencies are bundled for offline, no-install use on supported macOS/Linux CPython 3.10–3.14 hosts. Claude and Codex ACP profiles default to `bypassPermissions` and `agent-full-access` respectively. Dormant by default; activates only on an explicit request such as `agent-swarm`, `agent swarm`, `agentswram`, or `蜂群模式`, or when a Runtime-injected `[ORCHESTRATION IDENTITY]` block is present.
+Canonical successor to `agent-swarm` and `ultra-team`. Coordinates one foreground Root and background child Agents through one Python Runtime: an explicit Task tree, append-only Attempt/Launch history, durable SQLite facts, idempotent Effects, bounded loops, consensus review, and recovery that must use `recover` (never silently fall back to `init`). Codex ACP is the default Backend/profile; Claude CLI remains available through explicit `--backend claude_cli`. ACP v1 stores real Agent-issued Session IDs, fences detached Workers and Launches, negotiates advertised model/permission options, and can load Agent-owned history without persisting dialogue locally. The first ACP initialization installs the pinned Python SDK plus Codex and Claude Code ACP Agents into `$HOME/.agents-orchestrator/dependencies`; the repository ships no offline ACP dependency bundle.
+
+The skill is dormant by default. It activates only on an explicit orchestration request such as `agents-orchestrator`, `swarm mode`, `loop mode`, `multi-agent review`, or on a Runtime-injected `[ORCHESTRATION IDENTITY]` block. Ordinary reviews, paths, links, and quoted examples do not trigger it. `agent-swarm` remains a thin explicit-only alias that defaults to swarm mode and delegates to the same canonical Runtime; it contains no Runtime copy.
 
 **Reach for it when** large work needs delegated children, durable tracking, review loops, and safe resume.
 
@@ -53,29 +55,49 @@ Human-facing workspace artifacts default to Chinese; machine tokens (paths, keys
 
 ## Install
 
-Install with the [`skills`](https://github.com/vercel-labs/skills) CLI:
+Install with the [`skills`](https://github.com/vercel-labs/skills) CLI (`pnpm dlx` or `npx` can
+replace `bunx` when Bun is unavailable):
 
 ```bash
 # Everything
-npx skills add MarioJames/skill-foundry --all
+bunx skills add MarioJames/skill-foundry --all
 
 # One skill
-npx skills add MarioJames/skill-foundry --skill agent-swarm
-npx skills add MarioJames/skill-foundry --skill asset-validation
-npx skills add MarioJames/skill-foundry --skill browser-harness
-npx skills add MarioJames/skill-foundry --skill awesome-presentation
-npx skills add MarioJames/skill-foundry --skill workspace-knowledge-graph
+bunx skills add MarioJames/skill-foundry --skill agents-orchestrator
+bunx skills add MarioJames/skill-foundry --skill asset-validation
+bunx skills add MarioJames/skill-foundry --skill browser-harness
+bunx skills add MarioJames/skill-foundry --skill awesome-presentation
+bunx skills add MarioJames/skill-foundry --skill workspace-knowledge-graph
 
 # Target a specific agent, or install globally
-npx skills add MarioJames/skill-foundry --all -a claude-code   # or: -a codex
-npx skills add MarioJames/skill-foundry --all -g
+bunx skills add MarioJames/skill-foundry --all -a claude-code   # or: -a codex
+bunx skills add MarioJames/skill-foundry --all -g
+```
+
+Existing `agent-swarm` prompts need both packages. Install the canonical skill first, then the
+optional alias:
+
+```bash
+bunx skills add MarioJames/skill-foundry --skill agents-orchestrator
+bunx skills add MarioJames/skill-foundry --skill agent-swarm
 ```
 
 Restart or reload the target agent runtime after installation so it can discover the skills.
 
+The first ACP initialization requires network access, `uv` or `pip`, and preferably Bun. It installs
+the pinned SDK plus Codex and Claude Code ACP Agents into the skill dependency home; Codex remains
+the default execution profile. Manual fallback commands are:
+
+```bash
+bun add -g @agentclientprotocol/codex-acp@1.1.7
+bun add -g @agentclientprotocol/claude-agent-acp@0.62.0
+```
+
+Use `--backend claude_cli` when choosing the legacy Claude CLI Backend instead.
+
 ### Manual Fallback
 
-If your runtime does not support `npx skills add`, clone the repository and copy the skill directories directly.
+If your runtime does not support `skills add`, clone the repository and copy the skill directories directly.
 
 Codex:
 
@@ -83,8 +105,10 @@ Codex:
 git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
 mkdir -p ~/.codex/skills
-cp -R skills/agent-swarm skills/asset-validation skills/browser-harness \
+cp -R skills/agents-orchestrator skills/asset-validation skills/browser-harness \
   skills/awesome-presentation skills/workspace-knowledge-graph ~/.codex/skills/
+# Optional compatibility alias; it requires the canonical directory above.
+cp -R skills/agent-swarm ~/.codex/skills/
 ```
 
 Claude-style runtimes:
@@ -93,14 +117,17 @@ Claude-style runtimes:
 git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
 mkdir -p ~/.claude/skills
-cp -R skills/agent-swarm skills/asset-validation skills/browser-harness \
+cp -R skills/agents-orchestrator skills/asset-validation skills/browser-harness \
   skills/awesome-presentation skills/workspace-knowledge-graph ~/.claude/skills/
+# Optional compatibility alias; it requires the canonical directory above.
+cp -R skills/agent-swarm ~/.claude/skills/
 ```
 
 Verify the installation:
 
 ```bash
-test -f ~/.codex/skills/agent-swarm/SKILL.md
+test -f ~/.codex/skills/agents-orchestrator/SKILL.md
+test -f ~/.codex/skills/agents-orchestrator/scripts/agent_orchestrator.py
 test -f ~/.codex/skills/asset-validation/SKILL.md
 test -f ~/.codex/skills/browser-harness/SKILL.md
 test -f ~/.codex/skills/awesome-presentation/SKILL.md
@@ -112,10 +139,11 @@ test -f ~/.codex/skills/workspace-knowledge-graph/SKILL.md
 ```bash
 cd skill-foundry
 git pull
-rm -rf ~/.codex/skills/agent-swarm ~/.codex/skills/asset-validation \
+rm -rf ~/.codex/skills/agents-orchestrator ~/.codex/skills/agent-swarm \
+  ~/.codex/skills/asset-validation \
   ~/.codex/skills/browser-harness ~/.codex/skills/awesome-presentation \
   ~/.codex/skills/workspace-knowledge-graph
-cp -R skills/agent-swarm skills/asset-validation skills/browser-harness \
+cp -R skills/agents-orchestrator skills/agent-swarm skills/asset-validation skills/browser-harness \
   skills/awesome-presentation skills/workspace-knowledge-graph ~/.codex/skills/
 ```
 
@@ -126,7 +154,25 @@ After installation, invoke the installed skills through normal agent requests.
 Orchestrate a large task tree:
 
 ```text
-Run this with agent-swarm and coordinate implementation, validation, and final review.
+Use agents-orchestrator in swarm mode to coordinate implementation, validation, and final review.
+```
+
+Run a bounded improvement loop:
+
+```text
+Use agents-orchestrator in loop mode, at most 3 iterations, and stop when the acceptance tests pass.
+```
+
+Review a plan through independent consensus:
+
+```text
+Use agents-orchestrator for a multi-Agent plan review with 3 independent reviewers and a consensus result.
+```
+
+Use the compatibility spelling:
+
+```text
+Run this with agent-swarm.
 ```
 
 Validate an asset:
@@ -153,7 +199,9 @@ Bootstrap or refresh a multi-repo knowledge graph:
 Use workspace-knowledge-graph to scan this workspace, build the knowledge graph, and refresh AGENTS.md.
 ```
 
-Each skill defines its own activation rules in `SKILL.md`. In particular, `agent-swarm` is dormant by default and only activates on an explicit orchestration request or an injected orchestration identity.
+Each skill defines its own activation rules in `SKILL.md`. In particular, `agents-orchestrator` and
+its `agent-swarm` alias are explicit-only; quoted names, file paths, links, and ordinary reviews do
+not activate orchestration.
 
 ## Repository Layout
 
@@ -162,10 +210,16 @@ skill-foundry/
 ├── assets/
 │   └── logo.svg
 ├── skills/
-│   ├── agent-swarm/
+│   ├── agents-orchestrator/
 │   │   ├── SKILL.md
+│   │   ├── agents/
+│   │   ├── assets/
 │   │   ├── hooks/
 │   │   ├── references/
+│   │   └── scripts/
+│   ├── agent-swarm/           # thin legacy alias; no Runtime copy
+│   │   ├── SKILL.md
+│   │   ├── agents/
 │   │   └── scripts/
 │   ├── asset-validation/
 │   │   ├── SKILL.md
@@ -192,7 +246,8 @@ skill-foundry/
 
 Installable skill packages:
 
-- `skills/agent-swarm/`
+- `skills/agents-orchestrator/`
+- `skills/agent-swarm/` (optional compatibility alias; requires `agents-orchestrator`)
 - `skills/asset-validation/`
 - `skills/browser-harness/`
 - `skills/awesome-presentation/`

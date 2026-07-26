@@ -1,0 +1,7 @@
+interface:
+  display_name: "Agents Orchestrator"
+  short_description: "Explicit task-tree orchestration and review loops"
+  default_prompt: "Use $agents-orchestrator to run this task in swarm mode with validation and final review."
+
+policy:
+  allow_implicit_invocation: false
