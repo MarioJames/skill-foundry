@@ -1,6 +1,6 @@
 # Gotchas
 
-来自内容发现与 cmdai 集成的高频坑；发现新失败模式时优先记在这里。
+来自内容发现与 GitHub fork 集成的高频坑；发现新失败模式时优先记在这里。
 
 ## 内容发现（最高优先）
 
@@ -8,7 +8,7 @@
    本技能最大失败模式。**HARD-GATE**：无用户批准页表则零工程动作。
 
 1. **未问安装目录就 init**
-   Spec 批准后、执行 `tnpx … presentation init` 前，必须单独问清项目路径并得到确认；禁止静默写到默认目录。
+   Spec 批准后、执行 `git clone` 前，必须单独问清项目路径并得到确认；禁止静默写到默认目录。
 
 2. **一次消息问一串**
    违反 grilling。一次一题，且每题带推荐答案。
@@ -24,23 +24,23 @@
 
 ## 初始化
 
-6. **应用 `tnpx -y @alipay/cmdai`，不要默认全局装 cmdai**
-   权威命令：`tnpx -y @alipay/cmdai presentation init <用户确认的目录>`。
+6. **直接 `git clone` GitHub fork，不再用 `tnpx`/`@alipay/cmdai`**
+   权威命令：`git clone --depth 1 https://github.com/MarioJames/awesome-presentation.git <用户确认的目录>`。
 
-7. **模板不在 npm 包内**
-   init 仍会远程浅克隆模板仓；离线或无 AntCode 权限会直接失败。
+7. **模板在 GitHub fork 仓库内**
+   clone 直接拉 fork 仓库；离线或无 GitHub 访问会直接失败。
 
 8. **非空目录默认失败**
-   不要为了「省事」自动加 `--force`；会覆盖同名文件。也不要绕到临时空目录 init 后自行合并——这仍然替用户决定了合并语义。先确认用户是在新空目录创建，还是明确授权覆盖。
+   Git 拒绝克隆到非空目录（`destination path already exists`）。不要绕到临时空目录 clone 后自行合并——这仍然替用户决定了合并语义。先确认用户是在新空目录创建，还是明确授权临时目录克隆后选择性合并。
 
-9. **package name 被改写**
-   init 后 `package.json.name` 来自目录名归一化；不要假设仍是 `awesome-presentation`。
+9. **package name 须手动改**
+   旧版 cmdai 会自动改 `package.json.name` 为目录名归一化并删 `repository` 字段；现需 clone 后手动处理（jq 或手改）。不要假设 name 仍是 `awesome-presentation`。
 
 10. **隐藏目录会复制**
     `.claude/` 等会进入目标项目；这是预期，项目内布局/组件技能依赖它。
 
 11. **失败后拿缓存或旧项目续命**
-    `tnpx`、模板下载或安装失败后，禁止扫描 HOME 缓存、别的项目或系统临时目录寻找旧脚手架继续生成。报告原始阻断与所需权限/网络条件，等待重试；缓存命中不证明版本或来源可信。
+    克隆、模板下载或安装失败后，禁止扫描 HOME 缓存、别的项目或系统临时目录寻找旧脚手架继续生成。报告原始阻断与所需权限/网络条件，等待重试；缓存命中不证明版本或来源可信。
 
 ## 编写 Deck
 

@@ -9,7 +9,7 @@
 
 在用户**明确批准**「页级大纲 / Deck Spec」之前：
 
-- **禁止** `tnpx … presentation init`、装依赖、写 `src/pages`、改 `registry`、跑 build/visual
+- **禁止** `git clone`（脚手架）、装依赖、写 `src/pages`、改 `registry`、跑 build/visual
 - **禁止** 用版式、组件名或「我先 scaffold 一个项目」替代内容决策
 - **禁止** 在同一条消息里连珠炮问 5 个问题后就开写
 - **项目安装目录**属于实现闸门：可在 Spec 批准后的实现阶段再问，**不要**在内容发现阶段默认创建目录；也**不要**未问目录就 init

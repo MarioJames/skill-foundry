@@ -1,10 +1,10 @@
 ---
 name: awesome-presentation
 description: >
-  先把演示内容与用户聊清楚（grilling + 大纲批准），再用 cmdai presentation 脚手架落成 React slide deck。
+  先把演示内容与用户聊清楚（grilling + 大纲批准），再用 GitHub fork 脚手架落成 React slide deck。
   主路径是内容发现与 Deck Spec 确认；init / 写 pages / build 只在用户批准大纲之后。
   触发词：演示文稿、slide deck、presentation、PPT、技术分享稿、大纲澄清、grilling 演示内容、
-  cmdai presentation、awesome-presentation、做一套 slides、生成演示。
+  git clone awesome-presentation、awesome-presentation、做一套 slides、生成演示。
   Use when the user runs /awesome-presentation。
 ---
 
@@ -20,21 +20,21 @@ description: >
 - [superpowers:brainstorming](https://github.com/obra/superpowers/blob/main/skills/brainstorming/SKILL.md)：**HARD-GATE**、一次一问、2–3 方案、分段批准
 - [grilling](https://github.com/mattpocock/skills/blob/main/skills/productivity/grilling/SKILL.md)：沿决策树追问、每题给推荐、确认前不行动
 
-脚手架真源：远程 `awesome-presentation`；工程入口：`tnpx -y @alipay/cmdai presentation init`（不要求全局安装 `cmdai`）。本技能不复制 layout/component 长表。
+脚手架真源：GitHub fork `https://github.com/MarioJames/awesome-presentation.git`；工程入口：`git clone --depth 1`（直接克隆，不再走 `@alipay/cmdai`）。本技能不复制 layout/component 长表。
 
 ## When to Use
 
 - 要做技术分享 / 方案 / 培训 / 产品 / 管理 / 数据类演示，哪怕只有一句模糊想法
 - 有长文、旧 PPT、草稿，需要先压成可讲的叙事再落项目
-- 提到 `cmdai presentation`、`awesome-presentation`、交互式演示脚手架
+- 提到 `git clone awesome-presentation`、`awesome-presentation`、交互式演示脚手架
 
-不要用：保险后台业务页、普通 Bigfish 应用、只改 `cmdai` CLI 源码。
+不要用：保险后台业务页、普通 Bigfish 应用、只改 GitHub fork 模板源码。
 
 ## **HARD-GATE**（必须遵守）
 
 在用户**明确批准 Deck Spec（页级大纲）之前**：
 
-- 禁止 `tnpx … presentation init`、安装依赖、写页面代码、改 registry、跑 build/visual
+- 禁止 `git clone`（脚手架）、安装依赖、写页面代码、改 registry、跑 build/visual
 - 禁止用「先搭个空项目再说」绕过内容决策
 - 禁止**擅自假定**项目目录；init 前必须单独问清安装路径并得到确认
 
@@ -79,17 +79,18 @@ Deck Spec 最小页表形态：
 1. **先问安装目录（必问，单独一题）**  
    未得到用户明确路径前，禁止 init。可推荐默认（如 `./<topic-slug>`），但必须等用户确认或改写。  
    示例：「项目要建在哪个目录？我建议 `./my-talk`（相对当前工作区），也可以给绝对路径。」
-2. **再初始化**（用 `tnpx`，不要依赖全局 `cmdai`）：
+2. **再初始化**（直接 `git clone` GitHub fork）：
 
 ```bash
-tnpx -y @alipay/cmdai presentation init <用户确认的目录>
-# 目标非空且用户明确要求覆盖时才加 --force
-cd <用户确认的目录> && tnpm install
+git clone --depth 1 https://github.com/MarioJames/awesome-presentation.git <用户确认的目录>
+cd <用户确认的目录>
+# 复刻 cmdai 后处理：删 .git、改 package.json.name 为目录名、删 repository 字段
+tnpm install   # 或 pnpm install / npm install
 ```
 
-目标目录非空且又不是现有脚手架时，必须停下来让用户在「换一个明确的空目录」与「明确授权 `--force`」之间选择；“保留既有内容”不等于授权你先在临时目录 init 再合并。初始化或网络失败后也不要搜索 HOME 缓存、旧项目或系统临时目录拼装替代模板，直接报告失败与下一步。
+目标目录非空且又不是现有脚手架时，必须停下来让用户在「换一个明确的空目录」与「明确授权在临时目录克隆后选择性合并」之间选择；“保留既有内容”不等于授权你自行决定合并语义。初始化或网络失败后也不要搜索 HOME 缓存、旧项目或系统临时目录拼装替代模板，直接报告失败与下一步。
 
-已是本脚手架项目（有 `src/rules/layout-catalog.ts` + `src/pages/registry.ts`）则跳过 init，但仍须确认是在该目录上改还是另开新目录。
+已是本脚手架项目（有 `src/rules/layout-catalog.ts` + `src/pages/registry.ts`）则跳过克隆，但仍须确认是在该目录上改还是另开新目录。
 
 ### Phase 2 — 按批准 Spec 落页
 
@@ -127,11 +128,11 @@ tnpm run dev   # http://127.0.0.1:5173  Hash /#/1
 | 想法模糊 / 只有主题词 | 留在 Phase 0 grilling，不 init |
 | 用户甩长文 | 先提炼草案再 grilling 裁剪，不从第一页开写 |
 | Spec 未批准 | **HARD-GATE**，零工程动作 |
-| Spec 已批准、无项目 | 先问目录 → `tnpx -y @alipay/cmdai presentation init <dir>` → install → 落页 |
+| Spec 已批准、无项目 | 先问目录 → `git clone --depth 1 <GitHub fork> <dir>` → install → 落页 |
 | Spec 已批准、已有脚手架 | 确认目录后直接改 pages/registry |
-| 目录未确认 | 禁止 init；单独再问一次安装路径 |
-| 目录非空且不是脚手架 | 保留原内容并停止；推荐新空目录，或等待用户明确授权 `--force`；禁止临时 init 后自行合并 |
-| init / 下载失败 | 报告原命令与阻断，给权限 / 网络 / 重试建议；禁止从 HOME 缓存、旧项目或系统临时目录找替代模板 |
+| 目录未确认 | 禁止克隆；单独再问一次安装路径 |
+| 目录非空且不是脚手架 | 保留原内容并停止；推荐新空目录，或等待用户明确授权临时目录克隆后选择性合并；禁止自行决定合并语义 |
+| 克隆 / 下载失败 | 报告原命令与阻断，给权限 / 网络 / 重试建议；禁止从 HOME 缓存、旧项目或系统临时目录找替代模板 |
 | 用户只要大纲不要代码 | Phase 0 交付 Spec 后结束 |
 | 容量超限 | 拆页或换 recipe；回 Spec 确认；禁缩字号 |
 | 无顺序/对比/层级/媒体 | 不用对应 process/compare/architecture/media recipe |
@@ -146,7 +147,7 @@ tnpm run dev   # http://127.0.0.1:5173  Hash /#/1
 | [references/content-discovery.md](references/content-discovery.md) | **默认必读**：grilling、决策树、Spec、**HARD-GATE** |
 | [references/content-to-deck.md](references/content-to-deck.md) | Spec 批准后：recommendLayout、registry、组件骨架 |
 | [references/layout-conventions.md](references/layout-conventions.md) | 中英章节 deck-meta、右侧生图/占位 |
-| [references/init-and-setup.md](references/init-and-setup.md) | 批准后：问目录、`tnpx` init、依赖 / 权限 |
+| [references/init-and-setup.md](references/init-and-setup.md) | 批准后：问目录、`git clone` 初始化、依赖 / 权限 |
 | [references/validation-and-delivery.md](references/validation-and-delivery.md) | test/build/visual、交付 |
 | [references/gotchas.md](references/gotchas.md) | 排障与已知坑 |
 
@@ -155,8 +156,8 @@ tnpm run dev   # http://127.0.0.1:5173  Hash /#/1
 - **先聊天后脚手架**：未批准 Spec 就 init 是本技能最大失败模式。
 - **一次多问**：连发一串问题 = 违反 grilling；拆开问。
 - **只做秘书不做对手**：不挑战范围与重复页，产出的是备忘录不是演示。
-- 初始化用 `tnpx -y @alipay/cmdai presentation init`，不要默认全局安装 `cmdai`。
-- init 前必须问清项目目录；模板不在 npm 包内，需 Git + 模板仓读权限。
+- 初始化用 `git clone --depth 1 https://github.com/MarioJames/awesome-presentation.git`，不再走 `@alipay/cmdai` / `tnpx`。
+- init 前必须问清项目目录；模板在 GitHub fork 仓库内，需 Git + 仓库读权限（public 或已配置访问）。
 - 选型目录在项目内 `presentation-layouts` / `presentation-components`，本技能不抄长表。
 - `visual:update` 不是修失败的捷径。
 
