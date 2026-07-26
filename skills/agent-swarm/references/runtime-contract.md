@@ -33,14 +33,17 @@ time through
 directory. The child launcher exports the resolved `AGENT_SWARM_HOME` so a custom runtime home is
 used consistently.
 
-The Runtime does not issue `git worktree add` or `claude --worktree`; Claude Code, the child, or the
-project owns worktree creation. `init` installs project hooks, writes `.claude/settings.local.json`
-to `.worktreeinclude` for future Claude-created worktrees, and refreshes every registered worktree
-before and after child spawn. Every child **MUST** run `worktree-init` before substantial work in its
-current directory and again immediately after entering or creating another worktree. That command
-authenticates the current identity, refreshes its heartbeat, and merges local settings in the exact
-worktree. A user-defined Claude `WorktreeCreate` hook replaces Claude's default creation path and
-does not process `.worktreeinclude`; the explicit `worktree-init` gate is therefore authoritative.
+The Runtime does not issue `git worktree add` or `claude --worktree`; the Agent, child, or project
+owns worktree creation. The default Claude CLI Backend installs project hooks and writes
+`.claude/settings.local.json` to `.worktreeinclude` for future Claude-created worktrees, and
+refreshes every registered worktree before and after child spawn. ACP does not mutate `.claude`
+settings. Every child **MUST** run
+`bootstrap-cwd` before substantial work in its current directory and again immediately after
+entering or creating another worktree. That command authenticates the current identity and refreshes
+its heartbeat; hook-capable Backends also merge local settings in the exact worktree.
+`worktree-init` remains an alias. A user-defined Claude `WorktreeCreate` hook replaces Claude's
+default creation path and does not process `.worktreeinclude`; the explicit `bootstrap-cwd` gate is
+therefore authoritative.
 The Runtime does not add a CLI `--settings` overlay, so user-level settings stay independent of Hook
 deployment.
 
@@ -58,7 +61,11 @@ active → stopping → ready  (Parent-selected kill after a stalled heartbeat)
 pending|blocked|active → cancelled
 ```
 
-## Claude Hooks
+## Backend lifecycle guards
+
+The detailed ACP design, implementation status, and real-agent acceptance record live in
+[acp-backend-spec.md](../../docs/specs/acp-backend-spec.md). The default Backend remains Claude CLI;
+ACP is an explicit Run-initialization choice and is frozen into each Attempt's execution record.
 
 The Runtime installs project-local Hooks only while it owns an active Run:
 
@@ -72,11 +79,30 @@ The Runtime installs project-local Hooks only while it owns an active Run:
 Every Hook skips sessions without the complete `AGENT_SWARM_*` identity. Hooks **NEVER** initialize, recover,
 complete, or spawn Runs: Actions remain the only lifecycle authority.
 
+ACP does not use Claude Hooks. Each Attempt owns a detached Worker, Agent Process, ACP Session, and
+mode-0600 Unix control socket. The Worker persists generation ownership before launching the Agent,
+negotiates protocol v1, applies only Agent-advertised model/permission config options, marks ready
+only after initialize + session/new + prompt dispatch, and self-cleans after a legal `finish`.
+Unsupported explicit models or unsafe permission modes fail cleanly. Turn end without `finish` is a
+deterministic retryable failure, never success.
+
+`allow_in_workspace` normally requires every advertised permission location to resolve inside the
+workspace or an additional directory. Non-empty declared location metadata that is malformed or
+out of workspace is denied. A missing, null, or empty location list is treated as no location; for
+those Codex ACP requests, the only allowable exception is an `execute` call from a workspace cwd
+through a trusted absolute system shell that exactly invokes the frozen Runtime entrypoint as
+`bootstrap-cwd`, `action-schema <ACTION_TYPE>`, or the documented single-object
+`printf '%s' ... | ... action --type <ACTION_TYPE> --stdin` form. That exception chooses only
+allow-once; it rejects shell
+composition, alternate entrypoints/producers, unrelated Runtime commands, and allow-always-only
+choices. This approval automation permits authenticated Runtime state updates outside the child
+workspace; it is not an OS filesystem sandbox.
+
 ## Child heartbeat watchdog
 
 The Root can run `reap` without changing its own identity. A running child with a heartbeat older
-than five minutes is retried only after a successful `claude agents --json` observation confirms its
-Session is absent. A still-live Session is returned to the Parent as a diagnostic candidate; the
+than five minutes is retried only after its persisted Backend observation confirms the Session is
+absent. A still-live Session is returned to the Parent as a diagnostic candidate; the
 Parent may explicitly request a stop-and-retry for that Attempt. An observation failure is reported
 without changing child state. Root `wait` invokes this watchdog immediately and at most every 30
 seconds while it is waiting.
@@ -114,8 +140,8 @@ to be done; `terminal` accepts any terminal upstream state. A permanently failed
 dependency blocks the downstream Task.
 
 The Runtime schedules by priority, creation time, then shallower depth. It creates the Attempt,
-Agent, and `spawn:{attempt_id}` outbox effect before invoking `claude --bg`. Agents **NEVER** manage
-slots or process lifetimes.
+Agent, immutable execution record, and `spawn:{attempt_id}` outbox effect before invoking the
+selected Backend. Agents **NEVER** manage slots or process lifetimes.
 
 ## Completion gates
 
@@ -128,8 +154,18 @@ For `finish(status=done)`:
 - A review Intent must provide `review.status` and `review.findings`.
 - When final review is enabled and any Task changed files, Root must provide a review. A referenced
   review Task must be a done review Intent in the same Run.
-- Root closes only when all required Tasks are done, no Attempt is live, and no spawn/stop effect is
-  pending.
+- Root closes only when all required Tasks are done, no Attempt is live, no spawn/stop effect is
+  pending, and every execution record is closed.
+
+New child actor tokens are derived from a mode-0600 Run seed. SQLite, Outbox payloads, prompts,
+diagnostic logs, and optional sidecars store identity/hash facts only, never the plaintext token.
+The seed is removed only after a terminal Run has no open execution or spawn/stop effect.
+
+ACP built-in profiles resolve the executable once to an absolute real path and freeze that path,
+args, version, authentication prerequisites, sandbox declaration, and model-tier mapping into the
+Run/Attempt records. Custom Agents require an absolute executable. `doctor` reports that preflight
+without installing or starting the external Agent. The Worker records advertised authentication
+method IDs and capabilities for diagnosis, but never credentials or prompt text.
 
 Failed child Attempts retry only when marked retryable and within budget. A failed Root **NEVER**
 automatically starts a new foreground Root; use `recover`.

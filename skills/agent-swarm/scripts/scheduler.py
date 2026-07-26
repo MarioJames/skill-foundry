@@ -1,9 +1,10 @@
 """Dependency resolution and attempt creation for ready child tasks."""
 
 import json
-import secrets
 import uuid
 
+import execution_config
+import execution_secrets
 import model_policy
 import state_store
 
@@ -88,15 +89,18 @@ def _create_attempt(con, run, task):
 
     attempt_id = new_id("attempt")
     agent_id = new_id("agent")
-    actor_token = secrets.token_urlsafe(32)
     tier = model_policy.select_model_tier(task)
     model_name = model_policy.resolve_model(run, tier)
+    execution = execution_config.snapshot_attempt(run, model=model_name)
+    backend_id = execution["backend"]
+    agent_key = execution["agent"]
     created = state_store.now()
     session_name = "agent-swarm-%s-%s-%d" % (
         run["root_id"].replace("root_", "")[:8],
         task["task_id"].replace("task_", "")[:8],
         attempt_no,
     )
+    actor_token = execution_secrets.derive_attempt_token(run, attempt_id, agent_id)
     con.execute(
         """INSERT INTO task_attempts(
              attempt_id, root_id, task_id, attempt_no, agent_id, status
@@ -106,8 +110,9 @@ def _create_attempt(con, run, task):
     con.execute(
         """INSERT INTO agents(
              agent_id, root_id, task_id, attempt_id, state, actor_token_hash,
-             session_name, model_tier, model_name, heartbeat_at, created_at
-           ) VALUES (?, ?, ?, ?, 'received', ?, ?, ?, ?, ?, ?)""",
+             session_name, backend_id, agent_key, model_tier, model_name,
+             heartbeat_at, created_at
+           ) VALUES (?, ?, ?, ?, 'received', ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             agent_id,
             run["root_id"],
@@ -115,8 +120,31 @@ def _create_attempt(con, run, task):
             attempt_id,
             state_store.hash_token(actor_token),
             session_name,
+            backend_id,
+            agent_key,
             tier,
             model_name,
+            created,
+            created,
+        ),
+    )
+    generation = 1
+    execution_id = "%s:%s:%d" % (backend_id, attempt_id, generation)
+    con.execute(
+        """INSERT INTO execution_sessions(
+             attempt_id, root_id, backend_id, generation, owner_nonce,
+             session_name, execution_id, config_json, agent_key, status,
+             prompt_state, created_at, last_event_at
+           ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, 'starting', 'pending', ?, ?)""",
+        (
+            attempt_id,
+            run["root_id"],
+            backend_id,
+            generation,
+            session_name,
+            execution_id,
+            json.dumps(execution, ensure_ascii=False, sort_keys=True),
+            agent_key,
             created,
             created,
         ),
@@ -130,7 +158,10 @@ def _create_attempt(con, run, task):
         "task_id": task["task_id"],
         "attempt_id": attempt_id,
         "agent_id": agent_id,
-        "actor_token": actor_token,
+        "backend_id": backend_id,
+        "execution_id": execution_id,
+        "generation": generation,
+        "config_json": json.dumps(execution, ensure_ascii=False, sort_keys=True),
     }
     con.execute(
         """INSERT OR IGNORE INTO side_effect_outbox(

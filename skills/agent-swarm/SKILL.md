@@ -6,7 +6,8 @@ description: Use only when the user explicitly asks to start, use, run, continue
 # Agent Swarm
 
 Use the Python Runtime in this skill directory to coordinate one foreground Root session and
-background Claude child sessions. Resolve `<skill_dir>` from this file's directory.
+background child Agent sessions. The default execution Backend remains Claude CLI; ACP v1 is an
+explicit opt-in. Resolve `<skill_dir>` from this file's directory.
 
 ## **HARD CONSTRAINTS**
 
@@ -14,10 +15,10 @@ background Claude child sessions. Resolve `<skill_dir>` from this file's directo
 - **MUST** call `recover` (not `init`) for resume/recover intent; **DO NOT** preflight SQLite or invent recoverability.
 - **NEVER** silently replace a failed recovery with `init`.
 - With `[ORCHESTRATION IDENTITY]`, **MUST** use that identity; **NEVER** initialize another Run.
-- **MUST** delegate children only via `create_tasks`; **DO NOT** start a child with `claude --bg` yourself.
+- **MUST** delegate children only via `create_tasks`; **DO NOT** launch child Agent processes yourself.
 - **NEVER** reuse an Attempt for a new Session.
 - After `stop` reports `terminal: true`, **DO NOT** execute further business Actions for that Run.
-- Every child **MUST** run `worktree-init` before substantial work in its current directory, and again immediately after creating or entering another worktree.
+- Every child **MUST** run `bootstrap-cwd` before substantial work in its current directory, and again immediately after creating or entering another worktree. `worktree-init` remains a compatibility alias.
 
 ## Activation
 
@@ -53,6 +54,48 @@ python3 <skill_dir>/scripts/agent_orchestrator.py init \
   --cwd "$(pwd)"
 ```
 
+ACP is opt-in at Run initialization. Known profiles are version-pinned and never installed by the
+Runtime:
+
+```bash
+python3 <skill_dir>/scripts/agent_orchestrator.py init \
+  --task "<user goal>" \
+  --cwd "$(pwd)" \
+  --backend acp \
+  --acp-agent <claude|codex|gemini>
+
+# A custom stdio ACP Agent requires an explicit executable.
+python3 <skill_dir>/scripts/agent_orchestrator.py init \
+  --task "<user goal>" --cwd "$(pwd)" --backend acp --acp-agent custom \
+  --acp-command /absolute/path/to/agent --acp-args-json '["--stdio"]'
+```
+
+Built-in profiles currently pin `claude-agent-acp` 0.62.0,
+`@agentclientprotocol/codex-acp` 1.1.7, and Gemini CLI 0.41.0 (`gemini --acp`). A missing
+executable fails cleanly with an exact pinned installation hint; the Runtime never downloads an
+adapter or runs a floating `latest` package.
+At Run initialization the selected built-in executable is resolved once to an absolute real path;
+the persisted Attempt never repeats `PATH` lookup. Custom Agents require an absolute executable.
+
+Claude and Codex ACP profiles default to trusted-machine full access: Claude selects
+`bypassPermissions`, while the official Codex adapter selects `agent-full-access`. Use
+`--acp-permission-policy allow_in_workspace` only as an explicit opt-down. Gemini and custom
+profiles retain the workspace-scoped default. An explicit CLI or environment policy always wins
+and is frozen into the Run and Attempt configuration.
+
+The profiles also freeze backend-specific model tiers. The official Codex App Server adapter
+bundles a compatible Codex runtime and receives no legacy `-c model=...` process arguments; each
+Session selects the immutable Attempt model from the Agent-advertised ACP config options
+(`gpt-5.6-sol` / `gpt-5.6-terra` / `gpt-5.6-luna`). Claude selects
+`opus` / `sonnet` / `haiku`. An explicit model that the Agent did not advertise fails cleanly
+instead of falling back to a different model.
+
+Run `doctor` to inspect the frozen executable, pinned profile version, executable availability,
+declared sandbox behavior, authentication prerequisites, fenced control handshake, process
+identity, capabilities, recent RPC error, and Hook installed/skipped status without downloading or
+launching the Agent. Authentication stays in the external Agent/CLI; the Runtime never persists
+credentials.
+
 Keep every returned identity field and actor token. Because `init` cannot alter the parent shell,
 either export the returned values as `AGENT_SWARM_ROOT_ID`, `AGENT_SWARM_TASK_ID`,
 `AGENT_SWARM_ATTEMPT_ID`, `AGENT_SWARM_AGENT_ID`, and `AGENT_SWARM_ACTOR_TOKEN`, or pass the
@@ -86,10 +129,11 @@ python3 <skill_dir>/scripts/agent_orchestrator.py action \
 Use `--action-id <stable-id>` when retrying an uncertain Action submission. The same ID returns the
 first response without duplicating state changes.
 
-## Claude Hooks
+## Backend lifecycle
 
-The Runtime does not create Git worktrees: it launches `claude --bg` in the Run cwd. If Claude or
-the child enters a worktree, that worktree is its own execution environment. The Runtime initializes
+The Runtime does not create Git worktrees. Claude CLI launches `claude --bg`; ACP launches one
+detached, persisted Worker + Agent Process + ACP Session per Attempt. If an Agent or child enters a
+worktree, that worktree is its own execution environment. For Claude CLI, the Runtime initializes
 or merges owned Hook entries in the active project and registered Git worktrees, and writes the
 local settings path to `.worktreeinclude` for future Claude-created worktrees. A child Action or
 explicit heartbeat refreshes that Run's registered worktrees; child launch refreshes the set both
@@ -101,12 +145,13 @@ directory; child launch exports the resolved home for custom installations.
 Before substantial work in its current directory, every child **MUST** run:
 
 ```bash
-python3 "$AGENT_SWARM_SKILL_DIR/scripts/agent_orchestrator.py" worktree-init
+python3 "$AGENT_SWARM_SKILL_DIR/scripts/agent_orchestrator.py" bootstrap-cwd
 ```
 
 It **MUST** run the same command again immediately after creating or entering another worktree. The
-command authenticates the injected identity, refreshes its heartbeat, and merges the local Hook
-settings in that exact worktree. This gate is required even with a custom Claude `WorktreeCreate`
+command authenticates the injected identity and refreshes its heartbeat. Claude CLI additionally
+merges local Hook settings in that exact worktree; ACP does not mutate `.claude` settings. This gate
+is required even with a custom Claude `WorktreeCreate`
 hook, because that hook replaces Claude's normal `.worktreeinclude` copy path.
 `SessionStart` and
 `PostToolUse` refresh an identified Agent heartbeat; `PostToolUseFailure` injects recovery guidance;
@@ -116,9 +161,28 @@ hook, because that hook replaces Claude's normal `.worktreeinclude` copy path.
 Hooks **NEVER** initialize, recover, complete, or spawn a Run on their own. Runtime Actions remain the
 only authority for lifecycle state and task-tree changes.
 
+ACP detects prompt turn end without forging `finish`, performs one bounded finish reprompt by
+default, and reconciles a still-unfinished Attempt as retryable exactly once. Its permission policy
+selects only options offered by the Agent and first selects a compatible advertised Session mode
+(`bypassPermissions` for Claude and `agent-full-access` for Codex under their default `allow_all`;
+`agent`/`default`/`auto` for explicit `allow_in_workspace`). `prompt` is rejected because v1 has no headless UI;
+an Agent that advertises only an unsafe bypass mode also fails cleanly. `allow_in_workspace` denies
+opaque/out-of-workspace permission requests. A no-location `execute` request has one narrow
+exception for the authenticated Runtime CLI: it must originate in the workspace, use a trusted
+absolute system shell, match the frozen Runtime entrypoint, and be exactly `bootstrap-cwd`,
+`action-schema <ACTION_TYPE>`, or the documented single-JSON-object `printf | action --stdin`
+form. The exception can select only an offered allow-once option; any non-empty location list that
+is malformed or outside the allowed roots is denied, as are shell composition, unrelated commands, and
+allow-always-only choices. A missing, null, or empty location list is treated as no location and
+still must match the exact Runtime CLI exception.
+
+Agents may also enforce workspace access internally without emitting a permission callback. This
+is headless approval automation—not an OS sandbox. Real write isolation still depends on the
+selected Agent profile, container, or operating system.
+
 ## Discipline
 
-- **MUST** delegate only with `create_tasks`; **DO NOT** start a child with `claude --bg` yourself.
+- **MUST** delegate only with `create_tasks`; **DO NOT** launch a child Agent process yourself.
 - Treat Task, Attempt, and Agent Session as different objects. **NEVER** reuse an Attempt for a new
   Session.
 - Use Notes only for reusable decisions and pitfalls, not work logs.

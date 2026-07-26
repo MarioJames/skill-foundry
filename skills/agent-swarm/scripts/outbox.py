@@ -2,17 +2,76 @@
 
 import json
 
-import claude_adapter
+import backends
+import execution_secrets
 import hook_manager
 import prompt_builder
 import scheduler
 import state_store
+from backends.base import (
+    AgentBackend,
+    BackendPendingError,
+    BackendUnknownError,
+    SpawnRequest,
+    SpawnResult,
+    StopRequest,
+)
 
 
-class _DefaultAdapter:
-    spawn = staticmethod(claude_adapter.spawn)
-    stop = staticmethod(claude_adapter.stop)
-    session_alive = staticmethod(claude_adapter.session_alive)
+class StaleEffect(RuntimeError):
+    pass
+
+
+def _spawn_call(backend, request):
+    if isinstance(backend, AgentBackend):
+        result = backend.spawn(request)
+    else:
+        result = backend.spawn(
+            prompt=request.prompt,
+            cwd=request.cwd,
+            session_name=request.session_name,
+            model=request.model,
+            env=request.env,
+        )
+    if isinstance(result, SpawnResult):
+        return {
+            "job_id": result.job_id,
+            "session_name": result.session_name,
+            **result.extras,
+        }
+    if not isinstance(result, dict):
+        raise RuntimeError("backend spawn returned an invalid result")
+    return result
+
+
+def _stop_call(backend, request):
+    if isinstance(backend, AgentBackend):
+        return backend.stop(request)
+    else:
+        return backend.stop(
+            job_id=request.job_id,
+            session_name=request.session_name,
+            cwd=request.cwd,
+        )
+
+
+def _supports_hooks(backend):
+    value = getattr(backend, "supports_hooks", None)
+    return bool(value()) if callable(value) else True
+
+
+def _validate_effect_execution(payload, execution):
+    expected = {
+        "backend_id": execution.get("backend_id"),
+        "execution_id": execution.get("execution_id"),
+        "generation": execution.get("generation"),
+    }
+    for key, value in expected.items():
+        if payload.get(key) != value:
+            raise StaleEffect(
+                "stale generation/backend effect: %s expected %r, got %r"
+                % (key, value, payload.get(key))
+            )
 
 
 def recover_stale_claims(root_id, stale_before):
@@ -37,37 +96,66 @@ def _claim(effect_id):
         return cursor.rowcount == 1
 
 
-def _spawn(effect, payload, adapter):
+def _spawn(effect, payload, adapter=None):
     with state_store.transaction(immediate=False) as con:
         run = state_store.get_run(payload["root_id"], con)
         task = state_store.get_task(payload["task_id"], con)
         attempt = state_store.get_attempt(payload["attempt_id"], con)
         agent = state_store.get_agent(payload["agent_id"], con)
-        if not all((run, task, attempt, agent)) or task["current_attempt_id"] != attempt["attempt_id"]:
+        execution = state_store.get_execution(payload["attempt_id"], con)
+        if not all((run, task, attempt, agent, execution)) or task["current_attempt_id"] != attempt["attempt_id"]:
             raise RuntimeError("spawn effect references a stale attempt")
+        _validate_effect_execution(payload, execution)
+        actor_token = payload.get("actor_token")
+        if not actor_token:
+            actor_token = execution_secrets.derive_attempt_token(
+                run, attempt["attempt_id"], agent["agent_id"]
+            )
+        else:
+            redacted_payload = dict(payload)
+            redacted_payload.pop("actor_token", None)
+            redacted_payload["legacy_actor_token_redacted"] = True
+            con.execute(
+                "UPDATE side_effect_outbox SET payload_json=? WHERE id=?",
+                (
+                    json.dumps(redacted_payload, ensure_ascii=False, sort_keys=True),
+                    effect["id"],
+                ),
+            )
         prompt = prompt_builder.build_prompt(run, task, attempt, agent, con)
         env = {
             "AGENT_SWARM_ROOT_ID": run["root_id"],
             "AGENT_SWARM_TASK_ID": task["task_id"],
             "AGENT_SWARM_ATTEMPT_ID": attempt["attempt_id"],
             "AGENT_SWARM_AGENT_ID": agent["agent_id"],
-            "AGENT_SWARM_ACTOR_TOKEN": payload["actor_token"],
+            "AGENT_SWARM_ACTOR_TOKEN": actor_token,
             "AGENT_SWARM_HOME": str(state_store.runtime_root()),
             "AGENT_SWARM_SKILL_DIR": str(__import__("pathlib").Path(__file__).resolve().parent.parent),
         }
-        call = {
-            "prompt": prompt,
-            "cwd": run["cwd"],
-            "session_name": agent["session_name"],
-            "model": agent["model_name"],
-            "env": env,
-        }
-    hook_manager.ensure_project_hooks(call["cwd"], root_id=payload["root_id"])
-    result = adapter.spawn(**call)
+        request = SpawnRequest(
+            prompt=prompt,
+            cwd=run["cwd"],
+            session_name=agent["session_name"],
+            model=agent["model_name"],
+            env=env,
+            backend_config=json.loads(execution["config_json"]),
+            metadata={
+                "root_id": run["root_id"],
+                "task_id": task["task_id"],
+                "attempt_id": attempt["attempt_id"],
+                "agent_id": agent["agent_id"],
+                "execution_id": execution["execution_id"],
+            },
+        )
+    backend = adapter or backends.resolve_spawn_backend(execution)
+    if _supports_hooks(backend):
+        hook_manager.ensure_project_hooks(request.cwd, root_id=payload["root_id"])
+    result = _spawn_call(backend, request)
     # A background launcher may create a worktree during spawn. Refresh again
     # after it returns so that worktree receives the merged local Hook settings
     # without adding a CLI --settings overlay that could shadow user Hooks.
-    hook_manager.ensure_project_hooks(call["cwd"], root_id=payload["root_id"])
+    if _supports_hooks(backend):
+        hook_manager.ensure_project_hooks(request.cwd, root_id=payload["root_id"])
     with state_store.transaction() as con:
         run = state_store.get_run(payload["root_id"], con)
         task = state_store.get_task(payload["task_id"], con)
@@ -92,8 +180,12 @@ def _spawn(effect, payload, adapter):
                 "attempt_id": payload["attempt_id"],
                 "agent_id": payload["agent_id"],
                 "job_id": result.get("job_id"),
-                "session_name": result.get("session_name") or call["session_name"],
-                "cwd": call["cwd"],
+                "session_name": result.get("session_name") or request.session_name,
+                "cwd": request.cwd,
+                "backend_id": execution["backend_id"],
+                "execution_id": execution["execution_id"],
+                "generation": execution["generation"],
+                "config_json": execution["config_json"],
             }
             con.execute(
                 """INSERT OR IGNORE INTO side_effect_outbox(
@@ -134,17 +226,26 @@ def _spawn(effect, payload, adapter):
                WHERE agent_id=?""",
             (
                 result.get("job_id"),
-                result.get("session_name") or call["session_name"],
+                result.get("session_name") or request.session_name,
                 started,
                 payload["agent_id"],
             ),
+        )
+        con.execute(
+            """UPDATE execution_sessions
+               SET status='running', prompt_state='in_flight', ready_at=?, last_event_at=?
+               WHERE attempt_id=?""",
+            (started, started, payload["attempt_id"]),
         )
         con.execute(
             "UPDATE side_effect_outbox SET status='completed', completed_at=?, last_error=NULL WHERE id=?",
             (started, effect["id"]),
         )
         state_store.append_event(
-            con, payload["root_id"], "AgentProcessStarted", {"job_id": result.get("job_id")},
+            con,
+            payload["root_id"],
+            "AgentProcessStarted",
+            {"job_id": result.get("job_id"), "backend_id": execution["backend_id"]},
             task_id=payload["task_id"], attempt_id=payload["attempt_id"], agent_id=payload["agent_id"],
         )
 
@@ -195,17 +296,40 @@ def _spawn_failed(effect, payload, error):
         scheduler.schedule_with_connection(con, run["root_id"])
 
 
-def _stop(effect, payload, adapter):
-    adapter.stop(
-        job_id=payload.get("job_id"),
-        session_name=payload.get("session_name"),
-        cwd=payload.get("cwd"),
+def _stop(effect, payload, adapter=None):
+    execution = state_store.get_execution(payload.get("attempt_id"))
+    if execution is None and payload.get("backend_id"):
+        execution = {
+            "backend_id": payload["backend_id"],
+            "config_json": payload.get("config_json") or "{}",
+        }
+    if execution is None and adapter is None:
+        raise RuntimeError("stop effect has no execution record")
+    if payload.get("attempt_id") is not None:
+        _validate_effect_execution(payload, execution)
+    backend = adapter or backends.resolve_execution_backend(execution)
+    _stop_call(
+        backend,
+        StopRequest(
+            job_id=payload.get("job_id"),
+            session_name=payload.get("session_name"),
+            cwd=payload.get("cwd"),
+            reason=payload.get("reason"),
+        ),
     )
     with state_store.transaction() as con:
         con.execute(
             "UPDATE side_effect_outbox SET status='completed', completed_at=?, last_error=NULL WHERE id=?",
             (state_store.now(), effect["id"]),
         )
+        if execution is not None:
+            closed = state_store.now()
+            con.execute(
+                """UPDATE execution_sessions
+                   SET status='closed', prompt_state='cancelled', closed_at=?, last_event_at=?
+                   WHERE attempt_id=?""",
+                (closed, closed, payload.get("attempt_id")),
+            )
         retry_scheduled = False
         retry_task_id = payload.get("retry_task_id")
         if retry_task_id:
@@ -232,13 +356,18 @@ def _stop(effect, payload, adapter):
 
 
 def drain(root_id, adapter=None, max_effects=None):
-    adapter = adapter or _DefaultAdapter()
     run = state_store.get_run(root_id)
     automatic_limit = (
         run["max_total_tasks"] * run["max_attempts_per_task"] + 100 if run else 1000
     )
     limit = automatic_limit if max_effects is None else max(0, int(max_effects))
-    summary = {"claimed": 0, "completed": 0, "failed": 0}
+    summary = {
+        "claimed": 0,
+        "completed": 0,
+        "failed": 0,
+        "stale": 0,
+        "deferred": 0,
+    }
     processed = 0
     while processed < limit:
         rows = state_store.fetchall(
@@ -262,6 +391,26 @@ def drain(root_id, adapter=None, max_effects=None):
             else:
                 raise RuntimeError("unsupported outbox effect: %s" % effect["effect_type"])
             summary["completed"] += 1
+        except StaleEffect as exc:
+            with state_store.transaction() as con:
+                con.execute(
+                    """UPDATE side_effect_outbox
+                       SET status='completed', completed_at=?, last_error=? WHERE id=?""",
+                    (state_store.now(), str(exc), effect["id"]),
+                )
+            summary["stale"] += 1
+        except (BackendPendingError, BackendUnknownError) as exc:
+            with state_store.transaction() as con:
+                con.execute(
+                    """UPDATE side_effect_outbox
+                       SET status='pending', claimed_at=NULL, last_error=? WHERE id=?""",
+                    (str(exc), effect["id"]),
+                )
+            summary["deferred"] += 1
+            # Retrying the same effect again in this drain call would only
+            # burn CPU and the bounded launch grace. A later watchdog/recover
+            # tick observes the persisted execution facts first.
+            break
         except Exception as exc:
             if effect["effect_type"] == "spawn_agent":
                 _spawn_failed(effect, payload, exc)

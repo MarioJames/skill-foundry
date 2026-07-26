@@ -9,6 +9,8 @@ import sys
 import uuid
 
 import action_processor
+import execution_config
+import execution_secrets
 import hook_manager
 import outbox
 import recovery
@@ -143,6 +145,11 @@ def initialize_run(
     max_children_per_action=12,
     require_final_review=True,
     model_tiers=None,
+    backend=None,
+    acp_agent=None,
+    acp_command=None,
+    acp_args=None,
+    acp_permission_policy=None,
 ):
     if not isinstance(task, str) or not task.strip():
         raise ValueError("task is required")
@@ -161,7 +168,16 @@ def initialize_run(
     _positive("max_delegation_depth", max_delegation_depth, 0, 20)
     _positive("max_replans_per_task", max_replans_per_task, 0, 20)
     _positive("max_children_per_action", max_children_per_action, 1, 12)
+    execution = execution_config.resolve_run_execution(
+        backend=backend,
+        acp_agent=acp_agent,
+        acp_command=acp_command,
+        acp_args=acp_args,
+        acp_permission_policy=acp_permission_policy,
+    )
     tiers = dict(DEFAULT_MODEL_TIERS)
+    if execution["backend"] == "acp":
+        tiers = dict(execution.get("acp", {}).get("model_tiers") or tiers)
     if model_tiers:
         tiers.update(model_tiers)
     if set(tiers) != {"strong", "balanced", "fast"} or not all(
@@ -173,28 +189,32 @@ def initialize_run(
     task_id = _id("task")
     attempt_id = _id("attempt")
     agent_id = _id("agent")
-    actor_token = secrets.token_urlsafe(32)
+    actor_token = "as_" + secrets.token_urlsafe(32)
     created = state_store.now()
-    with state_store.transaction() as con:
-        conflict = con.execute(
-            """SELECT root_id, status FROM runs
-               WHERE cwd=? AND status IN ('running','stopping','failed')
-               ORDER BY created_at DESC LIMIT 1""",
-            (cwd,),
-        ).fetchone()
-        if conflict:
-            raise ValueError(
-                "cwd already has recoverable run %s (%s); use recover instead of init"
-                % (conflict["root_id"], conflict["status"])
-            )
-        con.execute(
+    seed_reference = None
+    try:
+        seed_reference, seed_hash = execution_secrets.create_run_seed(root_id)
+        with state_store.transaction() as con:
+            conflict = con.execute(
+                """SELECT root_id, status FROM runs
+                   WHERE cwd=? AND status IN ('running','stopping','failed')
+                   ORDER BY created_at DESC LIMIT 1""",
+                (cwd,),
+            ).fetchone()
+            if conflict:
+                raise ValueError(
+                    "cwd already has recoverable run %s (%s); use recover instead of init"
+                    % (conflict["root_id"], conflict["status"])
+                )
+            con.execute(
             """INSERT INTO runs(
                  root_id, task, cwd, status, root_task_id, root_agent_id,
                  max_concurrent_agents, max_total_tasks, max_attempts_per_task,
                  max_delegation_depth, max_replans_per_task, max_children_per_action,
-                 require_final_review, model_tiers_json, owner_token_hash,
+                 require_final_review, model_tiers_json, execution_json,
+                 child_token_seed_ref, child_token_seed_hash, owner_token_hash,
                  lease_epoch, lease_expires_at, created_at, updated_at
-               ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)""",
+               ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)""",
             (
                 root_id,
                 task.strip(),
@@ -209,13 +229,16 @@ def initialize_run(
                 max_children_per_action,
                 1 if require_final_review else 0,
                 json.dumps(tiers, sort_keys=True),
+                json.dumps(execution, sort_keys=True),
+                seed_reference,
+                seed_hash,
                 state_store.hash_token(actor_token),
                 created + OWNER_LEASE_SECONDS,
                 created,
                 created,
             ),
         )
-        con.execute(
+            con.execute(
             """INSERT INTO tasks(
                  task_id, root_id, goal, intent_hint, status, priority, complexity_hint,
                  output_contract, constraints_json, current_attempt_id, delegation_depth,
@@ -223,29 +246,50 @@ def initialize_run(
                ) VALUES (?, ?, ?, 'implement', 'active', 100, 'high', ?, ?, ?, 0, 0, ?)""",
             (task_id, root_id, task.strip(), task.strip(), json.dumps({}), attempt_id, created),
         )
-        con.execute(
+            con.execute(
             """INSERT INTO task_attempts(
                  attempt_id, root_id, task_id, attempt_no, agent_id, status, started_at
                ) VALUES (?, ?, ?, 1, ?, 'running', ?)""",
             (attempt_id, root_id, task_id, agent_id, created),
         )
-        con.execute(
+            con.execute(
             """INSERT INTO agents(
                  agent_id, root_id, task_id, attempt_id, state, actor_token_hash,
-                 model_tier, model_name, heartbeat_at, created_at
-               ) VALUES (?, ?, ?, ?, 'evaluating', ?, 'strong', ?, ?, ?)""",
-            (agent_id, root_id, task_id, attempt_id, state_store.hash_token(actor_token), tiers["strong"], created, created),
+                 backend_id, agent_key, model_tier, model_name, heartbeat_at, created_at
+               ) VALUES (?, ?, ?, ?, 'evaluating', ?, ?, ?, 'strong', ?, ?, ?)""",
+            (
+                agent_id,
+                root_id,
+                task_id,
+                attempt_id,
+                state_store.hash_token(actor_token),
+                execution["backend"],
+                execution.get("acp", {}).get("agent") if execution["backend"] == "acp" else "claude",
+                tiers["strong"],
+                created,
+                created,
+            ),
         )
-        state_store.append_event(
-            con, root_id, "RunInitialized", {"task": task.strip()}, task_id=task_id,
-            attempt_id=attempt_id, agent_id=agent_id,
-        )
-    try:
-        hook_manager.ensure_project_hooks(cwd, root_id=root_id)
+            state_store.append_event(
+                con, root_id, "RunInitialized", {"task": task.strip()}, task_id=task_id,
+                attempt_id=attempt_id, agent_id=agent_id,
+            )
     except Exception:
-        with state_store.transaction() as con:
-            con.execute("DELETE FROM runs WHERE root_id=?", (root_id,))
+        if seed_reference:
+            execution_secrets.remove_run_seed(
+                {"child_token_seed_ref": seed_reference}
+            )
         raise
+    if execution_config.supports_hooks(execution):
+        try:
+            hook_manager.ensure_project_hooks(cwd, root_id=root_id)
+        except Exception:
+            with state_store.transaction() as con:
+                con.execute("DELETE FROM runs WHERE root_id=?", (root_id,))
+            execution_secrets.remove_run_seed(
+                {"child_token_seed_ref": seed_reference}
+            )
+            raise
     return {
         "root_id": root_id,
         "task_id": task_id,
@@ -269,7 +313,7 @@ def _resolve(explicit, env_name, label, required=True):
 
 def _refresh_run_hooks(root_id, cwd=None):
     run = state_store.get_run(root_id)
-    if run is not None:
+    if run is not None and execution_config.supports_hooks(execution_config.load_run_execution(run)):
         hook_manager.ensure_project_hooks(cwd or run["cwd"], root_id=root_id)
 
 
@@ -303,6 +347,7 @@ def _action_command(args):
     side_effects = outbox.drain(root_id)
     response = dict(response)
     response["side_effects"] = side_effects
+    execution_secrets.cleanup_run_seed_if_safe(root_id)
     _print(response)
 
 
@@ -391,14 +436,27 @@ def _identity_values(args):
     }
 
 
-def _worktree_init_command(args):
-    """Authenticate the current child, then install local hooks in its actual worktree."""
+def _bootstrap_cwd_command(args):
+    """Authenticate the child and perform Backend-specific cwd bootstrap."""
     values = _identity_values(args)
     heartbeat = recovery.heartbeat(**values)
     if not heartbeat.get("accepted"):
-        raise RuntimeError("worktree-init requires a current, running Attempt")
-    settings_path = hook_manager.ensure_project_hooks(os.getcwd(), root_id=values["root_id"])
-    _print({"initialized": True, "settings_path": settings_path, "heartbeat": heartbeat})
+        raise RuntimeError("bootstrap-cwd requires a current, running Attempt")
+    run = state_store.get_run(values["root_id"])
+    settings_path = None
+    hooks_enabled = bool(
+        run and execution_config.supports_hooks(execution_config.load_run_execution(run))
+    )
+    if hooks_enabled:
+        settings_path = hook_manager.ensure_project_hooks(os.getcwd(), root_id=values["root_id"])
+    _print(
+        {
+            "initialized": True,
+            "hooks_enabled": hooks_enabled,
+            "settings_path": settings_path,
+            "heartbeat": heartbeat,
+        }
+    )
 
 
 def _discover_root(cwd):
@@ -430,6 +488,14 @@ def build_parser():
     init.add_argument("--max-children-per-action", type=int, default=12)
     init.add_argument("--no-final-review", action="store_true")
     init.add_argument("--model-tiers-json")
+    init.add_argument("--backend", choices=["claude_cli", "acp"])
+    init.add_argument("--acp-agent")
+    init.add_argument("--acp-command")
+    init.add_argument("--acp-args-json")
+    init.add_argument(
+        "--acp-permission-policy",
+        choices=["allow_in_workspace", "allow_all", "deny_all", "prompt"],
+    )
 
     action = commands.add_parser("action", help="submit one structured runtime action")
     action.add_argument("--type", required=True, choices=sorted(ACTION_SCHEMAS))
@@ -479,6 +545,12 @@ def build_parser():
     for name in ("root-id", "task-id", "attempt-id", "agent-id", "actor-token"):
         worktree_init.add_argument("--" + name)
 
+    bootstrap_cwd = commands.add_parser(
+        "bootstrap-cwd", help="authenticate and bootstrap the current Backend working directory"
+    )
+    for name in ("root-id", "task-id", "attempt-id", "agent-id", "actor-token"):
+        bootstrap_cwd.add_argument("--" + name)
+
     doctor = commands.add_parser("doctor", help="diagnose stale agents and outbox effects")
     doctor.add_argument("--root-id")
     doctor.add_argument("--actor-token")
@@ -498,6 +570,7 @@ def main(argv=None):
     try:
         if args.command == "init":
             tiers = json.loads(args.model_tiers_json) if args.model_tiers_json else None
+            acp_args = json.loads(args.acp_args_json) if args.acp_args_json else None
             _print(initialize_run(
                 task=args.task,
                 cwd=args.cwd,
@@ -509,6 +582,11 @@ def main(argv=None):
                 max_children_per_action=args.max_children_per_action,
                 require_final_review=not args.no_final_review,
                 model_tiers=tiers,
+                backend=args.backend,
+                acp_agent=args.acp_agent,
+                acp_command=args.acp_command,
+                acp_args=acp_args,
+                acp_permission_policy=args.acp_permission_policy,
             ))
         elif args.command == "action":
             _action_command(args)
@@ -547,8 +625,8 @@ def main(argv=None):
             values = _identity_values(args)
             _refresh_run_hooks(values["root_id"], cwd=os.getcwd())
             _print(recovery.heartbeat(**values))
-        elif args.command == "worktree-init":
-            _worktree_init_command(args)
+        elif args.command in {"bootstrap-cwd", "worktree-init"}:
+            _bootstrap_cwd_command(args)
         elif args.command in {"doctor", "metrics"}:
             root_id = _resolve(args.root_id, "AGENT_SWARM_ROOT_ID", "root_id")
             token = _resolve(args.actor_token, "AGENT_SWARM_ACTOR_TOKEN", "actor_token")

@@ -3,6 +3,10 @@
 Use `python3 <skill_dir>/scripts/agent_orchestrator.py action-schema [ACTION]` as the authoritative,
 machine-readable shape. These examples show typical payloads only.
 
+Action payloads, idempotency, budgets, and finish gates are Backend-neutral. ACP children submit the
+same Actions through the exact Runtime CLI form documented in `SKILL.md`; a prompt turn or Agent
+message never substitutes for a successful Action response.
+
 ## Estimate
 
 ```json

@@ -2,13 +2,59 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 状态 | Draft |
+| 状态 | Accepted（Phase 0/1/1b；官方 Claude/Codex ACP 与默认全权限迁移已 CLEAN PASS） |
 | 版本 | 0.2.0 |
-| 日期 | 2026-07-25 |
+| 日期 | 2026-07-26 |
 | 范围 | `agent-swarm` 技能 Runtime 的可插拔执行后端 |
 | ACP 基线 | 稳定版 ACP v1（`protocolVersion=1`）；不依赖 Draft ACP v2 语义 |
-| 相关文档 | [runtime-contract.md](./runtime-contract.md)、[recovery-protocol.md](./recovery-protocol.md)、[action-schemas.md](./action-schemas.md)、[SKILL.md](../SKILL.md) |
+| 相关文档 | [runtime-contract.md](../../agent-swarm/references/runtime-contract.md)、[recovery-protocol.md](../../agent-swarm/references/recovery-protocol.md)、[action-schemas.md](../../agent-swarm/references/action-schemas.md)、[SKILL.md](../../agent-swarm/SKILL.md) |
 | 权威约束 | 本 spec 不覆盖或修改 v2 Action 协议语义；与 `runtime-contract.md` 冲突时以 Runtime contract 为准，直至双方同步修订 |
+
+---
+
+## 0. 实施与验收状态
+
+截至 2026-07-26，Phase 0、Phase 1 和 Phase 1b 的代码、schema 兼容、fake ACP fixture、
+deterministic tests、registry/preflight 与文档接口已在当前工作区实现。默认 Claude CLI Backend
+仍是零配置路径；Phase 2 Runtime MCP 与 Phase 3 动态路由未实现。
+
+`asset-validation` acceptance `acc_d07b059391` 的正式记录如下：
+
+| Round | Verdict | 证据结论 |
+| --- | --- | --- |
+| 1 | PASS | deterministic fake ACP、Python 语法与 canonical skill validator 通过 |
+| 2 | FAIL | 长 Runtime home 触发 Unix socket 路径过长；随后增加安全短路径 fallback 与回归测试 |
+| 3 | blocked | 验收 CLI 行为阻断，未冒充资产 PASS |
+| 4 | PASS | `claude-agent-acp` 0.62.0 的真实 handshake/direct/permission/stop/failure/orchestration 与零残留矩阵通过 |
+| 5 | FAIL | 旧 `@zed-industries/codex-acp` 0.16.0 的 handshake/direct 通过；Auto 模式下 permission-allow 创建 proof 且按设计不产生 callback，但 Agent 未提交合法 `finish`，以 `without_finish:end_turn` 失败；矩阵在后续场景前停止 |
+
+该 acceptance 在 Round 5 按原目标上限终止，不创建冒充旧适配器复验的 Round 6。随后用户于
+2026-07-26 修订 Goal：迁移至官方 `@agentclientprotocol/codex-acp` 1.1.7，并建立新的隔离
+acceptance。新目标同时纠正 permission 判据：`agent`/Auto 工作区内操作不要求 callback，真实
+失败条件仍是未执行合法 Runtime `finish`。
+实现继续保持 fail closed：未执行合法 `finish` 的 Attempt 不会成为 `done`，并且失败场景必须
+完成 Worker、Agent Process 与 control socket 清理。
+
+迁移后的 Codex registry profile 使用空进程参数，通过 Agent-advertised session config 固定
+`gpt-5.6-sol` / `gpt-5.6-terra` / `gpt-5.6-luna`，并识别官方 adapter 的
+`agent` / `agent-full-access` 模式 ID。Runtime 仍不自动安装或升级 adapter。
+同日用户进一步修订权限目标：ACP 调起 Claude/Codex 时默认使用全权限模式，分别解析为
+`bypassPermissions` 与 `agent-full-access`；CLI/环境显式策略仍可 opt-down。Gemini/custom 保持
+`allow_in_workspace` 默认。新的真实验收必须省略权限覆盖并核对实际 Session mode，不能复用
+旧 `agent`/outside-deny 默认场景作为通过证据。
+
+新 `asset-validation` acceptance `acc_d1d7cde280` 的正式记录：
+
+| Round | Verdict | 证据结论 |
+| --- | --- | --- |
+| 1 | blocked | 验收 CLI 以只读 sandbox 启动，`--add-dir` 在任务投递前被拒绝；未形成资产 verdict |
+| 2 | blocked | 用户在任务执行前追加 Claude/Codex 默认全权限目标；旧判据作废并迁移到新目标 |
+| 3 | PASS | 77/77 deterministic tests、canonical validator、44 文件 AST、官方 Codex 1.1.7 handshake/direct/workspace/stop/真实进程故障/task-tree、默认 `allow_all→agent-full-access`、显式 opt-down 与零残留全部通过；随后同一隔离 round 真实验证 Claude 0.62.0 默认 `allow_all→bypassPermissions`、workspace `finish` 与零残留 |
+
+Round 3 为 CLEAN PASS，本 spec 据此由 Draft 晋升为 Accepted。真实默认场景均未传 permission
+override；所有 Runtime-backed Codex Session 为 `agent-full-access`，Claude Session 为
+`bypassPermissions`。完整日志扫描未发现明文 actor token；Worker、Agent Process 与 control
+socket 均已释放。
 
 ---
 
@@ -194,7 +240,7 @@ Run 级配置在 `init` 时解析并写入 `runs.execution_json`。环境变量�
       "agent": "claude",
       "command": null,
       "args": [],
-      "permission_policy": "allow_in_workspace",
+      "permission_policy": "allow_all",
       "prompt_timeout_seconds": null,
       "session_close_on_stop": true,
       "turn_end_reprompt_limit": 1
@@ -224,7 +270,7 @@ Run 级配置在 `init` 时解析并写入 `runs.execution_json`。环境变量�
 | `AGENT_SWARM_ACP_AGENT` | 逻辑 agent 名（配置表 key） | `claude` |
 | `AGENT_SWARM_ACP_COMMAND` | agent 可执行文件绝对/PATH 命令 | 见 agent registry |
 | `AGENT_SWARM_ACP_ARGS` | JSON 数组，追加参数 | `[]` |
-| `AGENT_SWARM_ACP_PERMISSION_POLICY` | 权限审批策略 id | `allow_in_workspace` |
+| `AGENT_SWARM_ACP_PERMISSION_POLICY` | 权限审批策略 id | profile 默认：Claude/Codex 为 `allow_all`，Gemini/custom 为 `allow_in_workspace` |
 | `AGENT_SWARM_CLAUDE_BIN` | 仅 Claude CLI 后端 | 现有语义 |
 
 ### 5.3 ACP 版本、传输与能力探测
@@ -431,7 +477,7 @@ Process 或 control socket。
 | agent key | 默认 command | 备注 |
 | --- | --- | --- |
 | `claude` | ACP Registry 的 `claude-acp` profile | 外部 adapter；不等同于 `claude --bg` |
-| `codex` | ACP Registry 的 `codex-acp` profile | 外部 adapter |
+| `codex` | `@agentclientprotocol/codex-acp` 1.1.7 profile | 官方 App Server adapter；空启动参数 |
 | `gemini` | ACP Registry 的 `gemini` profile | 外部 adapter，通常为 CLI ACP 参数 |
 | `custom` | 必须提供 `command` | 通用兜底 |
 
@@ -459,8 +505,8 @@ Process 或 control socket。
 
 | policy id | 行为 |
 | --- | --- |
-| `allow_in_workspace` | 仅当请求暴露的全部标准 locations 可证明位于 cwd/additionalDirectories 时选择 allow；无法分类则 deny |
-| `allow_all` | 全部 allow（仅本地可信环境；需显式配置） |
+| `allow_in_workspace` | 标准 locations 必须全部可证明位于 cwd/additionalDirectories；非空的 malformed/outside locations 均 deny。缺失、null 或空 locations 时仅允许 §7.3.1 的精确 Runtime CLI 一次性例外 |
+| `allow_all` | 全部 allow（仅本地可信环境；Claude/Codex profile 默认，其他 profile 可显式配置） |
 | `deny_all` | 全部 deny（测试用） |
 | `prompt` | v1 不实现交互 UI；视为配置错误或降级 deny |
 
@@ -468,6 +514,27 @@ Process 或 control socket。
 ACP 不保证每次 tool 执行都会请求 permission，`rawInput` 也没有跨 Agent 统一的路径字段；因此上述策略
 只是 headless 审批自动化，**不是** cwd 沙箱。真实写入边界必须依赖目标 Agent 自身 sandbox、容器或
 OS 机制，并在 registry profile 中声明。与 Claude CLI `bypassPermissions` 的差异必须写入 SKILL/docs。
+
+#### 7.3.1 无 locations 的 Runtime CLI 一次性例外
+
+Codex ACP 可能在工具需要更新 workspace 外的 Runtime 状态库时发送不带 `locations` 的
+`execute` permission callback。`allow_in_workspace` 只在以下条件全部成立时选择 Agent 提供的
+`allow_once`：
+
+1. `rawInput.cwd` 是 workspace 内的绝对路径；
+2. command 是绝对路径的受信系统 `bash|sh|zsh`，且仅使用 `-c|-lc`；
+3. Runtime entrypoint 是冻结的绝对路径或字面量
+   `$AGENT_SWARM_SKILL_DIR/scripts/agent_orchestrator.py`；
+4. shell 内容精确匹配下列一种形式：
+   - `python3 <entrypoint> bootstrap-cwd`
+   - `python3 <entrypoint> action-schema <safe_action_type>`
+   - `printf '%s' '<JSON object>' | python3 <entrypoint> action --type <safe_action_type> --stdin`
+5. Action payload 可解析为 JSON object；命令不含换行、反引号、替换、重定向、额外 pipe、链式
+   command 或替代 producer。
+
+该例外不接受 `allow_always`，也不能覆盖任何非空 location。缺少 `allow_once` 时选择 deny/cancel。
+缺失、null 或空 location list 均按“无 locations”处理，但仍必须满足上述全部命令约束。它只允许
+已认证 child 调用 Runtime Action，不证明或扩大 OS filesystem sandbox。
 
 ### 7.4 Prompt 投递：同步 vs 异步
 
@@ -896,7 +963,9 @@ method + id + timing + redacted summary，prompt 仅存 hash/长度与可选截�
 1. **Actor token**：数据库、Outbox、sidecar、prompt 与日志只存 hash/identity，不存明文；Run seed 仅在
    mode 0600 的受保护临时 secret file 中存在。Worker 获得 ownership 后才派生 Attempt token，并只在
    Agent Process 的受控 env 中传递。Phase 2 使用独立的短期 MCP capability，不复用 actor token。
-2. **权限策略**：ACP 默认 `allow_in_workspace` 且无法分类即 deny；`allow_all` 需显式配置。
+2. **权限策略**：Claude/Codex ACP 默认 `allow_all`，分别选择 `bypassPermissions` /
+   `agent-full-access`；Gemini/custom 默认 `allow_in_workspace` 且无法分类即 deny。显式 CLI/环境
+   策略优先。全权限模式不提供 OS 写入隔离，只适用于用户授权的可信本机环境。
 3. **路径与沙箱**：ACP 路径必须绝对，但 permission metadata 不是强制执行边界；真正的 cwd
    限制由 agent-native sandbox/容器/OS 提供。Registry profile 必须声明 sandbox 能力与缺失行为。
 4. **密钥**：agent authenticate 不把长期密钥写入 SQLite 事件。
@@ -992,6 +1061,7 @@ agent_orchestrator.py doctor --root-id <id>   # 含 backend 段
 | stop 幂等 | 二次 stop 不抛 |
 | worker/Agent PID 与 record 矛盾 | unknown + doctor unhealthy，不误判 absent/present |
 | permission allow_in_workspace | 标准 locations 全在 workspace 才 allow；缺失/越界 deny |
+| no-location Runtime CLI permission | 仅精确 bootstrap/schema/single-object Action 选择 allow-once；注入、错误 cwd/shell/entrypoint、非空 locations 和 allow-always-only 均 deny |
 | prompt end 未 finish | bounded reprompt 后 failed+retryable，不进入 done |
 | turn ended 重复对账 | `reconcile_execution_outcomes` 只扣一次 attempt budget、只创建一次 retry |
 | spawn payload / prompt / sidecar | 不含明文 actor token；Agent env 收到的派生 token 可通过 Action 鉴权 |
@@ -1033,6 +1103,9 @@ agent_orchestrator.py doctor --root-id <id>   # 含 backend 段
 | codex-acp（若可得） | 只读 review intent |
 | 权限拒绝 | 可识别的越界请求被 deny；同时明确这不是 OS sandbox 证明 |
 | cleanup | 正常 finish、stop、worker crash 后均无 worker/agent/socket 残留 |
+
+当前验收结果以 §0 的正式 Round 记录为准：真实 Claude ACP 与官方 Codex ACP 1.1.7 矩阵均
+CLEAN PASS；Claude/Codex 默认全权限 Session mode 及 Codex 显式 opt-down 均有 fresh-run 证据。
 
 ---
 
@@ -1133,7 +1206,8 @@ agent_orchestrator.py doctor --root-id <id>   # 含 backend 段
 6. permission 文档与实现明确不宣称 cwd sandbox；无法分类的请求默认 deny。
 7. 明文 child token 不进入 SQLite/Outbox/prompt/sidecar/log；seed 文件权限和 terminal cleanup 有测试。
 8. turn ended/error 通过统一对账函数只归约一次；stop 对 starting/running execution 都有 fence 与零残留测试。
-9. 本 spec 状态可升为 Accepted，并在 `runtime-contract.md` 增加 “Execution Backend” 小节链接本文。
+9. 全部验收已 CLEAN PASS，本 spec 状态为 Accepted；`runtime-contract.md` 已增加
+   “Execution Backend” 链接，官方 Claude/Codex adapter 的真实矩阵与迁移验收均已完成。
 
 ---
 
@@ -1146,7 +1220,7 @@ agent_orchestrator.py doctor --root-id <id>   # 含 backend 段
 | `recovery-protocol.md` | execution 对账、跨进程 observe/stop、turn ended retry；无 session resume |
 | `action-schemas.md` | 无需改 schema；可注明与 backend 无关 |
 | `.workspace/repos/imctl-ai/...` | 若晋升为稳定事实，更新 agent-swarm 域摘要 |
-| 本文件 | 状态 Draft → Accepted；记录偏差 |
+| 本文件 | 记录实现偏差与验收证据；仅在完整 CLEAN PASS 后 Draft → Accepted |
 
 ---
 
@@ -1158,7 +1232,7 @@ agent_orchestrator.py doctor --root-id <id>   # 含 backend 段
 | D2 | 长连接所有权 | 每 Attempt 一个 detached ACP Worker；Runtime CLI 不持有 pipe | 已定 |
 | D3 | `session/prompt` spawn 门槛 | 只等 initialize + session/new + prompt sent 的 worker ready | 已定 |
 | D4 | 同一 Run 混用 backend | Phase 3 再开；但 execution schema 从 Phase 0 起按 Attempt 固化 | 已定 |
-| D5 | 权限默认 | `allow_in_workspace` 且无法分类 deny；仅是审批，不是沙箱 | 已定 |
+| D5 | 权限默认 | Claude/Codex 为 `allow_all`；Gemini/custom 为 `allow_in_workspace`；显式策略优先，均不是 OS 沙箱 | 已定（2026-07-26 用户修订） |
 | O1 | Claude/Codex adapter profile 的升级节奏 | 仓库显式锁版本、定期 contract 验证后升级 | 维护者 |
 | D6 | Runtime MCP credential | 不复用 actor_token；Phase 2 定义 purpose-bound、短期 MCP capability | 已定；细节归 Phase 2 spec |
 | O3 | Worker control 使用 Unix socket 的 Windows 兼容 | v1 支持 macOS/Linux；Windows 需等价 named pipe 新增说明 | 实现负责人 |
@@ -1199,7 +1273,9 @@ python3 scripts/agent_orchestrator.py init --task "拆分实现并审查" --cwd 
 # ACP + 指定 agent
 export AGENT_SWARM_BACKEND=acp
 export AGENT_SWARM_ACP_AGENT=claude
-export AGENT_SWARM_ACP_PERMISSION_POLICY=allow_in_workspace
+# Claude 默认 bypassPermissions；Codex 默认 agent-full-access。
+# 如需主动降权，再设置：
+# export AGENT_SWARM_ACP_PERMISSION_POLICY=allow_in_workspace
 python3 scripts/agent_orchestrator.py init --task "拆分实现并审查" --cwd "$(pwd)"
 ```
 
@@ -1213,7 +1289,8 @@ python3 scripts/agent_orchestrator.py init --task "拆分实现并审查" --cwd 
 - ACP Python SDK：https://github.com/agentclientprotocol/python-sdk
 - ACP Agent Registry：https://github.com/agentclientprotocol/registry
 - Claude Agent ACP adapter（生态示例）：https://github.com/agentclientprotocol/claude-agent-acp
-- 本技能 Runtime 契约：[runtime-contract.md](./runtime-contract.md)
+- Codex ACP adapter（官方 App Server 实现）：https://github.com/agentclientprotocol/codex-acp
+- 本技能 Runtime 契约：[runtime-contract.md](../../agent-swarm/references/runtime-contract.md)
 
 ---
 
@@ -1221,5 +1298,5 @@ python3 scripts/agent_orchestrator.py init --task "拆分实现并审查" --cwd 
 
 | 版本 | 日期 | 说明 |
 | --- | --- | --- |
-| 0.2.0 | 2026-07-25 | 补齐常驻 ACP Worker/IPC、generation ownership fence、starting stop fence、确定结果统一归约、无明文 token 的跨进程 handoff、Attempt 级配置固化、权限边界与 ACP v1 依赖策略 |
+| 0.2.0 | 2026-07-25—26 | 补齐常驻 ACP Worker/IPC、generation/starting-stop fence、确定结果归约、无明文 token handoff、Attempt 配置固化和权限边界；记录 Phase 0/1/1b 实施状态、严格 Runtime CLI allow-once 例外及五轮历史验收；迁移 Codex profile 至官方 `@agentclientprotocol/codex-acp` 1.1.7，并以新 acceptance 复验 |
 | 0.1.0 | 2026-07-25 | 初稿：架构、Backend 接口、ACP MVP、Hooks 等价、分阶段交付与验收 |

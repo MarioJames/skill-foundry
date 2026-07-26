@@ -59,6 +59,9 @@ CREATE TABLE IF NOT EXISTS runs (
   max_children_per_action INTEGER NOT NULL DEFAULT 12,
   require_final_review INTEGER NOT NULL DEFAULT 1,
   model_tiers_json TEXT NOT NULL,
+  execution_json TEXT NOT NULL DEFAULT '{}',
+  child_token_seed_ref TEXT,
+  child_token_seed_hash TEXT,
   owner_token_hash TEXT,
   lease_epoch INTEGER NOT NULL DEFAULT 0,
   lease_expires_at REAL,
@@ -121,6 +124,8 @@ CREATE TABLE IF NOT EXISTS agents (
   actor_token_hash TEXT NOT NULL,
   session_name TEXT,
   job_id TEXT,
+  backend_id TEXT,
+  agent_key TEXT,
   model_tier TEXT,
   model_name TEXT,
   heartbeat_at REAL,
@@ -131,6 +136,37 @@ CREATE TABLE IF NOT EXISTS agents (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_attempt
 ON agents(attempt_id);
+
+CREATE TABLE IF NOT EXISTS execution_sessions (
+  attempt_id TEXT PRIMARY KEY REFERENCES task_attempts(attempt_id) ON DELETE CASCADE,
+  root_id TEXT NOT NULL REFERENCES runs(root_id) ON DELETE CASCADE,
+  backend_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  owner_nonce TEXT,
+  session_name TEXT NOT NULL,
+  execution_id TEXT NOT NULL UNIQUE,
+  config_json TEXT NOT NULL,
+  acp_session_id TEXT,
+  worker_pid INTEGER,
+  agent_pid INTEGER,
+  control_endpoint TEXT,
+  agent_key TEXT,
+  protocol_version INTEGER,
+  capabilities_json TEXT,
+  status TEXT NOT NULL,
+  prompt_state TEXT,
+  last_worker_heartbeat_at REAL,
+  last_event_at REAL,
+  exit_reason TEXT,
+  created_at REAL NOT NULL,
+  ready_at REAL,
+  stop_requested_at REAL,
+  reconciled_at REAL,
+  closed_at REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_sessions_root_status
+ON execution_sessions(root_id, status);
 
 CREATE TABLE IF NOT EXISTS run_notes (
   note_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -444,11 +480,159 @@ def connect():
     return con
 
 
+def _columns(con, table):
+    return {row["name"] for row in con.execute("PRAGMA table_info(%s)" % table).fetchall()}
+
+
+def _historical_execution_json():
+    return json.dumps(
+        {
+            "backend": "claude_cli",
+            "claude_cli": {"command": "claude"},
+            "acp": {
+                "agent": "claude",
+                "command": None,
+                "args": [],
+                "permission_policy": "allow_in_workspace",
+                "prompt_timeout_seconds": None,
+                "session_close_on_stop": True,
+                "turn_end_reprompt_limit": 1,
+            },
+            "routing": {"by_intent": {}, "by_model_tier": {}},
+        },
+        sort_keys=True,
+    )
+
+
+def _migrate_schema(con):
+    """Apply additive migrations to copied or existing v2 databases."""
+    run_columns = _columns(con, "runs")
+    if "execution_json" not in run_columns:
+        con.execute("ALTER TABLE runs ADD COLUMN execution_json TEXT NOT NULL DEFAULT '{}'")
+    if "child_token_seed_ref" not in run_columns:
+        con.execute("ALTER TABLE runs ADD COLUMN child_token_seed_ref TEXT")
+    if "child_token_seed_hash" not in run_columns:
+        con.execute("ALTER TABLE runs ADD COLUMN child_token_seed_hash TEXT")
+    agent_columns = _columns(con, "agents")
+    if "backend_id" not in agent_columns:
+        con.execute("ALTER TABLE agents ADD COLUMN backend_id TEXT")
+    if "agent_key" not in agent_columns:
+        con.execute("ALTER TABLE agents ADD COLUMN agent_key TEXT")
+
+    historical = _historical_execution_json()
+    con.execute(
+        "UPDATE runs SET execution_json=? WHERE execution_json IS NULL OR execution_json='' OR execution_json='{}'",
+        (historical,),
+    )
+    con.execute("UPDATE agents SET backend_id='claude_cli' WHERE backend_id IS NULL OR backend_id=''")
+    con.execute("UPDATE agents SET agent_key='claude' WHERE agent_key IS NULL OR agent_key=''")
+
+    rows = con.execute(
+        """SELECT a.*, r.cwd FROM agents a JOIN runs r ON r.root_id=a.root_id
+           WHERE (a.session_name IS NOT NULL OR a.job_id IS NOT NULL)
+             AND NOT EXISTS (
+               SELECT 1 FROM execution_sessions e WHERE e.attempt_id=a.attempt_id
+             )"""
+    ).fetchall()
+    created = now()
+    for row in rows:
+        status = "closed" if row["state"] == "terminal" else (
+            "starting" if row["state"] == "received" else "running"
+        )
+        config = json.dumps(
+            {
+                "backend": "claude_cli",
+                "agent": "claude",
+                "command": "claude",
+                "args": [],
+                "model": row["model_name"],
+                "permission_policy": "bypassPermissions",
+            },
+            sort_keys=True,
+        )
+        con.execute(
+            """INSERT INTO execution_sessions(
+                 attempt_id, root_id, backend_id, generation, owner_nonce,
+                 session_name, execution_id, config_json, agent_key, status,
+                 created_at, ready_at, closed_at
+               ) VALUES (?, ?, 'claude_cli', 1, NULL, ?, ?, ?, 'claude', ?, ?, ?, ?)""",
+            (
+                row["attempt_id"],
+                row["root_id"],
+                row["session_name"] or "agent-swarm-legacy-%s" % row["attempt_id"],
+                "claude_cli:%s:1" % row["attempt_id"],
+                config,
+                status,
+                row["created_at"] or created,
+                row["created_at"] if status != "starting" else None,
+                row["finished_at"] if status == "closed" else None,
+            ),
+        )
+
+    open_effects = con.execute(
+        """SELECT id, effect_type, payload_json FROM side_effect_outbox
+           WHERE effect_type IN ('spawn_agent','stop_agent') AND status != 'completed'"""
+    ).fetchall()
+    for effect in open_effects:
+        try:
+            payload = json.loads(effect["payload_json"])
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if all(
+            key in payload
+            for key in ("backend_id", "execution_id", "generation", "config_json")
+        ):
+            continue
+        attempt_id = payload.get("attempt_id")
+        execution = (
+            con.execute(
+                "SELECT * FROM execution_sessions WHERE attempt_id=?", (attempt_id,)
+            ).fetchone()
+            if attempt_id
+            else None
+        )
+        if execution is not None:
+            backend_id = execution["backend_id"]
+            execution_id = execution["execution_id"]
+            generation = execution["generation"]
+            config_json = execution["config_json"]
+        else:
+            backend_id = "claude_cli"
+            execution_id = "legacy-orphan:%s" % effect["id"]
+            generation = 1
+            config_json = json.dumps(
+                {
+                    "backend": "claude_cli",
+                    "agent": "claude",
+                    "command": "claude",
+                    "args": [],
+                    "model": None,
+                    "permission_policy": "bypassPermissions",
+                },
+                sort_keys=True,
+            )
+        payload.update(
+            {
+                "backend_id": backend_id,
+                "execution_id": execution_id,
+                "generation": generation,
+                "config_json": config_json,
+            }
+        )
+        con.execute(
+            "UPDATE side_effect_outbox SET payload_json=? WHERE id=?",
+            (json.dumps(payload, ensure_ascii=False, sort_keys=True), effect["id"]),
+        )
+
+
 def initialize_schema():
     ensure_runtime_assets()
     con = connect()
     try:
         con.executescript(SCHEMA_SQL)
+        _migrate_schema(con)
         con.execute(
             "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -523,6 +707,10 @@ def get_outbox(effect_id, con=None):
     return _one("SELECT * FROM side_effect_outbox WHERE id = ?", (effect_id,), con)
 
 
+def get_execution(attempt_id, con=None):
+    return _one("SELECT * FROM execution_sessions WHERE attempt_id = ?", (attempt_id,), con)
+
+
 def list_tasks(root_id, con=None):
     return fetchall(
         "SELECT * FROM tasks WHERE root_id = ? ORDER BY created_at, task_id", (root_id,), con
@@ -554,6 +742,48 @@ def list_outbox(root_id, con=None):
     return fetchall(
         "SELECT * FROM side_effect_outbox WHERE root_id = ? ORDER BY id", (root_id,), con
     )
+
+
+def list_executions(root_id, con=None):
+    return fetchall(
+        "SELECT * FROM execution_sessions WHERE root_id = ? ORDER BY created_at, attempt_id",
+        (root_id,),
+        con,
+    )
+
+
+def claim_execution_ownership(attempt_id, generation, owner_nonce, worker_pid):
+    """Atomically fence ACP Worker ownership before it can Popen an Agent."""
+    if not owner_nonce:
+        raise ValueError("owner_nonce is required")
+    with transaction() as con:
+        timestamp = now()
+        cursor = con.execute(
+            """UPDATE execution_sessions
+               SET owner_nonce=?, worker_pid=?, last_worker_heartbeat_at=?, last_event_at=?
+               WHERE attempt_id=? AND generation=? AND owner_nonce IS NULL
+                 AND stop_requested_at IS NULL AND status='starting'
+                 AND EXISTS (
+                   SELECT 1
+                   FROM task_attempts a
+                   JOIN tasks t ON t.task_id=a.task_id
+                   JOIN runs r ON r.root_id=a.root_id
+                   WHERE a.attempt_id=execution_sessions.attempt_id
+                     AND a.status IN ('assigned','running')
+                     AND t.current_attempt_id=a.attempt_id
+                     AND t.status IN ('assigned','active','stopping')
+                     AND r.status='running'
+                 )""",
+            (
+                owner_nonce,
+                int(worker_pid),
+                timestamp,
+                timestamp,
+                attempt_id,
+                int(generation),
+            ),
+        )
+        return cursor.rowcount == 1
 
 
 def list_events(root_id, limit=100, con=None):

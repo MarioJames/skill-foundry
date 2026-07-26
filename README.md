@@ -19,7 +19,7 @@
 
 ### `agent-swarm` — task-tree orchestration for multi-agent runs
 
-Successor to `ultra-team`. Coordinates one foreground Root session and background child sessions through a Python Runtime: explicit task tree, dispatch / implement / review / fix roles, durable SQLite state, lifecycle hooks, outbox actions, and recovery that must use `recover` (never silently fall back to `init`). Dormant by default; activates only on an explicit request such as `agent-swarm`, `agent swarm`, `agentswram`, or `蜂群模式`, or when a Runtime-injected `[ORCHESTRATION IDENTITY]` block is present.
+Successor to `ultra-team`. Coordinates one foreground Root session and background child sessions through a Python Runtime: explicit task tree, dispatch / implement / review / fix roles, durable SQLite state, outbox actions, and recovery that must use `recover` (never silently fall back to `init`). Claude CLI remains the zero-config Backend; the opt-in accepted ACP v1 Backend implements pinned Claude/Codex/Gemini profiles with detached Workers, persisted execution fencing, advertised model/permission negotiation, bounded stop/retry, and no plaintext child token at rest. Deterministic and real Claude/Codex ACP acceptance have clean-passed; Claude and Codex ACP profiles default to `bypassPermissions` and `agent-full-access` respectively. Dormant by default; activates only on an explicit request such as `agent-swarm`, `agent swarm`, `agentswram`, or `蜂群模式`, or when a Runtime-injected `[ORCHESTRATION IDENTITY]` block is present.
 
 **Reach for it when** large work needs delegated children, durable tracking, review loops, and safe resume.
 

@@ -658,6 +658,13 @@ def _finish(con, context, payload, action_id):
                      AND status IN ('pending','running')""",
                 (run["root_id"],),
             ).fetchone()["n"]
+            executions = con.execute(
+                """SELECT COUNT(*) AS n FROM execution_sessions
+                   WHERE root_id=? AND status != 'closed'""",
+                (run["root_id"],),
+            ).fetchone()["n"]
+            if executions:
+                _error("root closeout requires no non-terminal execution records")
             if remaining or live or effects:
                 _error("root closeout requires all tasks done and no live attempts or pending effects")
             con.execute(

@@ -47,8 +47,8 @@ Parent-selected kill.
 For a running child, the watchdog applies this bounded policy:
 
 - a heartbeat newer than five minutes is kept;
-- after five minutes, a successful `claude agents --json` observation that has no matching `job_id`
-  or `session_name` marks the old Attempt retryable and dispatches a new Attempt within its budget;
+- after five minutes, a successful persisted-Backend observation that has no matching `job_id` or
+  `session_name` marks the old Attempt retryable and dispatches a new Attempt within its budget;
 - after five minutes, a live matching Session is reported in `stalled_agents` for the Parent to
   diagnose; it is not silently kept forever and it is not automatically killed;
 - an unavailable or malformed session observation changes nothing and is reported in
@@ -72,15 +72,16 @@ retry. **DO NOT** use `--force-takeover` for this path.
 
 Agent Swarm itself does not create worktrees. It records `.claude/settings.local.json` in
 `.worktreeinclude` for future Claude-created worktrees and refreshes currently registered ones on
-child launch, Action, and heartbeat. Every child **MUST** run `worktree-init` in the exact worktree
+child launch, Action, and heartbeat. Every child **MUST** run `bootstrap-cwd` in the exact worktree
 before substantial work, and again immediately after entering another worktree:
 
 ```bash
-python3 "$AGENT_SWARM_SKILL_DIR/scripts/agent_orchestrator.py" worktree-init
+python3 "$AGENT_SWARM_SKILL_DIR/scripts/agent_orchestrator.py" bootstrap-cwd
 ```
 
-The command authenticates the injected identity, refreshes its heartbeat, and merges the local Hook
-settings. A missing worktree Hook configuration is a deployment issue to fix before treating an
+The command authenticates the injected identity and refreshes its heartbeat. Claude CLI also merges
+the local Hook settings; ACP intentionally skips `.claude` mutation. A missing worktree Hook
+configuration on a hook-capable Backend is a deployment issue to fix before treating an
 otherwise-live Session's stale heartbeat as evidence to kill it.
 
 Inspect before continuing:
@@ -89,6 +90,12 @@ Inspect before continuing:
 python3 <skill_dir>/scripts/agent_orchestrator.py inspect --run <root_id>
 python3 <skill_dir>/scripts/agent_orchestrator.py doctor --root-id <root_id>
 ```
+
+For ACP Runs, `doctor` includes the frozen agent key and absolute executable, command args, pinned
+profile version, executable availability, declared authentication and sandbox prerequisites,
+protocol/capabilities, recent RPC error, Hook skipped status, nonce-backed process identity, and a
+fenced control handshake. A stale endpoint, mismatched PID/nonce, or handshake identity mismatch
+makes the report unhealthy. It performs no install, network login, or Agent launch.
 
 Pass or export the newly returned identity/token for subsequent Root Actions. **DO NOT** repeat work
 already proven done by current Task results.
@@ -101,8 +108,10 @@ python3 <skill_dir>/scripts/agent_orchestrator.py stop \
   --actor-token <root_actor_token>
 ```
 
-Stop marks the Run stopping, cancels unfinished Tasks and live Attempts, emits idempotent stop
-effects for live Sessions, and then marks the Run cancelled. If cleanup is incomplete, retry stop
+Stop first fences every nonterminal execution—including ACP Workers that have not produced a
+`job_id`—then cancels pending spawns, reconciles deterministic outcomes without scheduling retries,
+emits idempotent stop effects, and marks the Run cancelled only after Worker, Agent Process, and
+control socket cleanup is proven. If cleanup is incomplete, retry stop
 or diagnose the failed stop effects. Once stop reports `terminal: true`, **DO NOT** execute more business
 Actions for that Run.
 

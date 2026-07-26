@@ -47,6 +47,23 @@ def _recovery_context(task, attempt, con):
 
 def build_prompt(run, task, attempt, agent, con=None):
     constraints = json.loads(task.get("constraints_json") or "{}")
+    execution = json.loads(run.get("execution_json") or "{}")
+    if execution.get("backend") == "acp":
+        skill_guidance = (
+            "The complete required Runtime protocol is included below. Use"
+        )
+        action_guidance = """
+For every Runtime Action, use exactly this single-line form (encode apostrophes
+inside JSON strings as \\u0027 so the JSON remains one single-quoted shell literal):
+`printf '%s' '<JSON object>' | python3 "$AGENT_SWARM_SKILL_DIR/scripts/agent_orchestrator.py" action --type <ACTION_TYPE> --stdin`
+To inspect an Action schema, use exactly:
+`python3 "$AGENT_SWARM_SKILL_DIR/scripts/agent_orchestrator.py" action-schema <ACTION_TYPE>`
+""".strip()
+    else:
+        skill_guidance = (
+            'Before substantial work, read\n"$AGENT_SWARM_SKILL_DIR/SKILL.md" and use'
+        )
+        action_guidance = ""
     selected = notes.select_notes(run["root_id"], task["task_id"], con=con)
     remaining_depth = max(0, run["max_delegation_depth"] - task["delegation_depth"])
     if con is not None:
@@ -91,23 +108,23 @@ remaining task budget: {remaining_tasks}
 available actions: submit_estimate, write_note
 
 [RUNTIME ENTRYPOINT]
-This child session already has the exported AGENT_SWARM_* identity. Before substantial work, read
-"$AGENT_SWARM_SKILL_DIR/SKILL.md" and use
+This child session already has the exported AGENT_SWARM_* identity. {skill_guidance}
 `python3 "$AGENT_SWARM_SKILL_DIR/scripts/agent_orchestrator.py"` for every Runtime action.
 Do not initialize another Run: submit `submit_estimate` through that entrypoint, then
 submit `finish` through the same entrypoint after validation.
+{action_guidance}
 
-[WORKTREE BOOTSTRAP]
+[WORKSPACE BOOTSTRAP]
 Before substantial work in the current directory, run:
-`python3 "$AGENT_SWARM_SKILL_DIR/scripts/agent_orchestrator.py" worktree-init`
+`python3 "$AGENT_SWARM_SKILL_DIR/scripts/agent_orchestrator.py" bootstrap-cwd`
 If you create or enter another Git worktree later, run it again there before doing work. This is
-mandatory even when a copied local settings file is already present.
+mandatory for every Backend; hook-capable Backends also refresh local hook settings.
 
 [PROTOCOL]
 1. Before substantial work, submit an estimate: direct or split.
 2. If scope changes materially, revise the estimate before changing strategy.
 3. Split only into independent tasks with clear output contracts.
-4. Delegate only with create_tasks; never call claude --bg directly.
+4. Delegate only with create_tasks; never launch an Agent process directly.
 5. Use wait when child results are required.
 6. Record only reusable decisions or pitfalls.
 7. Finish with changed files, validation, integration summary, and caveats.
@@ -125,6 +142,8 @@ mandatory even when a copied local settings file is already present.
         constraint_notes=json.dumps(constraint_notes, ensure_ascii=False),
         notes=_format_notes(selected),
         recovery_context=recovery_context,
+        skill_guidance=skill_guidance,
+        action_guidance=action_guidance,
         remaining_depth=remaining_depth,
         remaining_tasks=remaining_tasks,
     )
