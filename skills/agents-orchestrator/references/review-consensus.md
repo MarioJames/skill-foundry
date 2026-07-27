@@ -30,13 +30,13 @@ so the owner can `wait`). This Action starts three independent reviewer Sessions
 plan evidence object:
 
 ```bash
-python3 <skill_dir>/scripts/agent_orchestrator.py init --task "<review goal>" --cwd "$(pwd)" \
+bun <skill_dir>/scripts/bootstrap.ts init --task "<review goal>" --cwd "$(pwd)" \
   --profile-allowlist-json '["codex","claude"]' --default-profile codex \
   --entry-mode review
 ```
 
 ```bash
-printf '%s' '{"mode":"multi_session_review","objective":"Review the plan for correctness, feasibility, and operational risk","config":{"reviewers":[{"id":"correctness","profile_hint":"codex"},{"id":"feasibility","profile_hint":"codex"},{"id":"risk","profile_hint":"codex"}],"max_candidates":30,"max_expansions":6,"max_tasks":50,"max_seconds":3600,"create_fix_tasks":false},"evidence":{"kind":"plan","sha256":"<sha256-of-full-plan>","content":"<bounded plan content>"}}' | python3 <skill_dir>/scripts/agent_orchestrator.py action --type start_mode --stdin
+printf '%s' '{"mode":"multi_session_review","objective":"Review the plan for correctness, feasibility, and operational risk","config":{"reviewers":[{"id":"correctness","profile_hint":"codex"},{"id":"feasibility","profile_hint":"codex"},{"id":"risk","profile_hint":"codex"}],"max_candidates":30,"max_expansions":6,"max_tasks":50,"max_seconds":3600,"create_fix_tasks":false},"evidence":{"kind":"plan","sha256":"<sha256-of-full-plan>","content":"<bounded plan content>"}}' | bun <skill_dir>/scripts/bootstrap.ts action --type start_mode --stdin
 ```
 
 Each optional `profile_hint` is a name frozen in the Run's ACP profile allowlist. Reusing one
@@ -76,7 +76,7 @@ records candidates, compiles independent reproduce/falsify verifiers, adjudicate
 compiles fixers, and returns either the next Task IDs or a terminal mode status:
 
 ```bash
-printf '%s' '{"mode_id":<mode_id>,"operation":"advance","reason":"current phase terminal"}' | python3 <skill_dir>/scripts/agent_orchestrator.py action --type advance_mode --stdin
+printf '%s' '{"mode_id":<mode_id>,"operation":"advance","reason":"current phase terminal"}' | bun <skill_dir>/scripts/bootstrap.ts action --type advance_mode --stdin
 ```
 
 A terminal response includes top-level `verdict` (`pass|changes_requested|blocked`) and a

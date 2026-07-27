@@ -1,17 +1,17 @@
 # Agents Orchestrator ACP Backend 规范
 
-状态：已实现，schema v3（Task/Attempt/Launch clean-break 基线 + 持久 mode 与 validator migration）。
+状态：已实现，TypeScript/Bun Runtime，schema v3（Task/Attempt/Launch 基线 + 持久 mode 与 validator migration）。
 
 ## 1. 边界与目标
 
 | 项目 | 约束 |
 | --- | --- |
 | 协议 | ACP `protocolVersion=1` |
-| Python SDK | 官方 `agent-client-protocol==0.11.0` |
-| 安装依赖 | 首次 ACP 初始化在 `$HOME/.agents-orchestrator/dependencies` 安装固定版本 SDK、Codex ACP 与 Claude Code ACP；仓库不携带离线包 |
+| TypeScript SDK | 官方 `@agentclientprotocol/sdk@1.3.0` |
+| 安装依赖 | 所有命令先经过 Bun bootstrap；首次启动在 `$HOME/.agents-orchestrator/dependencies` 安装固定版本 SDK、Codex ACP 与 Claude Code ACP |
 | 外部 Agent | Claude/Codex/Gemini profile 固定版本；也支持绝对路径 custom Agent |
 | 默认执行 | ACP Backend + Codex profile；Claude CLI 需显式 `--backend claude_cli` |
-| 数据兼容 | 不兼容旧数据库，不复制或迁移旧表 |
+| 数据兼容 | 原位读取并确定性迁移既有 `runtime.sqlite3`；不得通过删除旧库恢复 |
 | 对话历史 | 不落本地消息表；按 Agent profile + ACP session ID 调用 `session/load` |
 
 ACP SDK 只负责协议。Agents Orchestrator 继续负责 Task 调度、Attempt 生命周期、进程所有权、权限策略、
@@ -166,7 +166,7 @@ Agent 合法提交 `finish` 后，Attempt/Task 终止。Worker 观察 terminal A
 本地数据库不保存用户/Agent 消息、tool call 内容或流式 payload。历史命令：
 
 ```bash
-python3 scripts/agent_orchestrator.py session-history \
+bun scripts/bootstrap.ts session-history \
   --agent-type codex \
   --session-id <real-acp-session-id> \
   --actor-token <run-token>
@@ -237,17 +237,24 @@ cancelled；否则保持 stopping 并返回 open Launch IDs。
 
 ## 7. 首次启动依赖安装
 
-仓库不再携带 `assets/acp-runtime`、wheel 或 ZIP。首次 ACP 初始化在
-`$HOME/.agents-orchestrator/dependencies` 安装固定版本依赖；可用
-`$AGENTS_ORCHESTRATOR_DEPENDENCY_HOME`（兼容 `$AGENT_SWARM_DEPENDENCY_HOME`）覆盖。
+仓库只发布 TypeScript 源码、`package.json` 和 `bun.lock`，不携带依赖目录或生成产物。
+`scripts/bootstrap.ts` 仅依赖 Bun/Node 内置 API。Bun 是前置条件且不会被自动安装；全新首次启动需要
+网络。默认 dependency home 为 `$HOME/.agents-orchestrator/dependencies`，可用
+`$AGENTS_ORCHESTRATOR_DEPENDENCY_HOME`（兼容等值 `$AGENT_SWARM_DEPENDENCY_HOME`）覆盖。
 
-Python SDK 优先通过 uv、回退当前解释器 pip 安装；Node 依赖依次选择 Bun、pnpm、npm。默认安装
-`agent-client-protocol==0.11.0`、Codex ACP 1.1.7 和 Claude Code ACP 0.62.0，Gemini 仅在选用
-对应 profile 时安装。安装使用进程锁、私有 staging、固定版本验证和原子替换；完整缓存后续直接复用，
-损坏缓存会安全重建。它不修改全局 Python 或全局 Node 包目录，custom Agent 也不会自动安装。
+bootstrap 对 Runtime 源码、lockfile、平台与 Bun 版本计算 digest，在 mode-0700 私有 staging 中执行
+`bun install --frozen-lockfile --ignore-scripts`，逐项校验精确版本和 executable，再通过原子 rename 发布。
+并发首次启动由进程锁串行化；完整缓存直接复用，损坏缓存安全重建；安装失败发生在 Run 创建前且清理
+staging、lock 与不完整 target。
 
-官方 SDK 独占：framing、JSON-RPC、request ID、response matching、schema、dispatch、connection。
-Agents Orchestrator 的 `client.py` 只实现 typed callbacks 和 `connect_to_agent` 工厂。
+基础树固定为 `@agentclientprotocol/sdk@1.3.0`、`@agentclientprotocol/codex-acp@1.1.7`、
+`@agentclientprotocol/claude-agent-acp@0.62.0`、`@openai/codex@0.145.0` 和
+`@anthropic-ai/claude-agent-sdk@0.3.219`。Codex 与 Claude 共用该树；Codex 是默认 profile，Claude
+只被准备，不会自动选择或执行。Gemini 仅在显式选择时加入
+`@google/gemini-cli@0.41.0`。custom Agent 永不自动安装或覆盖。
+
+官方 SDK 独占 framing、RPC request/response matching、schema、dispatch 与 connection。
+Agents Orchestrator 的 `client.ts` 只实现 typed callback adapter 和 SDK connection factory。
 
 ## 8. 验收标准
 
@@ -259,12 +266,14 @@ Agents Orchestrator 的 `client.py` 只实现 typed callbacks 和 `connect_to_ag
 - append-only Launch retry 能拒绝晚到旧 Worker；
 - Session load 能回放历史，Session 丢失返回正常提示；
 - Runtime/database/prompt 中不存在明文 child token；
-- clean Python 无 site-packages 时能从 managed dependency home 加载固定版本官方 SDK。
+- 全新 HOME 与 dependency home 能由 bootstrap 安装固定版本依赖并执行首次 `init`；仓库内无
+  `node_modules`，第二次启动复用缓存，损坏后恢复同一冻结 executable 路径。
 
 ## 9. 版本记录
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
+| TypeScript/Bun | 2026-07-27 | 全量迁移 Runtime、测试、fixtures 与 manual harness；引入 dependency-free bootstrap、冻结 Bun lockfile 和共享 ACP 依赖缓存 |
 | clean-break | 2026-07-26 | 删除 agents 中间层和 generation mutable record；引入 Task/Attempt/Launch/ACP Session 模型、真实 session ID、轻量 session/load 历史与内置 SDK 注入 |
 | schema v2 | 2026-07-26 | canonical 命名迁移；ACP + Codex 默认 profile；加入持久 swarm/loop/multi-session review mode 与有界哈希证据传递 |
 | schema v3 | 2026-07-26 | 为 develop-review-improve loop 增加持久 validator/revalidator 角色与迁移，强制确定性验证和修复后复验 |

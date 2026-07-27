@@ -53,7 +53,7 @@ dependency edges or ask an ACP `allow_in_workspace` child to recover evidence wi
 Start an executable fan-out after the Root estimate (replace `<skill_dir>`):
 
 ```bash
-printf '%s' '{"mode":"swarm","objective":"Implement and validate the feature","tasks":[{"key":"implementation","goal":"Implement the scoped feature","intent_hint":"implement","complexity_hint":"medium","model_tier_hint":"balanced","priority":60,"output_contract":"Changed files, validation, and mode_result evidence","constraints":{"write_scope":["src/**"],"read_only":false,"notes":[]},"depends_on":[]},{"key":"tests","goal":"Add independent acceptance tests","intent_hint":"implement","complexity_hint":"medium","model_tier_hint":"balanced","priority":50,"output_contract":"Tests, command output, and mode_result evidence","constraints":{"write_scope":["tests/**"],"read_only":false,"notes":[]},"depends_on":[]}],"config":{"max_tasks":8,"max_seconds":1800},"evidence":{}}' | python3 <skill_dir>/scripts/agent_orchestrator.py action --type start_mode --stdin
+printf '%s' '{"mode":"swarm","objective":"Implement and validate the feature","tasks":[{"key":"implementation","goal":"Implement the scoped feature","intent_hint":"implement","complexity_hint":"medium","model_tier_hint":"balanced","priority":60,"output_contract":"Changed files, validation, and mode_result evidence","constraints":{"write_scope":["src/**"],"read_only":false,"notes":[]},"depends_on":[]},{"key":"tests","goal":"Add independent acceptance tests","intent_hint":"implement","complexity_hint":"medium","model_tier_hint":"balanced","priority":50,"output_contract":"Tests, command output, and mode_result evidence","constraints":{"write_scope":["tests/**"],"read_only":false,"notes":[]},"depends_on":[]}],"config":{"max_tasks":8,"max_seconds":1800},"evidence":{}}' | bun <skill_dir>/scripts/bootstrap.ts action --type start_mode --stdin
 ```
 
 Each compiled child finishes with normal fields plus
@@ -61,7 +61,7 @@ Each compiled child finishes with normal fields plus
 the mode; it completes only when every compiled Task is done:
 
 ```bash
-printf '%s' '{"mode_id":<mode_id>,"operation":"advance","reason":"children terminal"}' | python3 <skill_dir>/scripts/agent_orchestrator.py action --type advance_mode --stdin
+printf '%s' '{"mode_id":<mode_id>,"operation":"advance","reason":"children terminal"}' | bun <skill_dir>/scripts/bootstrap.ts action --type advance_mode --stdin
 ```
 
 ## Develop-review-improve loop
@@ -75,7 +75,7 @@ the next independent re-review. `pass` completes; validation failure, no progres
 budget, or `max_rounds` closes with an explicit terminal outcome.
 
 ```bash
-printf '%s' '{"mode":"develop_review_improve","objective":"Implement the change and converge on independent review","config":{"phases":["develop","validate","review","verify","improve","revalidate","re_review"],"exit_conditions":{"passed":"clean_review","validation_failure":"blocked","high_severity_unresolved":"blocked","max_rounds":"budget_exhausted","no_progress":"no_progress"},"max_rounds":3,"max_tasks":18,"max_seconds":3600,"max_no_progress":2},"evidence":{"request":"<bounded source requirement>"}}' | python3 <skill_dir>/scripts/agent_orchestrator.py action --type start_mode --stdin
+printf '%s' '{"mode":"develop_review_improve","objective":"Implement the change and converge on independent review","config":{"phases":["develop","validate","review","verify","improve","revalidate","re_review"],"exit_conditions":{"passed":"clean_review","validation_failure":"blocked","high_severity_unresolved":"blocked","max_rounds":"budget_exhausted","no_progress":"no_progress"},"max_rounds":3,"max_tasks":18,"max_seconds":3600,"max_no_progress":2},"evidence":{"request":"<bounded source requirement>"}}' | bun <skill_dir>/scripts/bootstrap.ts action --type start_mode --stdin
 ```
 
 Call `advance_mode` after each returned phase Task is terminal. Mode Tasks must include the role's
@@ -97,7 +97,7 @@ owner starts a nested `develop_review_improve`, and that loop's reviewer starts
 `multi_session_review` before returning its verdict:
 
 ```bash
-printf '%s' '{"mode":"swarm","objective":"Swarm->loop->review delivery pipeline","tasks":[{"key":"discovery","goal":"Discover implementation constraints","intent_hint":"research","complexity_hint":"medium","model_tier_hint":"balanced","priority":70,"output_contract":"Constraints and mode_result evidence","constraints":{"write_scope":[],"read_only":true,"notes":[]},"depends_on":[]},{"key":"pipeline","goal":"Use injected discovery evidence; start a nested develop_review_improve mode. In its review phase, start nested multi_session_review consensus before reporting the loop verdict. Finish only after both nested modes succeed.","intent_hint":"integrate","complexity_hint":"high","model_tier_hint":"strong","priority":80,"output_contract":"Converged implementation, consensus, and mode_result evidence","constraints":{"write_scope":["src/**","tests/**"],"read_only":false,"notes":[]},"depends_on":[{"task_key":"discovery","condition":"success"}]}],"config":{"max_mode_depth":4,"max_tasks":40,"max_seconds":7200},"evidence":{}}' | python3 <skill_dir>/scripts/agent_orchestrator.py action --type start_mode --stdin
+printf '%s' '{"mode":"swarm","objective":"Swarm->loop->review delivery pipeline","tasks":[{"key":"discovery","goal":"Discover implementation constraints","intent_hint":"research","complexity_hint":"medium","model_tier_hint":"balanced","priority":70,"output_contract":"Constraints and mode_result evidence","constraints":{"write_scope":[],"read_only":true,"notes":[]},"depends_on":[]},{"key":"pipeline","goal":"Use injected discovery evidence; start a nested develop_review_improve mode. In its review phase, start nested multi_session_review consensus before reporting the loop verdict. Finish only after both nested modes succeed.","intent_hint":"integrate","complexity_hint":"high","model_tier_hint":"strong","priority":80,"output_contract":"Converged implementation, consensus, and mode_result evidence","constraints":{"write_scope":["src/**","tests/**"],"read_only":false,"notes":[]},"depends_on":[{"task_key":"discovery","condition":"success"}]}],"config":{"max_mode_depth":4,"max_tasks":40,"max_seconds":7200},"evidence":{}}' | bun <skill_dir>/scripts/bootstrap.ts action --type start_mode --stdin
 ```
 
 Advance each owned mode through the Runtime. A Task cannot finish done while one of its owned modes
@@ -108,7 +108,7 @@ is blocked, failed, or still running.
 Cancellation is explicit and bounded:
 
 ```bash
-printf '%s' '{"mode_id":<mode_id>,"operation":"cancel","reason":"user stopped the mode"}' | python3 <skill_dir>/scripts/agent_orchestrator.py action --type advance_mode --stdin
+printf '%s' '{"mode_id":<mode_id>,"operation":"cancel","reason":"user stopped the mode"}' | bun <skill_dir>/scripts/bootstrap.ts action --type advance_mode --stdin
 ```
 
 ## Legacy `agent-swarm` alias
@@ -118,7 +118,7 @@ not initialize automatically, create another database, or carry a Runtime copy. 
 packages, then the legacy command remains executable:
 
 ```bash
-python3 <skills_root>/agent-swarm/scripts/agent_orchestrator.py init \
+bun <skills_root>/agent-swarm/scripts/bootstrap.ts init \
   --task "Legacy agent-swarm request: use swarm mode for the goal" --cwd "$(pwd)"
 ```
 
@@ -126,7 +126,7 @@ With an injected identity, use the same alias entrypoint only for `bootstrap-cwd
 Actions; never call `init`:
 
 ```bash
-python3 <skills_root>/agent-swarm/scripts/agent_orchestrator.py action-schema start_mode
+bun <skills_root>/agent-swarm/scripts/bootstrap.ts action-schema start_mode
 ```
 
 For `init`, the wrapper exports equal canonical/legacy `MODE=swarm`; canonical `init` persists and

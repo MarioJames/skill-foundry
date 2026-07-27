@@ -1,6 +1,6 @@
 interface:
   display_name: "Agent Swarm (Legacy Alias)"
-  short_description: "Legacy explicit alias for Agents Orchestrator"
+  short_description: "TypeScript compatibility alias for Agents Orchestrator"
   default_prompt: "Use $agent-swarm to run this task with the canonical Runtime in swarm mode."
 
 policy:

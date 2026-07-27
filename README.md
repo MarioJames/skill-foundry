@@ -19,7 +19,7 @@
 
 ### `agents-orchestrator` — task-tree orchestration for multi-agent runs
 
-Canonical successor to `agent-swarm` and `ultra-team`. Coordinates one foreground Root and background child Agents through one Python Runtime: an explicit Task tree, append-only Attempt/Launch history, durable SQLite facts, idempotent Effects, bounded loops, consensus review, and recovery that must use `recover` (never silently fall back to `init`). Codex ACP is the default Backend/profile; Claude CLI remains available through explicit `--backend claude_cli`. ACP v1 stores real Agent-issued Session IDs, fences detached Workers and Launches, negotiates advertised model/permission options, and can load Agent-owned history without persisting dialogue locally. The first ACP initialization installs the pinned Python SDK plus Codex and Claude Code ACP Agents into `$HOME/.agents-orchestrator/dependencies`; the repository ships no offline ACP dependency bundle.
+Canonical successor to `agent-swarm` and `ultra-team`. Coordinates one foreground Root and background child Agents through one TypeScript/Bun Runtime: an explicit Task tree, append-only Attempt/Launch history, durable SQLite facts, idempotent Effects, bounded loops, consensus review, and recovery that must use `recover` (never silently fall back to `init`). Codex ACP is the default Backend/profile; Claude CLI remains available through explicit `--backend claude_cli`. ACP v1 stores real Agent-issued Session IDs, fences detached Workers and Launches, negotiates advertised model/permission options, and can load Agent-owned history without persisting dialogue locally. A dependency-free bootstrap installs the exact locked SDK plus Codex and Claude Code ACP Agents into `$HOME/.agents-orchestrator/dependencies`; Claude is prepared but never selected automatically, and the repository contains no dependency directory or generated Runtime bundle.
 
 The skill is dormant by default. It activates only on an explicit orchestration request such as `agents-orchestrator`, `swarm mode`, `loop mode`, `multi-agent review`, or on a Runtime-injected `[ORCHESTRATION IDENTITY]` block. Ordinary reviews, paths, links, and quoted examples do not trigger it. `agent-swarm` remains a thin explicit-only alias that defaults to swarm mode and delegates to the same canonical Runtime; it contains no Runtime copy.
 
@@ -84,16 +84,15 @@ bunx skills add MarioJames/skill-foundry --skill agent-swarm
 
 Restart or reload the target agent runtime after installation so it can discover the skills.
 
-The first ACP initialization requires network access, `uv` or `pip`, and preferably Bun. It installs
-the pinned SDK plus Codex and Claude Code ACP Agents into the skill dependency home; Codex remains
-the default execution profile. Manual fallback commands are:
+The first Runtime launch requires Bun and network access. It installs the exact `bun.lock` graph
+into `$HOME/.agents-orchestrator/dependencies` (override with
+`$AGENTS_ORCHESTRATOR_DEPENDENCY_HOME`) and reuses that verified content-addressed cache on later
+commands. Bun is not installed automatically. Codex remains the default execution profile; Claude
+ACP is installed into the same managed tree but is not selected or executed automatically. Gemini
+is installed only when explicitly selected. The repository and installed Skill do not contain or
+generate `node_modules`.
 
-```bash
-bun add -g @agentclientprotocol/codex-acp@1.1.7
-bun add -g @agentclientprotocol/claude-agent-acp@0.62.0
-```
-
-Use `--backend claude_cli` when choosing the legacy Claude CLI Backend instead.
+Use `--backend claude_cli` only when explicitly choosing the legacy Claude CLI Backend.
 
 ### Manual Fallback
 
@@ -127,7 +126,8 @@ Verify the installation:
 
 ```bash
 test -f ~/.codex/skills/agents-orchestrator/SKILL.md
-test -f ~/.codex/skills/agents-orchestrator/scripts/agent_orchestrator.py
+test -f ~/.codex/skills/agents-orchestrator/scripts/bootstrap.ts
+test -f ~/.codex/skills/agents-orchestrator/bun.lock
 test -f ~/.codex/skills/asset-validation/SKILL.md
 test -f ~/.codex/skills/browser-harness/SKILL.md
 test -f ~/.codex/skills/awesome-presentation/SKILL.md
@@ -262,12 +262,9 @@ find skills -name SKILL.md -print
 ```
 
 ```bash
-python3 - <<'PY'
-from pathlib import Path
-for path in Path("skills").rglob("*.py"):
-    compile(path.read_text(), str(path), "exec")
-print("python syntax ok")
-PY
+cd skills/agents-orchestrator
+bun test --max-concurrency 1
+bun run typecheck
 ```
 
 ```bash

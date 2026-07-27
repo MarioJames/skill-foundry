@@ -41,6 +41,19 @@ Run(root_id)
 The foreground Root has a Task and Attempt but no background Launch. Child execution uses either a
 Claude CLI Launch or an ACP Worker/Agent/Session Launch.
 
+## Bun bootstrap and managed dependencies
+
+Every user-facing command enters through `scripts/bootstrap.ts`. Bun is required and is never
+installed automatically. A clean first launch needs network access; it verifies `package.json` and
+`bun.lock`, installs exact versions with lifecycle scripts disabled into the private
+`$HOME/.agents-orchestrator/dependencies` cache, validates the result, and atomically publishes a
+content-addressed Runtime. Later commands reuse that cache. The repository and installed Skill do
+not contain or generate `node_modules`.
+
+Codex ACP and Claude Code ACP share the default managed dependency tree. Codex remains the only
+default profile; preparing Claude does not select or execute it. Gemini is a separate explicit
+fixed-version cache variant. Custom ACP commands are never installed or overwritten.
+
 ## Persistent state
 
 Runtime facts live in `$AGENTS_ORCHESTRATOR_HOME/runtime.sqlite3` (legacy
@@ -69,8 +82,8 @@ tables. `session-history` resolves `agent_type + external_session_id` (and optio
 the matching Agent profile, calls ACP `session/load`, and returns replayed updates from memory. A
 missing/lost Session or missing capability is a normal unavailable result.
 
-Schema initialization also installs only the minimal Claude Hook runtime—`compat_env.py`,
-`hook_runtime.py`, `hook_manager.py`, `state_store.py`, and Hook shell files—under
+Schema initialization also installs only the minimal TypeScript Claude Hook runtime—
+`compat_env.ts`, `hook_runtime.ts`, `hook_manager.ts`, `state_store.ts`, and Hook shell files—under
 `$AGENTS_ORCHESTRATOR_HOME` (legacy `$AGENT_SWARM_HOME`). Child Actions use the installed canonical entrypoint exported as
 `AGENTS_ORCHESTRATOR_SKILL_DIR`; process boundaries also export the equal legacy alias.
 

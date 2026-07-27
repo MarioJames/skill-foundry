@@ -1,7 +1,7 @@
 # Recovery, child reaping, and stop protocol
 
-Run every command through the canonical Agents Orchestrator entrypoint. The legacy alias delegates
-to that same file and never owns recovery state.
+Run every command through the canonical `scripts/bootstrap.ts`. The legacy alias delegates to that
+same bootstrap and never owns recovery state.
 
 ## Contents
 
@@ -16,13 +16,13 @@ Never call `init` for recovery intent. Invoke `recover` directly and let the Run
 single recoverable Run:
 
 ```bash
-python3 <skill_dir>/scripts/agent_orchestrator.py recover --cwd "$(pwd)"
+bun <skill_dir>/scripts/bootstrap.ts recover --cwd "$(pwd)"
 ```
 
 Or specify the known Run:
 
 ```bash
-python3 <skill_dir>/scripts/agent_orchestrator.py recover --root-id <root_id>
+bun <skill_dir>/scripts/bootstrap.ts recover --root-id <root_id>
 ```
 
 Zero or multiple matching Runs is an error and must not fall back to `init`. A live owner lease
@@ -35,7 +35,7 @@ reuse the old Attempt.
 ## Reap children while Root is healthy
 
 ```bash
-python3 <skill_dir>/scripts/agent_orchestrator.py reap \
+bun <skill_dir>/scripts/bootstrap.ts reap \
   --root-id "$AGENTS_ORCHESTRATOR_ROOT_ID" \
   --actor-token "$AGENTS_ORCHESTRATOR_ACTOR_TOKEN"
 ```
@@ -59,7 +59,7 @@ Root `wait` invokes this watchdog immediately and at most every 30 seconds while
 To stop and retry a diagnosed child:
 
 ```bash
-python3 <skill_dir>/scripts/agent_orchestrator.py reap \
+bun <skill_dir>/scripts/bootstrap.ts reap \
   --root-id "$AGENTS_ORCHESTRATOR_ROOT_ID" \
   --actor-token "$AGENTS_ORCHESTRATOR_ACTOR_TOKEN" \
   --kill-attempt <attempt_id>
@@ -71,9 +71,9 @@ and schedules the new Attempt only after stop completes.
 ## Inspect
 
 ```bash
-python3 <skill_dir>/scripts/agent_orchestrator.py inspect --run <root_id>
-python3 <skill_dir>/scripts/agent_orchestrator.py doctor --root-id <root_id>
-python3 <skill_dir>/scripts/agent_orchestrator.py metrics --root-id <root_id>
+bun <skill_dir>/scripts/bootstrap.ts inspect --run <root_id>
+bun <skill_dir>/scripts/bootstrap.ts doctor --root-id <root_id>
+bun <skill_dir>/scripts/bootstrap.ts metrics --root-id <root_id>
 ```
 
 Full inspection returns Tasks, Attempts, Launches, ACP Sessions, and Effects. This is enough to
@@ -83,7 +83,7 @@ conversation history.
 For ACP history, query the actual Agent store:
 
 ```bash
-python3 <skill_dir>/scripts/agent_orchestrator.py session-history \
+bun <skill_dir>/scripts/bootstrap.ts session-history \
   --agent-type <agent-type> \
   --session-id <external-session-id> \
   --actor-token <actor-token>
@@ -95,7 +95,7 @@ If the Agent no longer has the Session, the command returns `available: false` w
 ## Stop a Run
 
 ```bash
-python3 <skill_dir>/scripts/agent_orchestrator.py stop \
+bun <skill_dir>/scripts/bootstrap.ts stop \
   --root-id <root_id> \
   --actor-token <root_actor_token>
 ```

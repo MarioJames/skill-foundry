@@ -1,10 +1,11 @@
 # Runtime Action examples
 
-Use `python3 <skill_dir>/scripts/agent_orchestrator.py action-schema [ACTION]` as the authoritative,
+Use `bun <skill_dir>/scripts/bootstrap.ts action-schema [ACTION]` as the authoritative,
 machine-readable shape. These examples show typical payloads only.
 
 When an injected identity is present, use its exact exported entrypoint through
 `$AGENTS_ORCHESTRATOR_SKILL_DIR` or legacy `$AGENT_SWARM_SKILL_DIR`; never initialize another Run.
+The executable is always `bun "$AGENTS_ORCHESTRATOR_SKILL_DIR/scripts/bootstrap.ts" <command>`.
 
 Action payloads, idempotency, budgets, and finish gates are Backend-neutral. ACP children submit the
 same Actions through the exact Runtime CLI form documented in `SKILL.md`; a prompt turn or Agent
@@ -137,7 +138,7 @@ the Run allowlist; it is never an executable, argument object, or Agent identity
   "artifacts": [],
   "validation": {
     "status": "passed",
-    "commands": ["tnpm test"],
+    "commands": ["bun test"],
     "summary": "测试通过",
     "reason": ""
   },
