@@ -1,32 +1,37 @@
 # Persistent operating modes
 
-Runtime modes are persistent state machines compiled onto the ordinary Task tree. They use the
-same Run, Attempts, scheduling, recovery, and `finish` gates; they are Actions, not `init --mode`
-flags or separate Runtimes.
+Runtime modes are persistent state machines compiled onto the same durable Task/dependency graph.
+They share one Run, Attempts, scheduling, recovery, and `finish` gates. The graph is an execution
+detail; the Orchestrator surface is the collection of recipes plus routing.
 
-| Explicit user wording / CLI hint | Persisted `entry_mode` | Required `start_mode.mode` |
+| Selected recipe / CLI hint | Persisted `entry_mode` | Required `start_mode.mode` |
 | --- | --- | --- |
-| `swarm mode`, legacy `agent-swarm`, `--entry-mode swarm` | `swarm` | `swarm` |
-| `loop mode`, `develop-review-improve`, `--entry-mode loop` | `develop_review_improve` | `develop_review_improve` |
+| `swarm mode`, `--entry-mode swarm` | `swarm` | `swarm` |
+| generic `loop mode`, `--entry-mode loop` | `loop` | route to one loop below |
+| `develop-review-improve` | `develop_review_improve` | `develop_review_improve` |
+| `verification-fix`, `validation-fix` | `verification_fix` | `verification_fix` |
 | `multi-agent review`, `--entry-mode review` | `multi_session_review` | `multi_session_review` |
-| `$agents-orchestrator` without a recipe | null | the Root selects one from the explicit goal |
+| `RAVF`, `review-argue-vote-fix` | `ravf` | `ravf` |
+| `$agents-orchestrator` without a recipe | null | select through `routing.md` |
 
-Natural-language activation loads the skill; it does not mutate Runtime state by itself. `init`
-persists the recipe hint, then the Root submits `submit_estimate` and a matching `start_mode`
-Action. The Action is the only event that creates a mode state machine and compiles its Tasks.
+Natural-language activation does not mutate Runtime state. `init` persists only the routing hint;
+the Root submits `submit_estimate` and then the selected `start_mode` Action. The Action is the only
+event that creates a mode state machine and compiles Tasks.
 
-Submit an estimate before starting a mode; use `strategy=split` when the owner needs the `wait`
-Action. Query `action-schema start_mode` and `action-schema advance_mode`; never infer a payload
-from these examples alone.
+Submit an estimate before starting a mode. Every persistent mode compiles child Tasks, so its owner
+uses `strategy=split` and receives the `wait` Action. `strategy=direct` is only for a Task that will
+not start a persistent mode or create children. Query `action-schema start_mode` and
+`action-schema advance_mode`; never infer a payload from these examples alone.
 
 ## Contents
 
 - [Evidence propagation](#evidence-propagation)
 - [Swarm](#swarm)
-- [Develop-review-improve loop](#develop-review-improve-loop)
-- [Swarm to loop to review](#swarm-to-loop-to-review)
+- [Develop-review-improve](#develop-review-improve)
+- [Verification-fix](#verification-fix)
+- [RAVF](#ravf)
+- [Composition](#composition)
 - [Cancel](#cancel)
-- [Legacy agent-swarm alias](#legacy-agent-swarm-alias)
 
 ## Evidence propagation
 
@@ -39,69 +44,82 @@ downstream prompt. The mode compiler injects `[MODE CONTEXT]` containing
 ```
 
 The bundle covers base evidence, dependency results, the assigned candidate, and finding
-provenance; content is capped at 12,000 bytes while the hash and byte count always describe the
-full canonical payload. When that payload is oversized, `content` is a deterministic
-`sectioned-canonical-json-v1` envelope. It gives candidate, dependencies, and provenance separate
-hashed previews before allocating remaining space to base evidence, so an oversized base cannot
-hide those consensus inputs. Each section reports its own unabridged hash, byte count, and
-truncation state. This is mandatory for persistent reviewers and verifiers. Do not rely on
-dependency edges or ask an ACP `allow_in_workspace` child to recover evidence with general Runtime
-`inspect`; that command is outside the narrow headless control exception.
+provenance. Content is capped at 12,000 bytes while the hash and byte count describe the full
+canonical payload. Oversized input uses a deterministic `sectioned-canonical-json-v1` envelope so
+base evidence cannot hide candidate, dependency, or provenance previews. Do not rely on dependency
+edges alone or ask a restricted child to recover evidence with general Runtime `inspect`.
 
 ## Swarm
 
-Start an executable fan-out after the Root estimate (replace `<skill_dir>`):
+Use for substantial parallel work with separable ownership:
 
 ```bash
 printf '%s' '{"mode":"swarm","objective":"Implement and validate the feature","tasks":[{"key":"implementation","goal":"Implement the scoped feature","intent_hint":"implement","complexity_hint":"medium","model_tier_hint":"balanced","priority":60,"output_contract":"Changed files, validation, and mode_result evidence","constraints":{"write_scope":["src/**"],"read_only":false,"notes":[]},"depends_on":[]},{"key":"tests","goal":"Add independent acceptance tests","intent_hint":"implement","complexity_hint":"medium","model_tier_hint":"balanced","priority":50,"output_contract":"Tests, command output, and mode_result evidence","constraints":{"write_scope":["tests/**"],"read_only":false,"notes":[]},"depends_on":[]}],"config":{"max_tasks":8,"max_seconds":1800},"evidence":{}}' | bun <skill_dir>/scripts/bootstrap.ts action --type start_mode --stdin
 ```
 
-Each compiled child finishes with normal fields plus
-`"mode_result":{"status":"done","evidence":[...]}`. After returned Tasks are terminal, advance
-the mode; it completes only when every compiled Task is done:
+Each child finishes with normal fields plus
+`"mode_result":{"status":"done","evidence":[...]}`. Advance after the Tasks are terminal; the mode
+completes only when every compiled Task is done.
+
+## Develop-review-improve
+
+Use when implementation has not yet been produced. The canonical phases are `develop -> validate
+-> review -> verify -> improve -> revalidate -> re_review`. Review candidates receive independent
+reproduce and falsify Tasks before an improver exists. Only confirmed fingerprints reach the
+improver. Every change receives deterministic revalidation and a fresh independent re-review.
 
 ```bash
-printf '%s' '{"mode_id":<mode_id>,"operation":"advance","reason":"children terminal"}' | bun <skill_dir>/scripts/bootstrap.ts action --type advance_mode --stdin
+printf '%s' '{"mode":"develop_review_improve","objective":"Implement the change and converge on independent review","config":{"max_rounds":3,"max_tasks":18,"max_seconds":3600,"max_no_progress":2},"evidence":{"request":"<bounded source requirement>"}}' | bun <skill_dir>/scripts/bootstrap.ts action --type start_mode --stdin
 ```
 
-## Develop-review-improve loop
+This recipe blocks when initial deterministic validation fails. Route an existing artifact whose
+tests are already failing to `verification_fix` instead.
 
-The Runtime creates one developer and a separate read-only deterministic validator before the
-independent reviewer. Every `changes_requested` candidate receives distinct reproduce and falsify
-verifier Tasks before any improver exists. Only Runtime-adjudicated confirmed fingerprints reach
-the improver; all-rejected findings complete without a fix, while high/critical unresolved
-findings block. A changed improvement always receives read-only deterministic revalidation before
-the next independent re-review. `pass` completes; validation failure, no progress, deadline, task
-budget, or `max_rounds` closes with an explicit terminal outcome.
+## Verification-fix
+
+Use `validate -> diagnose -> fix` rounds when deterministic unit tests, browser journeys, or both
+are the convergence oracle. A failed validation creates a separate read-only diagnosis Task; the
+fixer must address every diagnosed fingerprint. The next round runs validation again. Only a clean
+post-fix validation completes the mode.
 
 ```bash
-printf '%s' '{"mode":"develop_review_improve","objective":"Implement the change and converge on independent review","config":{"phases":["develop","validate","review","verify","improve","revalidate","re_review"],"exit_conditions":{"passed":"clean_review","validation_failure":"blocked","high_severity_unresolved":"blocked","max_rounds":"budget_exhausted","no_progress":"no_progress"},"max_rounds":3,"max_tasks":18,"max_seconds":3600,"max_no_progress":2},"evidence":{"request":"<bounded source requirement>"}}' | bun <skill_dir>/scripts/bootstrap.ts action --type start_mode --stdin
+printf '%s' '{"mode":"verification_fix","objective":"Run unit and browser validation until the defect set converges","config":{"max_rounds":4,"max_tasks":16,"max_seconds":3600,"max_no_progress":2},"evidence":{"unit_command":"bun test","browser_journey":"<observable Playwright journey>"}}' | bun <skill_dir>/scripts/bootstrap.ts action --type start_mode --stdin
 ```
 
-Call `advance_mode` after each returned phase Task is terminal. Mode Tasks must include the role's
-required `mode_result`: developer `summary` plus evidence; validator/revalidator `stage`, `status`,
-`artifact_version`, commands, and evidence; reviewer `verdict` and standard findings; verifier
-candidate verdict plus evidence; and improver `changed`, `addressed_fingerprints`, and evidence.
-The v1 preset accepts only the declared canonical phase order and exit-condition contract; unknown
-or inert config fields are rejected rather than silently ignored. Task dependency rows persist the
-actual phase edges.
+Validator results include `stage`, `passed|failed|blocked`, `artifact_version`, commands, and
+evidence. Diagnosis results include `root_cause` and standard findings. Fix results include
+`changed`, every `addressed_fingerprint`, and evidence. A failed or incomplete fix, time/task
+budget, repeated state, or missing clean validation closes with an explicit non-pass outcome.
 
-## Swarm to loop to review
+## RAVF
 
-Compose modes from a mode-owned child while its parent is still running. Parent links are inferred
-for a mode Task; an explicit `parent_mode_id` must match that ownership. The depth guard rejects
-cycles and excessive nesting.
-
-This executable top-level swarm creates a pipeline owner. Its dependency evidence is injected; the
-owner starts a nested `develop_review_improve`, and that loop's reviewer starts
-`multi_session_review` before returning its verdict:
+Use `Review -> Argue -> Vote -> Fix` for reusable or high-risk changes where review findings need
+fair value judgment. RAVF is ACP-only:
 
 ```bash
-printf '%s' '{"mode":"swarm","objective":"Swarm->loop->review delivery pipeline","tasks":[{"key":"discovery","goal":"Discover implementation constraints","intent_hint":"research","complexity_hint":"medium","model_tier_hint":"balanced","priority":70,"output_contract":"Constraints and mode_result evidence","constraints":{"write_scope":[],"read_only":true,"notes":[]},"depends_on":[]},{"key":"pipeline","goal":"Use injected discovery evidence; start a nested develop_review_improve mode. In its review phase, start nested multi_session_review consensus before reporting the loop verdict. Finish only after both nested modes succeed.","intent_hint":"integrate","complexity_hint":"high","model_tier_hint":"strong","priority":80,"output_contract":"Converged implementation, consensus, and mode_result evidence","constraints":{"write_scope":["src/**","tests/**"],"read_only":false,"notes":[]},"depends_on":[{"task_key":"discovery","condition":"success"}]}],"config":{"max_mode_depth":4,"max_tasks":40,"max_seconds":7200},"evidence":{}}' | bun <skill_dir>/scripts/bootstrap.ts action --type start_mode --stdin
+printf '%s' '{"mode":"ravf","objective":"Converge the reusable skill without low-value code growth","config":{"max_rounds":3,"max_candidates":25,"max_tasks":120,"max_seconds":5400},"evidence":{"change":"<bounded change evidence>"}}' | bun <skill_dir>/scripts/bootstrap.ts action --type start_mode --stdin
 ```
 
-Advance each owned mode through the Runtime. A Task cannot finish done while one of its owned modes
-is blocked, failed, or still running.
+RAVF always uses five Reviewers with at most five findings each, so the merged original-Review set
+has a hard 25-candidate ceiling. `argue` and `vote` use fixed odd pools of 3, 5, or 7 Agents and
+default to 5, independent of candidate count. Every Arguer challenges the complete Review result
+without creating findings. Every `fast` Voter independently chooses `accept_original`,
+`accept_revised`, `reject`, or `abstain` per original issue after seeing its Reviewer and all Arguer
+evidence. After a strict majority, the Runtime requires the main Agent to integrate every decision;
+an Argue-informed revision keeps the original Reviewer fingerprint and provenance. One coordinated
+fixer receives exactly the adopted set. Any fix starts a fresh Review round; completion requires a
+clean Review after the latest fix. See
+[review-consensus.md](review-consensus.md#ravf-convergence) for result contracts.
+
+## Composition
+
+Compose modes from a mode-owned child while its parent remains running. Parent links are inferred;
+an explicit `parent_mode_id` must match ownership. Depth guards reject cycles and excessive
+nesting. Useful compositions include parallel discovery/implementation through `swarm` followed by
+`verification_fix`, and a high-risk delivery followed by `ravf`.
+
+Advance every owned mode through the Runtime. A Task cannot finish done while one of its owned
+modes is blocked, failed, or still running.
 
 ## Cancel
 
@@ -110,25 +128,3 @@ Cancellation is explicit and bounded:
 ```bash
 printf '%s' '{"mode_id":<mode_id>,"operation":"cancel","reason":"user stopped the mode"}' | bun <skill_dir>/scripts/bootstrap.ts action --type advance_mode --stdin
 ```
-
-## Legacy `agent-swarm` alias
-
-The alias defaults user intent to swarm but only execs the sibling canonical entrypoint. It does
-not initialize automatically, create another database, or carry a Runtime copy. Install both
-packages, then the legacy command remains executable:
-
-```bash
-bun <skills_root>/agent-swarm/scripts/bootstrap.ts init \
-  --task "Legacy agent-swarm request: use swarm mode for the goal" --cwd "$(pwd)"
-```
-
-With an injected identity, use the same alias entrypoint only for `bootstrap-cwd`, schemas, and
-Actions; never call `init`:
-
-```bash
-bun <skills_root>/agent-swarm/scripts/bootstrap.ts action-schema start_mode
-```
-
-For `init`, the wrapper exports equal canonical/legacy `MODE=swarm`; canonical `init` persists and
-returns `entry_mode: "swarm"`. The foreground Root must still estimate and submit `start_mode`, so
-the alias cannot initialize or schedule a second Run.

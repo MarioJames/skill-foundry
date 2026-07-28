@@ -52,13 +52,13 @@ export function buildPrompt(
   const acp = execution.backend === "acp";
   const skillGuidance = acp
     ? "The complete required Runtime protocol is included below. Use"
-    : 'Before substantial work, read\n"$AGENT_SWARM_SKILL_DIR/SKILL.md" and use';
+    : 'Before substantial work, read\n"$AGENTS_ORCHESTRATOR_SKILL_DIR/SKILL.md" and use';
   const actionGuidance = acp ? `
 For every Runtime Action, use exactly this single-line form (encode apostrophes
 inside JSON strings as \\u0027 so the JSON remains one single-quoted shell literal):
-\`printf '%s' '<JSON object>' | bun "$AGENT_SWARM_SKILL_DIR/scripts/bootstrap.ts" action --type <ACTION_TYPE> --stdin\`
+\`printf '%s' '<JSON object>' | bun "$AGENTS_ORCHESTRATOR_SKILL_DIR/scripts/bootstrap.ts" action --type <ACTION_TYPE> --stdin\`
 To inspect an Action schema, use exactly:
-\`bun "$AGENT_SWARM_SKILL_DIR/scripts/bootstrap.ts" action-schema <ACTION_TYPE>\`` : "";
+\`bun "$AGENTS_ORCHESTRATOR_SKILL_DIR/scripts/bootstrap.ts" action-schema <ACTION_TYPE>\`` : "";
   const selected = notes.selectNotes(String(run.root_id), Number(task.task_id), 12, connection);
   const remainingDepth = Math.max(0, Number(run.max_delegation_depth) - Number(task.delegation_depth));
   const usedTasks = connection
@@ -98,15 +98,15 @@ available actions: submit_estimate, write_note
 after estimate, persistent mode owners may also use start_mode/advance_mode; inspect schemas first
 
 [RUNTIME ENTRYPOINT]
-This child session already has the exported AGENT_SWARM_* identity. ${skillGuidance}
-\`bun "$AGENT_SWARM_SKILL_DIR/scripts/bootstrap.ts"\` for every Runtime action.
+This child session already has the exported AGENTS_ORCHESTRATOR_* identity. ${skillGuidance}
+\`bun "$AGENTS_ORCHESTRATOR_SKILL_DIR/scripts/bootstrap.ts"\` for every Runtime action.
 Do not initialize another Run: submit \`submit_estimate\` through that entrypoint, then
 submit \`finish\` through the same entrypoint after validation.
 ${actionGuidance}
 
 [WORKSPACE BOOTSTRAP]
 Before substantial work in the current directory, run:
-\`bun "$AGENT_SWARM_SKILL_DIR/scripts/bootstrap.ts" bootstrap-cwd\`
+\`bun "$AGENTS_ORCHESTRATOR_SKILL_DIR/scripts/bootstrap.ts" bootstrap-cwd\`
 If you create or enter another Git worktree later, run it again there before doing work. This is
 mandatory for every Backend; hook-capable Backends also refresh local hook settings.
 

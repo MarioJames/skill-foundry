@@ -2,7 +2,7 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import * as backends from "./backends/index.ts";
-import * as compatEnv from "./compat_env.ts";
+import * as runtimeEnv from "./runtime_env.ts";
 import * as executionSecrets from "./execution_secrets.ts";
 import * as hookManager from "./hook_manager.ts";
 import * as promptBuilder from "./prompt_builder.ts";
@@ -86,7 +86,7 @@ function spawnEffect(effect: RuntimeRecord, payload: RuntimeRecord, adapter?: Ag
       ROOT_ID: run.root_id, TASK_ID: String(task.task_id), ATTEMPT_ID: String(attempt.attempt_id),
       ACTOR_TOKEN: actorToken, HOME: stateStore.runtimeRoot(), SKILL_DIR,
     };
-    const env = compatEnv.exportBoth(boundaryValues, { base: process.env, scrubIdentity: true });
+    const env = runtimeEnv.exportEnvironment(boundaryValues, { base: process.env, scrubIdentity: true });
     return {
       run, task, attempt, launch, boundaryValues,
       request: new SpawnRequest(
@@ -102,7 +102,7 @@ function spawnEffect(effect: RuntimeRecord, payload: RuntimeRecord, adapter?: Ag
   }, false);
   const backend = adapter ?? backends.resolveSpawnBackend(prepared.launch);
   if (backend.supportsHooks()) hookManager.ensureProjectHooks(prepared.request.cwd, String(payload.root_id));
-  const result = compatEnv.withProcessBoundary(prepared.boundaryValues, () => spawnCall(backend, prepared.request));
+  const result = runtimeEnv.withProcessBoundary(prepared.boundaryValues, () => spawnCall(backend, prepared.request));
   if (backend.supportsHooks()) hookManager.ensureProjectHooks(prepared.request.cwd, String(payload.root_id));
 
   stateStore.transaction((connection) => {

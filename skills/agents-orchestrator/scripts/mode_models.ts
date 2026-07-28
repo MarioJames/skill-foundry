@@ -2,10 +2,28 @@ import { createHash } from "node:crypto";
 
 import { canonicalJson as stableJson, isRecord, type RuntimeRecord, ValueError } from "./runtime_types.ts";
 
-export const MODE_KINDS = new Set(["swarm", "develop_review_improve", "multi_session_review"]);
+export const MODE_KINDS = new Set([
+  "swarm",
+  "develop_review_improve",
+  "verification_fix",
+  "multi_session_review",
+  "ravf",
+]);
 export const MODE_ALIASES: Readonly<Record<string, string>> = Object.freeze({
   "develop-review-improve": "develop_review_improve",
+  "verification-fix": "verification_fix",
+  "validation-fix": "verification_fix",
+  validation_fix: "verification_fix",
   "multi-session-review": "multi_session_review",
+  "review-argue-vote-fix": "ravf",
+  "ravf-loop": "ravf",
+});
+export const MODE_ENGINES: Readonly<Record<string, string>> = Object.freeze({
+  swarm: "swarm",
+  develop_review_improve: "develop_review_improve",
+  verification_fix: "develop_review_improve",
+  multi_session_review: "multi_session_review",
+  ravf: "multi_session_review",
 });
 export const MODE_TERMINAL = new Set(["completed", "blocked", "failed", "cancelled"]);
 export const FINDING_SEVERITIES = new Set(["low", "medium", "high", "critical"]);
@@ -17,6 +35,23 @@ export const LOOP_EXIT_CONDITIONS = Object.freeze({
   passed: "clean_review",
   validation_failure: "blocked",
   high_severity_unresolved: "blocked",
+  max_rounds: "budget_exhausted",
+  no_progress: "no_progress",
+});
+export const VERIFICATION_FIX_PHASES = ["validate", "diagnose", "fix"] as const;
+export const VERIFICATION_FIX_EXIT_CONDITIONS = Object.freeze({
+  passed: "clean_validation",
+  blocked: "blocked",
+  max_rounds: "budget_exhausted",
+  no_progress: "no_progress",
+});
+export const RAVF_PHASES = ["review", "argue", "vote", "fix"] as const;
+export const RAVF_REVIEWER_COUNT = 5;
+export const RAVF_FINDINGS_PER_REVIEWER = 5;
+export const RAVF_MAX_CANDIDATES = RAVF_REVIEWER_COUNT * RAVF_FINDINGS_PER_REVIEWER;
+export const RAVF_EXIT_CONDITIONS = Object.freeze({
+  passed: "clean_review",
+  unresolved: "blocked",
   max_rounds: "budget_exhausted",
   no_progress: "no_progress",
 });
@@ -46,6 +81,7 @@ export const START_MODE_SCHEMA = {
         reviewers: {
           type: "array",
           minItems: 3,
+          description: "multi_session_review requires at least 3; RAVF requires exactly 5 and accepts at most 5 findings per Reviewer.",
           items: {
             type: "object",
             required: ["id"],
@@ -55,7 +91,36 @@ export const START_MODE_SCHEMA = {
             },
           },
         },
-        phases: { type: "array", items: { enum: [...LOOP_PHASES] } },
+        arguers: {
+          type: "array",
+          minItems: 3,
+          maxItems: 7,
+          description: "RAVF phase-level pool; participant count must be odd (3, 5, or 7) and defaults to 5.",
+          items: {
+            type: "object",
+            required: ["id"],
+            properties: {
+              id: { type: "string", minLength: 1 },
+              profile_hint: { type: ["string", "null"], minLength: 1 },
+            },
+          },
+        },
+        voters: {
+          type: "array",
+          minItems: 3,
+          maxItems: 7,
+          description: "RAVF phase-level pool; participant count must be odd (3, 5, or 7) and defaults to 5.",
+          items: {
+            type: "object",
+            required: ["id"],
+            properties: {
+              id: { type: "string", minLength: 1 },
+              profile_hint: { type: ["string", "null"], minLength: 1 },
+            },
+          },
+        },
+        vote_quorum: { type: "integer", minimum: 3, description: "Must equal the configured RAVF voter-pool size." },
+        phases: { type: "array", items: { type: "string" } },
         exit_conditions: { type: "object" },
       },
     },
@@ -71,6 +136,26 @@ export const ADVANCE_MODE_SCHEMA = {
     mode_id: { type: "integer" },
     operation: { enum: ["advance", "cancel"] },
     reason: { type: "string" },
+    ravf_integration: {
+      type: "object",
+      required: ["decisions"],
+      properties: {
+        decisions: {
+          type: "array",
+          items: {
+            type: "object",
+            required: ["candidate_fingerprint", "disposition", "rationale"],
+            properties: {
+              candidate_fingerprint: { type: "string" },
+              disposition: { enum: ["accept_original", "accept_revised", "reject"] },
+              rationale: { type: "string" },
+              revised_finding: { type: ["object", "null"] },
+              revision_basis_task_ids: { type: "array", items: { type: "integer" } },
+            },
+          },
+        },
+      },
+    },
   },
 };
 
@@ -231,12 +316,57 @@ function integer(config: RuntimeRecord, name: string, fallback: number, minimum:
   return value;
 }
 
+function participants(source: unknown, label: string, minimum: number): RuntimeRecord[] {
+  if (!Array.isArray(source) || source.length < minimum) {
+    throw new ValueError(`${label} requires at least ${minimum} participants`);
+  }
+  const identifiers = new Set<string>();
+  return source.map((participant) => {
+    if (!isRecord(participant)) throw new ValueError(`${label} must contain objects`);
+    const identifier = participant.id;
+    if (typeof identifier !== "string" || !identifier.trim()) throw new ValueError(`${label}.id is required`);
+    const normalizedIdentifier = identifier.trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(normalizedIdentifier)) {
+      throw new ValueError(`${label}.id must use 1..64 letters, digits, dot, underscore, or hyphen`);
+    }
+    if (identifiers.has(normalizedIdentifier)) throw new ValueError(`${label} ids must be independent and unique`);
+    identifiers.add(normalizedIdentifier);
+    const profileHint = participant.profile_hint;
+    if (profileHint !== null && profileHint !== undefined && (typeof profileHint !== "string" || !profileHint.trim())) {
+      throw new ValueError(`${label}.profile_hint must be a non-empty profile name`);
+    }
+    return {
+      id: normalizedIdentifier,
+      profile_hint: typeof profileHint === "string" ? profileHint.trim() : null,
+    };
+  });
+}
+
+function oddPool(source: unknown, label: string): RuntimeRecord[] {
+  const normalized = participants(source, label, 3);
+  if (normalized.length > 7 || normalized.length % 2 === 0) {
+    throw new ValueError(`${label} must contain an odd number of participants in 3..7`);
+  }
+  return normalized;
+}
+
+export function modeRecipe(mode: RuntimeRecord): string {
+  const recipe = typeof mode.recipe === "string" && mode.recipe ? mode.recipe : mode.kind;
+  if (typeof recipe !== "string" || !MODE_KINDS.has(recipe)) throw new ValueError("persisted mode recipe is unsupported");
+  return recipe;
+}
+
 export function normalizeConfig(kind: string, supplied: unknown): RuntimeRecord {
   const source = supplied ?? {};
   if (!isRecord(source)) throw new ValueError("start_mode config must be an object");
   const allowed = new Set(COMMON_CONFIG_FIELDS);
-  if (kind === "multi_session_review") allowed.add("reviewers");
-  if (kind === "develop_review_improve") {
+  if (kind === "multi_session_review" || kind === "ravf") allowed.add("reviewers");
+  if (kind === "ravf") {
+    allowed.add("arguers");
+    allowed.add("voters");
+    allowed.add("vote_quorum");
+  }
+  if (kind === "develop_review_improve" || kind === "verification_fix" || kind === "ravf") {
     allowed.add("phases");
     allowed.add("exit_conditions");
   }
@@ -246,8 +376,14 @@ export function normalizeConfig(kind: string, supplied: unknown): RuntimeRecord 
     Object.entries(source).filter(([key]) => COMMON_CONFIG_FIELDS.has(key)),
   );
   config.max_rounds = integer(config, "max_rounds", 3, 1, 20);
-  config.max_tasks = integer(config, "max_tasks", 50, 1, 500);
-  config.max_candidates = integer(config, "max_candidates", 50, 1, 200);
+  config.max_tasks = integer(config, "max_tasks", kind === "ravf" ? 100 : 50, 1, 500);
+  config.max_candidates = integer(
+    config,
+    "max_candidates",
+    kind === "ravf" ? RAVF_MAX_CANDIDATES : 50,
+    1,
+    kind === "ravf" ? RAVF_MAX_CANDIDATES : 200,
+  );
   config.max_expansions = integer(config, "max_expansions", 10, 0, 100);
   config.max_seconds = integer(config, "max_seconds", 3_600, 1, 86_400);
   config.max_mode_depth = integer(config, "max_mode_depth", 4, 0, 8);
@@ -266,31 +402,61 @@ export function normalizeConfig(kind: string, supplied: unknown): RuntimeRecord 
     config.phases = [...LOOP_PHASES];
     config.exit_conditions = { ...LOOP_EXIT_CONDITIONS };
   }
-  if (kind === "multi_session_review") {
-    const reviewers = source.reviewers ?? Array.from({ length: 3 }, (_, index) => ({
+  if (kind === "verification_fix") {
+    const phases = source.phases ?? VERIFICATION_FIX_PHASES;
+    if (canonicalJson(phases) !== canonicalJson(VERIFICATION_FIX_PHASES)) {
+      throw new ValueError(`verification_fix phases must declare the canonical phase order: ${VERIFICATION_FIX_PHASES.join(", ")}`);
+    }
+    const exitConditions = source.exit_conditions ?? VERIFICATION_FIX_EXIT_CONDITIONS;
+    if (canonicalJson(exitConditions) !== canonicalJson(VERIFICATION_FIX_EXIT_CONDITIONS)) {
+      throw new ValueError("verification_fix exit_conditions must declare the canonical contract");
+    }
+    config.phases = [...VERIFICATION_FIX_PHASES];
+    config.exit_conditions = { ...VERIFICATION_FIX_EXIT_CONDITIONS };
+  }
+  if (kind === "ravf") {
+    const phases = source.phases ?? RAVF_PHASES;
+    if (canonicalJson(phases) !== canonicalJson(RAVF_PHASES)) {
+      throw new ValueError(`ravf phases must declare the canonical phase order: ${RAVF_PHASES.join(", ")}`);
+    }
+    const exitConditions = source.exit_conditions ?? RAVF_EXIT_CONDITIONS;
+    if (canonicalJson(exitConditions) !== canonicalJson(RAVF_EXIT_CONDITIONS)) {
+      throw new ValueError("ravf exit_conditions must declare the canonical contract");
+    }
+    if (source.create_fix_tasks === false) throw new ValueError("ravf requires create_fix_tasks=true");
+    config.create_fix_tasks = true;
+    config.phases = [...RAVF_PHASES];
+    config.exit_conditions = { ...RAVF_EXIT_CONDITIONS };
+  }
+  if (kind === "multi_session_review" || kind === "ravf") {
+    const reviewerCount = kind === "ravf" ? RAVF_REVIEWER_COUNT : 3;
+    const reviewers = source.reviewers ?? Array.from({ length: reviewerCount }, (_, index) => ({
       id: `reviewer-${index + 1}`,
       profile_hint: null,
     }));
-    if (!Array.isArray(reviewers) || reviewers.length < 3) {
-      throw new ValueError("multi_session_review requires at least 3 reviewers");
+    config.reviewers = participants(reviewers, "reviewers", reviewerCount);
+    if (kind === "ravf" && (config.reviewers as RuntimeRecord[]).length !== RAVF_REVIEWER_COUNT) {
+      throw new ValueError(`RAVF requires exactly ${RAVF_REVIEWER_COUNT} reviewers`);
     }
-    const identifiers = new Set<string>();
-    config.reviewers = reviewers.map((reviewer) => {
-      if (!isRecord(reviewer)) throw new ValueError("reviewers must be objects");
-      const identifier = reviewer.id;
-      if (typeof identifier !== "string" || !identifier.trim()) throw new ValueError("reviewer.id is required");
-      const normalizedIdentifier = identifier.trim();
-      if (identifiers.has(normalizedIdentifier)) throw new ValueError("reviewer ids must be independent and unique");
-      identifiers.add(normalizedIdentifier);
-      const profileHint = reviewer.profile_hint;
-      if (profileHint !== null && profileHint !== undefined && (typeof profileHint !== "string" || !profileHint.trim())) {
-        throw new ValueError("reviewer.profile_hint must be a non-empty profile name");
-      }
-      return {
-        id: normalizedIdentifier,
-        profile_hint: typeof profileHint === "string" ? profileHint.trim() : null,
-      };
-    });
+  }
+  if (kind === "ravf") {
+    const arguers = source.arguers ?? Array.from({ length: 5 }, (_, index) => ({
+      id: `arguer-${index + 1}`,
+      profile_hint: null,
+    }));
+    const voters = source.voters ?? Array.from({ length: 5 }, (_, index) => ({
+      id: `voter-${index + 1}`,
+      profile_hint: null,
+    }));
+    config.arguers = oddPool(arguers, "arguers");
+    config.voters = oddPool(voters, "voters");
+    config.vote_quorum = integer(
+      { vote_quorum: source.vote_quorum },
+      "vote_quorum",
+      (config.voters as RuntimeRecord[]).length,
+      (config.voters as RuntimeRecord[]).length,
+      (config.voters as RuntimeRecord[]).length,
+    );
   }
   return config;
 }
@@ -311,7 +477,8 @@ export function validateStartPayload(payload: unknown): RuntimeRecord {
     throw new ValueError("swarm mode requires a non-empty tasks array");
   }
   return {
-    kind,
+    kind: MODE_ENGINES[kind],
+    recipe: kind,
     objective: payload.objective.trim(),
     parent_mode_id: parentModeId ?? null,
     tasks: payload.tasks,
@@ -333,9 +500,87 @@ function evidence(result: RuntimeRecord, role: string): unknown[] {
   return result.evidence;
 }
 
+function ravfArgument(value: unknown, index: number): RuntimeRecord {
+  if (!isRecord(value)) throw new ValueError(`RAVF arguments[${index}] must be an object`);
+  if (typeof value.candidate_fingerprint !== "string" || !value.candidate_fingerprint.trim()) {
+    throw new ValueError(`RAVF arguments[${index}].candidate_fingerprint is required`);
+  }
+  if (!new Set(["review_stands", "review_rebutted", "review_needs_revision", "uncertain"]).has(value.challenge_outcome as string)) {
+    throw new ValueError(
+      `RAVF arguments[${index}].challenge_outcome must be review_stands, review_rebutted, review_needs_revision, or uncertain`,
+    );
+  }
+  if (typeof value.rationale !== "string" || !value.rationale.trim()) {
+    throw new ValueError(`RAVF arguments[${index}].rationale is required`);
+  }
+  if (!new Set(["positive", "neutral", "negative"]).has(value.roi as string)) {
+    throw new ValueError(`RAVF arguments[${index}].roi must be positive, neutral, or negative`);
+  }
+  if (!new Set(["low", "medium", "high"]).has(value.bloat_risk as string)) {
+    throw new ValueError(`RAVF arguments[${index}].bloat_risk must be low, medium, or high`);
+  }
+  evidence(value, `RAVF arguments[${index}]`);
+  let proposedRevision: RuntimeRecord | null = null;
+  if (value.challenge_outcome === "review_needs_revision") {
+    proposedRevision = validateFinding(value.proposed_revision, `RAVF arguments[${index}].proposed_revision`, true);
+    delete proposedRevision.fingerprint;
+  } else if (value.proposed_revision !== null && value.proposed_revision !== undefined) {
+    throw new ValueError(`RAVF arguments[${index}].proposed_revision is only valid for review_needs_revision`);
+  }
+  return {
+    candidate_fingerprint: value.candidate_fingerprint.trim(),
+    challenge_outcome: value.challenge_outcome,
+    rationale: value.rationale.trim(),
+    roi: value.roi,
+    bloat_risk: value.bloat_risk,
+    evidence: value.evidence,
+    proposed_revision: proposedRevision,
+  };
+}
+
+function ravfBallot(value: unknown, index: number): RuntimeRecord {
+  if (!isRecord(value)) throw new ValueError(`RAVF ballots[${index}] must be an object`);
+  if (typeof value.candidate_fingerprint !== "string" || !value.candidate_fingerprint.trim()) {
+    throw new ValueError(`RAVF ballots[${index}].candidate_fingerprint is required`);
+  }
+  if (!new Set(["accept_original", "accept_revised", "reject", "abstain"]).has(value.decision as string)) {
+    throw new ValueError(
+      `RAVF ballots[${index}].decision must be accept_original, accept_revised, reject, or abstain`,
+    );
+  }
+  if (typeof value.rationale !== "string" || !value.rationale.trim()) {
+    throw new ValueError(`RAVF ballots[${index}].rationale is required`);
+  }
+  if (!new Set(["high", "medium", "low", "negative"]).has(value.expected_value as string)) {
+    throw new ValueError(`RAVF ballots[${index}].expected_value is invalid`);
+  }
+  evidence(value, `RAVF ballots[${index}]`);
+  const rawBasis = value.revision_basis_task_ids ?? [];
+  if (
+    !Array.isArray(rawBasis) ||
+    !rawBasis.every((taskId) => Number.isSafeInteger(taskId) && typeof taskId !== "boolean") ||
+    new Set(rawBasis).size !== rawBasis.length
+  ) throw new ValueError(`RAVF ballots[${index}].revision_basis_task_ids must contain unique task ids`);
+  if (value.decision === "accept_revised" && rawBasis.length === 0) {
+    throw new ValueError(`RAVF ballots[${index}].accept_revised requires revision_basis_task_ids`);
+  }
+  if (value.decision !== "accept_revised" && rawBasis.length > 0) {
+    throw new ValueError(`RAVF ballots[${index}].revision_basis_task_ids is only valid for accept_revised`);
+  }
+  return {
+    candidate_fingerprint: value.candidate_fingerprint.trim(),
+    decision: value.decision,
+    rationale: value.rationale.trim(),
+    expected_value: value.expected_value,
+    evidence: value.evidence,
+    revision_basis_task_ids: rawBasis,
+  };
+}
+
 export function validateModeResult(link: RuntimeRecord, mode: RuntimeRecord, result: unknown): RuntimeRecord {
   if (!isRecord(result)) throw new ValueError("done mode task requires mode_result object");
   const role = link.role;
+  const recipe = modeRecipe(mode);
   const normalized: RuntimeRecord = { ...result };
   if (role === "swarm") {
     if (!new Set(["done", "partial"]).has(result.status as string)) {
@@ -362,28 +607,49 @@ export function validateModeResult(link: RuntimeRecord, mode: RuntimeRecord, res
     evidence(result, role);
   } else if (role === "reviewer") {
     normalized.findings = findings(result);
-    if (mode.kind === "develop_review_improve") {
+    if (recipe === "ravf" && (normalized.findings as unknown[]).length > RAVF_FINDINGS_PER_REVIEWER) {
+      throw new ValueError(`RAVF reviewer may report at most ${RAVF_FINDINGS_PER_REVIEWER} material findings`);
+    }
+    if (recipe === "develop_review_improve") {
       if (!new Set(["pass", "changes_requested", "blocked"]).has(result.verdict as string)) {
         throw new ValueError("loop reviewer mode_result.verdict is invalid");
       }
       if (result.verdict === "changes_requested" && (normalized.findings as unknown[]).length === 0) {
         throw new ValueError("changes_requested requires at least one finding");
       }
+    } else if (recipe === "verification_fix") {
+      if (result.verdict !== "changes_requested" || (normalized.findings as unknown[]).length === 0) {
+        throw new ValueError("verification_fix diagnosis requires changes_requested and at least one finding");
+      }
+      if (typeof result.root_cause !== "string" || !result.root_cause.trim()) {
+        throw new ValueError("verification_fix diagnosis requires root_cause");
+      }
+      evidence(result, "diagnostician");
     }
   } else if (role === "verifier_reproduce" || role === "verifier_falsify") {
-    if (result.candidate_fingerprint !== link.candidate_fingerprint) {
-      throw new ValueError("verifier candidate_fingerprint does not match assigned candidate");
-    }
-    if (typeof result.verdict !== "string" || !VERIFICATION_VERDICTS.has(result.verdict)) {
+    if (recipe === "ravf" && mode.phase === "argue") {
+      if (!Array.isArray(result.arguments) || result.arguments.length === 0) {
+        throw new ValueError("RAVF arguer mode_result.arguments must be a non-empty array");
+      }
+      normalized.arguments = result.arguments.map(ravfArgument);
+    } else if (recipe === "ravf" && mode.phase === "vote") {
+      if (!Array.isArray(result.ballots) || result.ballots.length === 0) {
+        throw new ValueError("RAVF voter mode_result.ballots must be a non-empty array");
+      }
+      normalized.ballots = result.ballots.map(ravfBallot);
+    } else {
+      if (result.candidate_fingerprint !== link.candidate_fingerprint) {
+        throw new ValueError("verifier candidate_fingerprint does not match assigned candidate");
+      }
+      if (typeof result.verdict !== "string" || !VERIFICATION_VERDICTS.has(result.verdict)) {
       throw new ValueError("verifier mode_result.verdict is invalid");
+      }
+      evidence(result, "verifier");
+      const discovered = result.discovered_findings ?? [];
+      if (!Array.isArray(discovered)) throw new ValueError("verifier discovered_findings must be an array");
+      normalized.discovered_findings = discovered.map((value, index) =>
+        validateFinding(value, `mode_result.discovered_findings[${index}]`, true));
     }
-    if (!Array.isArray(result.evidence) || result.evidence.length === 0) {
-      throw new ValueError("verifier mode_result.evidence must be a non-empty array");
-    }
-    const discovered = result.discovered_findings ?? [];
-    if (!Array.isArray(discovered)) throw new ValueError("verifier discovered_findings must be an array");
-    normalized.discovered_findings = discovered.map((value, index) =>
-      validateFinding(value, `mode_result.discovered_findings[${index}]`, true));
   } else if (role === "improver") {
     if (typeof result.changed !== "boolean") throw new ValueError("improver mode_result.changed must be boolean");
     if (!Array.isArray(result.addressed_fingerprints ?? [])) {
@@ -391,7 +657,13 @@ export function validateModeResult(link: RuntimeRecord, mode: RuntimeRecord, res
     }
     evidence(result, role);
   } else if (role === "fixer") {
-    if (!Array.isArray(result.fixed_fingerprints) || !result.fixed_fingerprints.includes(link.candidate_fingerprint)) {
+    if (
+      !Array.isArray(result.fixed_fingerprints) || result.fixed_fingerprints.length === 0 ||
+      !result.fixed_fingerprints.every((fingerprint) => typeof fingerprint === "string" && fingerprint.trim())
+    ) {
+      throw new ValueError("fixer must report a non-empty fixed_fingerprints array");
+    }
+    if (recipe !== "ravf" && !result.fixed_fingerprints.includes(link.candidate_fingerprint)) {
       throw new ValueError("fixer must report its assigned confirmed fingerprint");
     }
     if (!Array.isArray(result.evidence) || result.evidence.length === 0) {

@@ -199,9 +199,10 @@ Session 丢失不会更改 Task/Attempt，不触发恢复，也不被当成 Runt
 Scheduler 在一个事务中创建 Attempt、Launch 和 spawn Effect。依赖调度仍基于稳定 Task ID，
 `success` 依赖需要上游 done，`terminal` 依赖接受任意终态。
 
-持久 mode 通过 `start_mode` / `advance_mode` 编译到同一棵 Task tree，并以 schema migration 2
-加入 `modes`、`mode_rounds`、`mode_tasks`、finding provenance 与 verification 表；不会创建第二个
-Runtime 或第二份状态库。Mode compiler 把依赖结果、候选 finding 与 provenance 封装成最多 12KB
+持久 mode 通过 `start_mode` / `advance_mode` 编译到同一份 Task/依赖图。Task tree 只是可选的内部
+执行形态，Orchestrator 对外定位是编排配方集合与路由。schema migration 2 加入 `modes`、
+`mode_rounds`、`mode_tasks`、finding provenance 与 verification 表，schema migration 4 为底层
+engine kind 增加可路由 recipe；所有模式共用一个 Runtime 和一份状态库。Mode compiler 把依赖结果、候选 finding 与 provenance 封装成最多 12KB
 的内容，并保留完整 canonical JSON 的 SHA-256 和字节数后注入下游 prompt，避免 reviewer 只拿到
 dependency 边而没有上游证据。
 
@@ -234,13 +235,21 @@ cancelled；否则保持 stopping 并返回 open Launch IDs。
 - `multi_session_review` 仅用于 ACP：至少三个独立 reviewer Session；每个候选 finding 再由不同的
   reproduce/falsify verifier 裁决。只有双 confirmed 才确认、双 rejected 才拒绝，混合结论保持
   unresolved；未解决的 high/critical finding 会阻止 mode 成功。
+- `verification_fix` 以 validate → diagnose → fix 迭代；单元或浏览器验证失败后先由只读 Agent
+  定位，再定向修复，并要求下一轮干净验证才能完成。
+- `ravf` 仅用于 ACP：固定五个 Reviewer、每个最多五个 finding，合并后的原始问题上限为 25；
+  Argue/Vote 各使用一次固定奇数 Agent 池（3/5/7，默认 5），不随问题数相乘。Argue 只能驳倒或
+  提议订正 Reviewer 原问题，不能创建修复来源；`fast` Voter 逐问题投票后，主 Agent 必须在多数票
+  约束下整合为采纳原文、采纳订正版或拒绝。订正版保留原 Reviewer 指纹和溯源，只启动一次集中
+  修复，随后必须进入全新五 Reviewer 轮次。
 
 ## 7. 首次启动依赖安装
 
 仓库只发布 TypeScript 源码、`package.json` 和 `bun.lock`，不携带依赖目录或生成产物。
 `scripts/bootstrap.ts` 仅依赖 Bun/Node 内置 API。Bun 是前置条件且不会被自动安装；全新首次启动需要
 网络。默认 dependency home 为 `$HOME/.agents-orchestrator/dependencies`，可用
-`$AGENTS_ORCHESTRATOR_DEPENDENCY_HOME`（兼容等值 `$AGENT_SWARM_DEPENDENCY_HOME`）覆盖。
+`$AGENTS_ORCHESTRATOR_DEPENDENCY_HOME` 覆盖。不识别或迁移旧技能的环境变量、目录或 Runtime
+数据；这是有意的 clean break。
 
 bootstrap 对 Runtime 源码、lockfile、平台与 Bun 版本计算 digest，在 mode-0700 私有 staging 中执行
 `bun install --frozen-lockfile --ignore-scripts`，逐项校验精确版本和 executable，再通过原子 rename 发布。
@@ -277,3 +286,4 @@ Agents Orchestrator 的 `client.ts` 只实现 typed callback adapter 和 SDK con
 | clean-break | 2026-07-26 | 删除 agents 中间层和 generation mutable record；引入 Task/Attempt/Launch/ACP Session 模型、真实 session ID、轻量 session/load 历史与内置 SDK 注入 |
 | schema v2 | 2026-07-26 | canonical 命名迁移；ACP + Codex 默认 profile；加入持久 swarm/loop/multi-session review mode 与有界哈希证据传递 |
 | schema v3 | 2026-07-26 | 为 develop-review-improve loop 增加持久 validator/revalidator 角色与迁移，强制确定性验证和修复后复验 |
+| schema v4 | 2026-07-28 | Orchestrator 改为编排配方集合与路由；加入 verification-fix 与 RAVF 收敛循环、recipe 持久化和有边界的隐式推荐 |

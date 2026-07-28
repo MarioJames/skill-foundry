@@ -19,7 +19,7 @@ function executable(path: string): boolean {
 }
 
 export function claudeBin(environment: Record<string, string | undefined> = process.env): string {
-  const override = (environment.AGENTS_ORCHESTRATOR_CLAUDE_BIN ?? environment.AGENT_SWARM_CLAUDE_BIN ?? "").trim();
+  const override = (environment.AGENTS_ORCHESTRATOR_CLAUDE_BIN ?? "").trim();
   if (override) return override;
   for (const entry of (environment.PATH ?? "").split(delimiter)) {
     if (!entry) continue;
@@ -87,7 +87,7 @@ export class ClaudeCliBackend extends AgentBackend {
     const completed = run(command, {
       cwd: request.cwd,
       env: { ...process.env, ...request.env } as Record<string, string>,
-      timeout: timeout("AGENT_SWARM_BG_LAUNCH_TIMEOUT_SECONDS", 90),
+      timeout: timeout("AGENTS_ORCHESTRATOR_BG_LAUNCH_TIMEOUT_SECONDS", 90),
     });
     const identifier = jobId(`${completed.stdout}\n${completed.stderr}`);
     if (!identifier) {
@@ -117,7 +117,7 @@ export class ClaudeCliBackend extends AgentBackend {
     }
     if (!identifier) return { stopped: true, not_required: true };
     const completed = run([this.command(), "stop", identifier], {
-      timeout: timeout("AGENT_SWARM_AGENT_CONTROL_TIMEOUT_SECONDS", 10),
+      timeout: timeout("AGENTS_ORCHESTRATOR_AGENT_CONTROL_TIMEOUT_SECONDS", 10),
     });
     if (completed.exitCode !== 0) throw new RuntimeError("claude stop failed");
     return { stopped: true };
@@ -141,7 +141,7 @@ export class ClaudeCliBackend extends AgentBackend {
 
   listSessions(options: { cwd?: string | null } = {}): RuntimeRecord[] {
     const completed = run([this.command(), "agents", "--json"], {
-      timeout: timeout("AGENT_SWARM_AGENT_CONTROL_TIMEOUT_SECONDS", 10),
+      timeout: timeout("AGENTS_ORCHESTRATOR_AGENT_CONTROL_TIMEOUT_SECONDS", 10),
     });
     if (completed.exitCode !== 0) throw new RuntimeError("claude agents failed");
     let value: unknown;

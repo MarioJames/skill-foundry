@@ -19,11 +19,11 @@ The bootstrap:
 6. executes the cached Runtime.
 
 The default dependency home is `$HOME/.agents-orchestrator/dependencies`. Override it with
-`$AGENTS_ORCHESTRATOR_DEPENDENCY_HOME`; equal legacy
-`$AGENT_SWARM_DEPENDENCY_HOME` remains accepted. Directories are mode 0700 and lock metadata is
-mode 0600. Concurrent first launches share one installer. An incomplete cache is never executed;
-damage causes an atomic rebuild. Installation failure occurs before Run creation and removes
-staging and lock residue.
+`$AGENTS_ORCHESTRATOR_DEPENDENCY_HOME`. The historical environment spelling remains a Runtime-only
+migration interface for existing installations; no separate legacy skill is shipped. Directories
+are mode 0700 and lock metadata is mode 0600. Concurrent first launches share one installer. An
+incomplete cache is never executed; damage causes an atomic rebuild. Installation failure occurs
+before Run creation and removes staging and lock residue.
 
 The locked base dependency tree contains:
 

@@ -1,11 +1,8 @@
 # Runtime contract
 
-This is the sole Runtime contract for Agents Orchestrator and its thin `agent-swarm` compatibility
-alias. New callers use `AGENTS_ORCHESTRATOR_*`; legacy `AGENT_SWARM_*` names and the
-`~/.agent-swarm` state directory remain compatibility interfaces and do not denote a second
-implementation. Canonical values win, equal dual-family values are accepted, and conflicting or
-partial identity families fail closed. Child process boundaries scrub inherited identity and
-export both families with equal values.
+This is the sole Runtime contract for Agents Orchestrator. All callers and child process boundaries
+use the `AGENTS_ORCHESTRATOR_*` environment family. Partial identities fail closed, and child
+process boundaries scrub inherited identity before exporting the current Task binding.
 
 ## Contents
 
@@ -56,10 +53,9 @@ fixed-version cache variant. Custom ACP commands are never installed or overwrit
 
 ## Persistent state
 
-Runtime facts live in `$AGENTS_ORCHESTRATOR_HOME/runtime.sqlite3` (legacy
-`$AGENT_SWARM_HOME`), defaulting to `~/.agent-swarm/runtime.sqlite3`. The Task/Attempt/Launch model
-began as a clean break from historical databases; schema migration 2 adds persistent mode tables
-in place. The Runtime does not copy or reinterpret unrelated older database files.
+Runtime facts live in `$AGENTS_ORCHESTRATOR_HOME/runtime.sqlite3`, defaulting to
+`~/.agents-orchestrator/runtime.sqlite3`. The Runtime does not copy or reinterpret unrelated
+database files.
 
 Core tables:
 
@@ -74,7 +70,7 @@ Core tables:
 | `effects` | idempotent spawn/stop side effects |
 | `processed_actions` | Action idempotency responses |
 | `run_notes` / `events` | bounded reusable notes and structural audit facts |
-| `modes` / `mode_rounds` / `mode_tasks` | persistent swarm, loop, and review state machines |
+| `modes` / `mode_rounds` / `mode_tasks` | persistent routed recipe, round, and task state machines |
 | `mode_findings` / provenance / verifications | candidate consensus and independent evidence |
 
 Dialogue content is deliberately absent. There are no message, transcript, or conversation-event
@@ -83,9 +79,9 @@ the matching Agent profile, calls ACP `session/load`, and returns replayed updat
 missing/lost Session or missing capability is a normal unavailable result.
 
 Schema initialization also installs only the minimal TypeScript Claude Hook runtime—
-`compat_env.ts`, `hook_runtime.ts`, `hook_manager.ts`, `state_store.ts`, and Hook shell files—under
-`$AGENTS_ORCHESTRATOR_HOME` (legacy `$AGENT_SWARM_HOME`). Child Actions use the installed canonical entrypoint exported as
-`AGENTS_ORCHESTRATOR_SKILL_DIR`; process boundaries also export the equal legacy alias.
+`runtime_env.ts`, `hook_runtime.ts`, `hook_manager.ts`, `state_store.ts`, and Hook shell files—under
+`$AGENTS_ORCHESTRATOR_HOME`. Child Actions use the installed entrypoint exported as
+`AGENTS_ORCHESTRATOR_SKILL_DIR`.
 
 ## Identity and secrets
 
@@ -97,8 +93,6 @@ AGENTS_ORCHESTRATOR_TASK_ID
 AGENTS_ORCHESTRATOR_ATTEMPT_ID
 AGENTS_ORCHESTRATOR_ACTOR_TOKEN
 ```
-
-The same suffixes under `AGENT_SWARM_*` are accepted for legacy callers. Never mix unequal values.
 
 There is no intermediate `agent_id`. Child tokens are derived as
 `base64url(HMAC-SHA256(seed, root_id|attempt_id))`; only hashes are stored in SQLite. The Run seed is
@@ -139,9 +133,11 @@ not alter it.
 
 Codex ACP is the default. `--profile-allowlist-json` and `--default-profile` freeze the Run's
 available ACP profiles before any child exists; `constraints.profile_hint` is either absent or a
-non-empty name in that allowlist. `--entry-mode swarm|loop|review` persists only the normalized
-recipe hint (`swarm`, `develop_review_improve`, or `multi_session_review`) for the foreground Root;
-the Root still submits an estimate and starts the mode through the ordinary Action contract.
+non-empty name in that allowlist. `--entry-mode
+swarm|loop|develop-review-improve|verification-fix|review|ravf` persists only a routing hint for
+the foreground Root. Generic `loop` remains unresolved until the Root selects
+`develop_review_improve`, `verification_fix`, or `ravf`; every recipe still starts through the
+ordinary Action contract after an estimate.
 
 Scheduler creation is one transaction:
 
@@ -210,6 +206,10 @@ include an integration result. Root completion additionally requires all Tasks t
 Attempts, no pending spawn/stop Effects, and every Launch closed. Review and final-review structural
 gates remain enforced. A Task also cannot finish done while a mode it owns is running, blocked, or
 failed; Runtime-created mode Tasks must submit a role-valid `mode_result`.
+
+Review provenance is role-scoped. `review.source: "self"` is valid only for the current Task when
+its resolved Intent is `review`. Other Tasks omit `review` unless a gate requires it; when citing an
+independent completed review, `review.source` is that review Task's integer `task_id`.
 
 The Runtime enforces identity binding, current Attempt, Action idempotency, lifecycles, budgets,
 dependencies, retries, Effects, recovery, and structural finish gates. It cannot prove semantic

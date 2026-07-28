@@ -4,7 +4,7 @@ Use `bun <skill_dir>/scripts/bootstrap.ts action-schema [ACTION]` as the authori
 machine-readable shape. These examples show typical payloads only.
 
 When an injected identity is present, use its exact exported entrypoint through
-`$AGENTS_ORCHESTRATOR_SKILL_DIR` or legacy `$AGENT_SWARM_SKILL_DIR`; never initialize another Run.
+`$AGENTS_ORCHESTRATOR_SKILL_DIR`; never initialize another Run.
 The executable is always `bun "$AGENTS_ORCHESTRATOR_SKILL_DIR/scripts/bootstrap.ts" <command>`.
 
 Action payloads, idempotency, budgets, and finish gates are Backend-neutral. ACP children submit the
@@ -24,6 +24,9 @@ Persistent modes add `start_mode` and `advance_mode`. Read
 - [Finish](#finish)
 
 ## Estimate
+
+Use `strategy: "split"` before every `start_mode`; persistent recipes compile child Tasks and the
+owner needs `wait` while their phases run. Use `direct` only when no mode or child Tasks will start.
 
 ```json
 {
@@ -127,6 +130,25 @@ the Run allowlist; it is never an executable, argument object, or Agent identity
 {"mode_id": 1, "operation": "advance", "reason": "current phase terminal"}
 ```
 
+For an existing artifact whose deterministic checks are failing, select `verification_fix` rather
+than the development loop:
+
+```json
+{
+  "mode": "verification_fix",
+  "objective": "Converge unit and browser validation",
+  "config": {"max_rounds": 4, "max_tasks": 16, "max_seconds": 3600},
+  "evidence": {"unit_command": "bun test", "browser_journey": "critical checkout flow"}
+}
+```
+
+For ROI-aware review convergence, select ACP-only `ravf`. It fixes the Reviewer pool at five,
+limits each Reviewer to five findings, caps the merged candidate set at 25, and optionally accepts
+odd `arguers` / `voters` pools of 3, 5, or 7 (default 5); `vote_quorum` must equal the Voter-pool
+size. After voting,
+`advance_mode` returns `integration_required`; call it again with `ravf_integration.decisions` from
+the main Agent. Read `review-consensus.md` before composing either Action.
+
 ## Finish
 
 ```json
@@ -142,12 +164,17 @@ the Run allowlist; it is never an executable, argument object, or Agent identity
     "summary": "测试通过",
     "reason": ""
   },
-  "review": {"status": "pass", "source": "self", "findings": []},
+  "review": null,
   "integration_check": {"status": "passed", "summary": "子任务结果已集成"},
   "mode_result": null,
   "caveats": []
 }
 ```
+
+The example is an ordinary non-review parent Task. Keep `review` null or omit it in that case. A
+Task whose resolved Intent is `review` must instead submit a structured review and may use
+`"source": "self"`. A non-review root that requires final review must cite the integer `task_id` of
+a completed review Task; it must not claim `"source": "self"`.
 
 `mode_result` is null or omitted for ordinary Tasks. Runtime-created mode Tasks must provide the
 role-specific shape stated in their output contract; the Runtime validates and fingerprints it.

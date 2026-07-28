@@ -240,8 +240,7 @@ export class Worker {
     const token = executionSecrets.deriveAttemptToken(run, Number(attempt.attempt_id));
     const childEnv: Record<string, string> = {};
     for (const [key, value] of Object.entries(process.env)) {
-      const suffix = key.startsWith("AGENT_SWARM_") ? key.slice("AGENT_SWARM_".length)
-        : key.startsWith("AGENTS_ORCHESTRATOR_") ? key.slice("AGENTS_ORCHESTRATOR_".length) : null;
+      const suffix = key.startsWith("AGENTS_ORCHESTRATOR_") ? key.slice("AGENTS_ORCHESTRATOR_".length) : null;
       if (value !== undefined && !(suffix && IDENTITY_SUFFIXES.has(suffix))) childEnv[key] = value;
     }
     const identities: Record<string, string> = {
@@ -249,7 +248,6 @@ export class Worker {
       ACTOR_TOKEN: token, HOME: stateStore.runtimeRoot(), SKILL_DIR,
     };
     for (const [suffix, value] of Object.entries(identities)) {
-      childEnv[`AGENT_SWARM_${suffix}`] = value;
       childEnv[`AGENTS_ORCHESTRATOR_${suffix}`] = value;
     }
     try {

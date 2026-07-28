@@ -6,8 +6,8 @@ SECRET_KEYS = (
     "OPENAI_API_KEY",
     "AUTH_TOKEN",
     "API_KEY",
-    "AGENT_SWARM_ACTOR_TOKEN",
-    "AGENT_SWARM_TOKEN",
+    "AGENTS_ORCHESTRATOR_ACTOR_TOKEN",
+    "AGENTS_ORCHESTRATOR_TOKEN",
     "actor_token",
     "actorToken",
 )

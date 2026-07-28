@@ -5,9 +5,9 @@ import { fileURLToPath } from "node:url";
 import * as stateStore from "./state_store.ts";
 import { RuntimeError, type RuntimeRecord } from "./runtime_types.ts";
 
-export const OWNER_FIELD = "agent_swarm_owner";
-export const OWNER_VALUE = "agent-swarm";
-export const ROOT_FIELD = "agent_swarm_root_id";
+export const OWNER_FIELD = "agents_orchestrator_owner";
+export const OWNER_VALUE = "agents-orchestrator";
+export const ROOT_FIELD = "agents_orchestrator_root_id";
 export const WORKTREE_SETTINGS_PATH = ".claude/settings.local.json";
 export const WORKTREE_INCLUDE_FILE = ".worktreeinclude";
 export const HOOK_BINDINGS: ReadonlyArray<readonly [string, string]> = [
@@ -19,7 +19,7 @@ const SKILL_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 function settingsPath(cwd: string): string { return join(cwd, WORKTREE_SETTINGS_PATH); }
 function sourceHookPath(name: string): string { return resolve(SKILL_DIR, "hooks", name); }
 function runtimeHookCommand(name: string): string {
-  return `bash -c 'exec "\${AGENTS_ORCHESTRATOR_HOME:-\${AGENT_SWARM_HOME:-$HOME/.agent-swarm}}/hooks/${name}"'`;
+  return `bash -c 'exec "\${AGENTS_ORCHESTRATOR_HOME:-$HOME/.agents-orchestrator}/hooks/${name}"'`;
 }
 
 function gitOutput(cwd: string, ...args: string[]): string | null {
@@ -95,7 +95,8 @@ function isOwned(hook: unknown): boolean {
   if (!hook || typeof hook !== "object" || Array.isArray(hook)) return false;
   const item = hook as RuntimeRecord;
   if (item[OWNER_FIELD] === OWNER_VALUE) return true;
-  return HOOK_BINDINGS.some(([, name]) => item.command === runtimeHookCommand(name) || item.command === sourceHookPath(name));
+  return HOOK_BINDINGS.some(([, name]) =>
+    item.command === runtimeHookCommand(name) || item.command === sourceHookPath(name));
 }
 
 function ensureAt(cwd: string, rootId?: string | null): string {
@@ -147,7 +148,8 @@ function cleanupAt(cwd: string, rootId?: string | null): string | null {
         const kept = entry.hooks.filter((hook: unknown) => {
           if (!isOwned(hook)) return true;
           const item = hook as RuntimeRecord;
-          return Boolean(rootId && item[ROOT_FIELD] && item[ROOT_FIELD] !== rootId);
+          const ownedRoot = item[ROOT_FIELD];
+          return Boolean(rootId && ownedRoot && ownedRoot !== rootId);
         });
         if (kept.length) keptEntries.push({ ...entry, hooks: kept });
       }

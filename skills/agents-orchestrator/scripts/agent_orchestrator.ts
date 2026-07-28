@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, realpathSync, statSync } from "node:fs";
 
 import * as actionProcessor from "./action_processor.ts";
-import * as compatEnv from "./compat_env.ts";
+import * as runtimeEnv from "./runtime_env.ts";
 import * as executionConfig from "./execution_config.ts";
 import * as executionSecrets from "./execution_secrets.ts";
 import * as hookManager from "./hook_manager.ts";
@@ -17,9 +17,12 @@ import { canonicalJson, RuntimeError, ValueError, type RuntimeRecord } from "./r
 export const DEFAULT_MODEL_TIERS = { strong: "opus", balanced: "sonnet", fast: "haiku" };
 export const OWNER_LEASE_SECONDS = 15 * 60;
 export const ENTRY_MODE_ALIASES: Readonly<Record<string, string>> = {
-  swarm: "swarm", loop: "develop_review_improve",
+  swarm: "swarm", loop: "loop",
   "develop-review-improve": "develop_review_improve", develop_review_improve: "develop_review_improve",
+  "verification-fix": "verification_fix", verification_fix: "verification_fix",
+  "validation-fix": "verification_fix", validation_fix: "verification_fix",
   review: "multi_session_review", "multi-session-review": "multi_session_review", multi_session_review: "multi_session_review",
+  ravf: "ravf", "ravf-loop": "ravf", "review-argue-vote-fix": "ravf",
 };
 
 export const ACTION_SCHEMAS: Readonly<Record<string, RuntimeRecord>> = {
@@ -83,15 +86,15 @@ function positive(name: string, value: number, minimum: number, maximum: number)
   return value;
 }
 
-export function entryMode(explicit?: string | null, environment: compatEnv.Environment = process.env): string | null {
+export function entryMode(explicit?: string | null, environment: runtimeEnv.Environment = process.env): string | null {
   const normalize = (raw?: string | null): string | null => {
     if (raw === undefined || raw === null || !raw.trim()) return null;
     const normalized = ENTRY_MODE_ALIASES[raw.trim()];
-    if (!normalized) throw new ValueError("entry_mode must be swarm, loop, or review");
+    if (!normalized) throw new ValueError("entry_mode must be swarm, loop, develop-review-improve, verification-fix, review, or ravf");
     return normalized;
   };
   const selected = normalize(explicit);
-  const inherited = normalize(compatEnv.value("MODE", environment));
+  const inherited = normalize(runtimeEnv.value("MODE", environment));
   if (selected && inherited && selected !== inherited) throw new ValueError("explicit entry_mode conflicts with orchestration MODE");
   return selected ?? inherited;
 }
@@ -207,10 +210,10 @@ export function initializeRun(task: string, cwdValue: string, options: Initializ
 }
 
 function resolveValue(explicit: unknown, suffix: string, label: string, required = true): string | null {
-  const inherited = compatEnv.value(suffix);
+  const inherited = runtimeEnv.value(suffix);
   if (explicit && inherited && String(explicit) !== inherited) throw new ValueError(`explicit ${label} does not match orchestration ${suffix}`);
   const value = explicit ? String(explicit) : inherited ?? null;
-  if (required && !value) throw new ValueError(`${label} is required (argument or ${compatEnv.canonicalName(suffix)}/${compatEnv.legacyName(suffix)})`);
+  if (required && !value) throw new ValueError(`${label} is required (argument or ${runtimeEnv.name(suffix)})`);
   return value;
 }
 

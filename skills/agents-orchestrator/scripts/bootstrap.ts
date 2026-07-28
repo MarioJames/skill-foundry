@@ -123,19 +123,12 @@ function repositoryRoot(skillDirectory: string): string | null {
   }
 }
 
-function compatibleEnvironmentValue(suffix: string): string | undefined {
-  const canonicalName = `AGENTS_ORCHESTRATOR_${suffix}`;
-  const legacyName = `AGENT_SWARM_${suffix}`;
-  const canonical = process.env[canonicalName]?.trim() || undefined;
-  const legacy = process.env[legacyName]?.trim() || undefined;
-  if (canonical && legacy && canonical !== legacy) {
-    fail(`conflicting orchestration environment: ${canonicalName} does not match ${legacyName}`);
-  }
-  return canonical ?? legacy;
+function environmentValue(suffix: string): string | undefined {
+  return process.env[`AGENTS_ORCHESTRATOR_${suffix}`]?.trim() || undefined;
 }
 
 function dependencyHome(skillDirectory: string): string {
-  const configured = compatibleEnvironmentValue("DEPENDENCY_HOME");
+  const configured = environmentValue("DEPENDENCY_HOME");
   const selected = resolve(configured ?? join(homedir(), ".agents-orchestrator", "dependencies"));
   const repo = repositoryRoot(skillDirectory);
   if (isWithin(selected, skillDirectory) || (repo !== null && isWithin(selected, repo))) {
@@ -198,7 +191,7 @@ function wantsGemini(arguments_: readonly string[]): boolean {
     "PROFILES",
     "ALLOWED_PROFILES",
   ]) {
-    const value = compatibleEnvironmentValue(suffix);
+    const value = environmentValue(suffix);
     if (value) candidates.push(value);
   }
   return candidates.some((candidate) => {
@@ -525,9 +518,7 @@ async function executeRuntime(
   const environment = {
     ...process.env,
     AGENTS_ORCHESTRATOR_MANAGED_ROOT: target,
-    AGENT_SWARM_MANAGED_ROOT: target,
     AGENTS_ORCHESTRATOR_DEPENDENCY_HOME: home,
-    AGENT_SWARM_DEPENDENCY_HOME: home,
     PATH: `${binDirectory}${sep === "\\" ? ";" : ":"}${process.env.PATH ?? ""}`,
   };
   const child = Bun.spawn([process.execPath, entry, ...arguments_], {

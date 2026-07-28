@@ -8,9 +8,7 @@ import { RuntimeError, type RuntimeRecord } from "../../runtime_types.ts";
 const ACTION_TYPE = /^[a-z][a-z0-9_]*$/u;
 const ENV_RUNTIME_ENTRYPOINTS = new Set([
   "$AGENTS_ORCHESTRATOR_SKILL_DIR/scripts/agent_orchestrator.ts",
-  "$AGENT_SWARM_SKILL_DIR/scripts/agent_orchestrator.ts",
   "$AGENTS_ORCHESTRATOR_SKILL_DIR/scripts/bootstrap.ts",
-  "$AGENT_SWARM_SKILL_DIR/scripts/bootstrap.ts",
 ]);
 const TRUSTED_SHELLS = new Set(
   ["/bin/bash", "/bin/sh", "/bin/zsh", "/usr/bin/bash", "/usr/bin/sh", "/usr/bin/zsh"]

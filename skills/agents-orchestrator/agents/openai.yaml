@@ -1,7 +1,7 @@
 interface:
   display_name: "Agents Orchestrator"
-  short_description: "Explicit durable task-tree orchestration and review loops"
-  default_prompt: "Use $agents-orchestrator to run this task in swarm mode with validation and final review."
+  short_description: "Route durable multi-Agent orchestration patterns"
+  default_prompt: "Use $agents-orchestrator to select and run the best bounded orchestration recipe for this task."
 
 policy:
-  allow_implicit_invocation: false
+  allow_implicit_invocation: true

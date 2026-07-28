@@ -15,12 +15,12 @@ import {
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
-import * as compatEnv from "./compat_env.ts";
+import * as runtimeEnv from "./runtime_env.ts";
 import { canonicalJson, isRecord, RuntimeError, type RuntimeRecord, ValueError } from "./runtime_types.ts";
 
-export const RUNTIME_HOME_ENV = compatEnv.legacyName("HOME");
-export const RUNTIME_HOME_DIRECTORY = compatEnv.RUNTIME_HOME_DIRECTORY;
-export const SCHEMA_VERSION = 3;
+export const RUNTIME_HOME_ENV = runtimeEnv.name("HOME");
+export const RUNTIME_HOME_DIRECTORY = runtimeEnv.RUNTIME_HOME_DIRECTORY;
+export const SCHEMA_VERSION = 4;
 export const BUSY_TIMEOUT_MS = 5_000;
 const RUNTIME_ASSET_MANIFEST = ".runtime-assets.json";
 const RUNTIME_ASSET_LOCK = ".runtime-assets.lock";
@@ -404,6 +404,11 @@ CREATE INDEX idx_mode_tasks_mode_role
 ON mode_tasks(mode_id, role, task_id);
 `;
 
+export const MIGRATION_4_SQL = `
+ALTER TABLE modes ADD COLUMN recipe TEXT;
+UPDATE modes SET recipe=kind WHERE recipe IS NULL;
+`;
+
 type Binding = string | number | bigint | boolean | Uint8Array | null;
 
 export class Cursor {
@@ -485,11 +490,11 @@ export function now(): number {
 }
 
 export function runtimeRoot(): string {
-  return compatEnv.runtimeRoot();
+  return runtimeEnv.runtimeRoot();
 }
 
 export function dbPath(): string {
-  return compatEnv.dbPath();
+  return runtimeEnv.dbPath();
 }
 
 function assetDigest(path: string): string {
@@ -502,7 +507,7 @@ function runtimeAssetSourceRoot(): string {
 
 function runtimeAssetManifest(sourceRoot: string): Record<string, string> {
   const result: Record<string, string> = {};
-  for (const name of ["compat_env.ts", "hook_manager.ts", "hook_runtime.ts", "runtime_types.ts", "state_store.ts"]) {
+  for (const name of ["runtime_env.ts", "hook_manager.ts", "hook_runtime.ts", "runtime_types.ts", "state_store.ts"]) {
     const path = join(sourceRoot, "scripts", name);
     if (existsSync(path)) result[`scripts/${name}`] = assetDigest(path);
   }
@@ -665,6 +670,10 @@ export function initializeSchema(): void {
     if (!applied.has(3)) {
       connection.executescript(MIGRATION_3_SQL);
       connection.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (3, ?)", [now()]);
+    }
+    if (!applied.has(4)) {
+      connection.executescript(MIGRATION_4_SQL);
+      connection.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (4, ?)", [now()]);
     }
     connection.commit();
   } catch (error) {

@@ -74,13 +74,10 @@ export class AcpBackend extends AgentBackend {
     const environment: Record<string, string> = {};
     const scrubbedSuffixes = new Set(["ROOT_ID", "TASK_ID", "ATTEMPT_ID", "ACTOR_TOKEN", "AGENT_ID", "EXECUTION_NONCE", "SKILL_DIR"]);
     for (const [key, value] of Object.entries(process.env)) {
-      const suffix = key.startsWith("AGENT_SWARM_") ? key.slice("AGENT_SWARM_".length)
-        : key.startsWith("AGENTS_ORCHESTRATOR_") ? key.slice("AGENTS_ORCHESTRATOR_".length) : null;
+      const suffix = key.startsWith("AGENTS_ORCHESTRATOR_") ? key.slice("AGENTS_ORCHESTRATOR_".length) : null;
       if (value !== undefined && !(suffix && scrubbedSuffixes.has(suffix))) environment[key] = value;
     }
-    environment.AGENT_SWARM_HOME = stateStore.runtimeRoot();
     environment.AGENTS_ORCHESTRATOR_HOME = stateStore.runtimeRoot();
-    environment.AGENT_SWARM_EXECUTION_NONCE = candidateNonce;
     environment.AGENTS_ORCHESTRATOR_EXECUTION_NONCE = candidateNonce;
     let child: Bun.Subprocess;
     try {

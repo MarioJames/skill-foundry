@@ -5,6 +5,7 @@ import { canonicalJson, isRecord, type RuntimeRecord, ValueError } from "./runti
 
 export const TERMINAL_TASKS = new Set(["done", "failed", "blocked", "cancelled"]);
 const SEVERITY_RANK: Readonly<Record<string, number>> = Object.freeze({ low: 0, medium: 1, high: 2, critical: 3 });
+const RAVF_CONTEXT_BYTES = 128_000;
 
 export type CompileTasks = (specifications: RuntimeRecord[]) => RuntimeRecord[];
 export type CancelMode = (
@@ -16,6 +17,17 @@ export type CancelMode = (
 
 function json(value: unknown): string {
   return canonicalJson(value);
+}
+
+function recipe(mode: RuntimeRecord): string {
+  return modeModels.modeRecipe(mode);
+}
+
+function semanticRole(mode: RuntimeRecord, role: unknown): string {
+  if (recipe(mode) === "verification_fix" && role === "reviewer") return "diagnostician";
+  if (recipe(mode) === "ravf" && role === "verifier_falsify") return "arguer";
+  if (recipe(mode) === "ravf" && role === "verifier_reproduce") return "voter";
+  return String(role);
 }
 
 function decoded(row: RuntimeRecord, key: string): RuntimeRecord {
@@ -52,12 +64,15 @@ function outputContract(role: string): string {
   const contracts: Record<string, string> = {
     swarm: 'Complete the assigned task and finish with mode_result {"status":"done|partial","evidence":[...]} as well as normal finish fields.',
     developer: 'Develop the requested round and finish with mode_result {"summary":"...","state":{...},"evidence":[...]} as well as normal finish fields.',
-    validator: 'Run deterministic validation without modifying files. Finish with mode_result {"stage":"validation|revalidation","status":"passed|failed|blocked","artifact_version":"...","commands":[...],"evidence":[...]}.',
+    validator: 'Run deterministic validation without modifying files. Finish with mode_result {"stage":"validation|revalidation","status":"passed|failed|blocked","artifact_version":"...","commands":[...],"evidence":[...]} and the normal structured review object with "source":"self".',
     reviewer: 'Independently review the supplied bounded evidence. Finish with mode_result containing "findings":[{"title","description","claim","severity","location","rule","evidence","impact","confidence"}]. For develop_review_improve also include "verdict":"pass|changes_requested|blocked". The normal finish review object uses "source":"self".',
-    verifier_reproduce: 'Reproduce the assigned candidate independently. Finish with mode_result containing "candidate_fingerprint", "verdict":"confirmed|rejected|unresolved", non-empty "evidence", and optional "discovered_findings".',
-    verifier_falsify: 'Try to falsify the assigned candidate independently. Report the candidate truth, not whether the falsification attempt itself ran: finish with mode_result containing "candidate_fingerprint", "verdict":"confirmed|rejected|unresolved", non-empty "evidence", and optional "discovered_findings".',
+    verifier_reproduce: 'Reproduce the assigned candidate independently. Finish with mode_result containing "candidate_fingerprint", "verdict":"confirmed|rejected|unresolved", non-empty "evidence", optional "discovered_findings", and the normal structured review object with "source":"self".',
+    verifier_falsify: 'Try to falsify the assigned candidate independently. Report the candidate truth, not whether the falsification attempt itself ran: finish with mode_result containing "candidate_fingerprint", "verdict":"confirmed|rejected|unresolved", non-empty "evidence", optional "discovered_findings", and the normal structured review object with "source":"self".',
     improver: 'Improve the prior result using the review findings. Finish with mode_result {"changed":true|false,"addressed_fingerprints":[...],"evidence":[...]}.',
-    fixer: 'Fix only the assigned confirmed finding. Finish with mode_result {"fixed_fingerprints":[...],"evidence":[...]} including the assigned fingerprint.',
+    fixer: 'Fix exactly the Runtime-approved finding set in one coordinated change. Finish with mode_result {"fixed_fingerprints":[...],"evidence":[...]} including every approved fingerprint and no rejected or unrelated fingerprint.',
+    diagnostician: 'Locate the deterministic validation failure without modifying files. Finish with mode_result {"verdict":"changes_requested","root_cause":"...","findings":[{"title","description","claim","severity","location","rule","evidence","impact","confidence"}],"evidence":[...]} and the normal structured review object with "source":"self".',
+    arguer: 'Challenge the complete current Review result independently and fairly. Argue cannot create findings. Cover every supplied reviewer candidate exactly once in mode_result {"arguments":[{"candidate_fingerprint":"...","challenge_outcome":"review_stands|review_rebutted|review_needs_revision|uncertain","rationale":"...","roi":"positive|neutral|negative","bloat_risk":"low|medium|high","evidence":[...],"proposed_revision":null|{standard finding fields}}]}. proposed_revision is required only when the original Review is valid but needs correction. The normal finish review object uses "source":"self".',
+    voter: 'Independently vote on every original reviewer candidate after comparing its full reviewer provenance with all arguer evidence. Cover every candidate exactly once in mode_result {"ballots":[{"candidate_fingerprint":"...","decision":"accept_original|accept_revised|reject|abstain","rationale":"...","expected_value":"high|medium|low|negative","evidence":[...],"revision_basis_task_ids":[...]}]}. accept_revised must cite the arguer task ids whose corrections it supports. Do not coordinate with other voters. The normal finish review object uses "source":"self".',
   };
   const contract = contracts[role];
   if (!contract) throw new ValueError(`unsupported mode task role: ${role}`);
@@ -128,7 +143,7 @@ function closeMode(
   const response: RuntimeRecord = {
     accepted: true,
     mode_id: mode.mode_id,
-    mode: mode.kind,
+    mode: recipe(mode),
     status,
     outcome: state.terminal_outcome,
     phase: mode.phase,
@@ -137,7 +152,7 @@ function closeMode(
     schedule_required: false,
     task_ids: [],
   };
-  if (mode.kind === "multi_session_review") {
+  if (new Set(["multi_session_review", "ravf"]).has(recipe(mode))) {
     const consensus = consensusSummary(connection, mode, status);
     response.verdict = consensus.verdict;
     response.findings = {
@@ -261,24 +276,53 @@ function validatorPlan(
   context: RuntimeRecord,
   mode: RuntimeRecord,
   roundNumber: number,
-  dependsOn: number,
+  dependsOn: number | undefined,
   stage: "validation" | "revalidation",
 ): RuntimeRecord {
+  const specification: RuntimeRecord = {
+    key: `mode-${mode.mode_id}-round-${roundNumber}-${stage}`,
+    goal: `${mode.objective}\nRun deterministic ${stage} for round ${roundNumber}; use unit tests, browser tests, or both as required by the evidence and repository.`,
+    intent_hint: "review",
+    complexity_hint: "high",
+    model_tier_hint: "strong",
+    priority: 85,
+    output_contract: outputContract("validator"),
+    constraints: taskConstraints(context, {
+      readOnly: true,
+      notes: [
+        `Persistent mode ${mode.mode_id}, round ${roundNumber} deterministic ${stage}.`,
+        "Do not modify the artifact while validating it.",
+      ],
+    }),
+  };
+  if (dependsOn !== undefined) specification.depends_on = [{ task_id: dependsOn, condition: "success" }];
   return {
     role: "validator",
+    spec: specification,
+  };
+}
+
+function diagnosisPlan(
+  context: RuntimeRecord,
+  mode: RuntimeRecord,
+  roundNumber: number,
+  dependsOn: number,
+): RuntimeRecord {
+  return {
+    role: "reviewer",
     spec: {
-      key: `mode-${mode.mode_id}-round-${roundNumber}-${stage}`,
-      goal: `${mode.objective}\nRun deterministic ${stage} for round ${roundNumber}.`,
+      key: `mode-${mode.mode_id}-round-${roundNumber}-diagnose`,
+      goal: `${mode.objective}\nLocate the root cause of the failed deterministic validation in round ${roundNumber}.`,
       intent_hint: "review",
       complexity_hint: "high",
       model_tier_hint: "strong",
-      priority: 85,
-      output_contract: outputContract("validator"),
+      priority: 90,
+      output_contract: outputContract("diagnostician"),
       constraints: taskConstraints(context, {
         readOnly: true,
         notes: [
-          `Persistent mode ${mode.mode_id}, round ${roundNumber} deterministic ${stage}.`,
-          "Do not modify the artifact while validating it.",
+          `Persistent mode ${mode.mode_id}, round ${roundNumber} failure diagnosis.`,
+          "Use the validation evidence; diagnose before proposing any change and do not modify files.",
         ],
       }),
       depends_on: [{ task_id: dependsOn, condition: "success" }],
@@ -343,7 +387,7 @@ function reviewerPlans(context: RuntimeRecord, mode: RuntimeRecord, config: Runt
     role: "reviewer",
     profile_hint: reviewer.profile_hint,
     spec: {
-      key: `mode-${mode.mode_id}-review-${reviewer.id}`,
+      key: `mode-${mode.mode_id}-round-${mode.current_round}-review-${reviewer.id}`,
       goal: `${mode.objective}\nPerform an independent proposal review as ${reviewer.id}.`,
       intent_hint: "review",
       complexity_hint: "high",
@@ -362,6 +406,173 @@ function reviewerPlans(context: RuntimeRecord, mode: RuntimeRecord, config: Runt
   }));
 }
 
+function ravfReviewerPlans(context: RuntimeRecord, mode: RuntimeRecord, config: RuntimeRecord): RuntimeRecord[] {
+  return (config.reviewers as RuntimeRecord[]).map((reviewer) => ({
+    role: "reviewer",
+    profile_hint: reviewer.profile_hint,
+    spec: {
+      key: `mode-${mode.mode_id}-round-${mode.current_round}-ravf-review-${reviewer.id}`,
+      goal: `${mode.objective}\nIndependently review the current change. Find as many material correctness, maintainability, security, and operability issues as evidence supports.`,
+      intent_hint: "review",
+      complexity_hint: "high",
+      model_tier_hint: "strong",
+      priority: 85,
+      output_contract: outputContract("reviewer"),
+      constraints: taskConstraints(context, {
+        readOnly: true,
+        notes: [
+          "Review broadly and independently; do not coordinate with other reviewers.",
+          "Report evidence-backed material findings, not cosmetic churn or findings invented to fill a quota.",
+          `Return at most ${modeModels.RAVF_FINDINGS_PER_REVIEWER} highest-value findings; the five-reviewer union is capped at ${modeModels.RAVF_MAX_CANDIDATES}.`,
+          `RAVF mode ${mode.mode_id}, round ${mode.current_round}, reviewer ${reviewer.id}.`,
+        ],
+        profileHint: reviewer.profile_hint,
+      }),
+    },
+  }));
+}
+
+function currentCandidateRows(
+  connection: stateStore.Connection,
+  mode: RuntimeRecord,
+  roundId: number,
+): RuntimeRecord[] {
+  return stateStore.fetchall(
+    `SELECT DISTINCT f.*
+       FROM mode_findings f
+       JOIN mode_finding_provenance p ON p.finding_id=f.finding_id
+       JOIN mode_tasks mt ON mt.task_id=p.task_id
+      WHERE f.mode_id=? AND f.status='candidate' AND mt.round_id=?
+      ORDER BY f.fingerprint`,
+    [mode.mode_id, roundId],
+    connection,
+  );
+}
+
+function ravfArguerPlans(
+  connection: stateStore.Connection,
+  context: RuntimeRecord,
+  mode: RuntimeRecord,
+  round: RuntimeRecord,
+  config: RuntimeRecord,
+): RuntimeRecord[] {
+  if (modeRows(connection, Number(mode.mode_id), "verifier_falsify", Number(round.round_id)).length > 0) return [];
+  const candidates = currentCandidateRows(connection, mode, Number(round.round_id));
+  if (candidates.length === 0) throw new ValueError("RAVF argue phase requires current Review candidates");
+  const reviewerIds = modeRows(connection, Number(mode.mode_id), "reviewer", Number(round.round_id))
+    .map((row) => Number(row.task_id));
+  if (reviewerIds.length === 0) throw new ValueError("RAVF argue phase requires complete reviewer evidence");
+  const fingerprints = candidates.map((finding) => String(finding.fingerprint));
+  return (config.arguers as RuntimeRecord[]).map((arguer) => ({
+      role: "verifier_falsify",
+      profile_hint: arguer.profile_hint,
+      spec: {
+        key: `mode-${mode.mode_id}-round-${mode.current_round}-argue-${arguer.id}`,
+        goal: `${mode.objective}\nRAVF arguer ${arguer.id}. Independently assess the complete Review result and judge every current candidate: ${fingerprints.join(", ")}.`,
+        intent_hint: "review",
+        complexity_hint: "high",
+        model_tier_hint: "balanced",
+        priority: 90,
+        output_contract: outputContract("arguer"),
+        constraints: taskConstraints(context, {
+          readOnly: true,
+          notes: [
+            `Assess the complete Review output, including all reviewer provenance, for ${fingerprints.length} candidates.`,
+            "Cover each supplied candidate exactly once and remain independent from reviewers and other arguers.",
+            "Do not defend or reject a finding merely to create disagreement.",
+            "Weigh correctness impact, expected maintenance value, implementation cost, and code-bloat risk.",
+          ],
+          profileHint: arguer.profile_hint,
+        }),
+        depends_on: reviewerIds.map((taskId) => ({ task_id: taskId, condition: "success" })),
+      },
+    }));
+}
+
+function ravfVoterPlans(
+  connection: stateStore.Connection,
+  context: RuntimeRecord,
+  mode: RuntimeRecord,
+  round: RuntimeRecord,
+  config: RuntimeRecord,
+): RuntimeRecord[] {
+  if (modeRows(connection, Number(mode.mode_id), "verifier_reproduce", Number(round.round_id)).length > 0) return [];
+  const candidates = currentCandidateRows(connection, mode, Number(round.round_id));
+  if (candidates.length === 0) throw new ValueError("RAVF vote phase requires current Review candidates");
+  const arguerIds = modeRows(connection, Number(mode.mode_id), "verifier_falsify", Number(round.round_id))
+    .map((row) => Number(row.task_id));
+  if (arguerIds.length !== (config.arguers as RuntimeRecord[]).length) {
+    throw new ValueError("RAVF vote phase requires the complete fixed-size arguer pool");
+  }
+  const fingerprints = candidates.map((finding) => String(finding.fingerprint));
+  return (config.voters as RuntimeRecord[]).map((voter) => ({
+        role: "verifier_reproduce",
+        profile_hint: voter.profile_hint,
+        spec: {
+          key: `mode-${mode.mode_id}-round-${mode.current_round}-vote-${voter.id}`,
+          goal: `${mode.objective}\nRAVF voter ${voter.id}. Independently vote on every current candidate after comparing its reviewer evidence with all arguer evidence: ${fingerprints.join(", ")}.`,
+          intent_hint: "review",
+          complexity_hint: "low",
+          model_tier_hint: "fast",
+          priority: 88,
+          output_contract: outputContract("voter"),
+          constraints: taskConstraints(context, {
+            readOnly: true,
+            notes: [
+              `Cast one independent ballot for each of ${fingerprints.length} candidates.`,
+              "For every issue, compare the original reviewer claim and provenance with all independent arguer judgments.",
+              "Vote for actual expected value; reject low-ROI or code-bloating work even when the underlying observation is technically true.",
+              "Do not coordinate with other voters.",
+            ],
+            profileHint: voter.profile_hint,
+          }),
+          depends_on: arguerIds.map((taskId) => ({ task_id: taskId, condition: "success" })),
+        },
+      }));
+}
+
+function ravfFixerPlan(
+  connection: stateStore.Connection,
+  context: RuntimeRecord,
+  mode: RuntimeRecord,
+  round: RuntimeRecord,
+): RuntimeRecord | null {
+  if (modeRows(connection, Number(mode.mode_id), "fixer", Number(round.round_id)).length > 0) return null;
+  const findings = stateStore.fetchall(
+    `SELECT DISTINCT f.* FROM mode_findings f
+      JOIN mode_finding_provenance p ON p.finding_id=f.finding_id
+      JOIN mode_tasks proposed ON proposed.task_id=p.task_id AND proposed.round_id=?
+     WHERE f.mode_id=? AND f.status='confirmed'
+     ORDER BY f.fingerprint`,
+    [round.round_id, mode.mode_id],
+    connection,
+  );
+  if (findings.length === 0) return null;
+  const fingerprints = findings.map((finding) => String(finding.fingerprint));
+  const voterIds = modeRows(connection, Number(mode.mode_id), "verifier_reproduce", Number(round.round_id))
+    .map((row) => Number(row.task_id));
+  return {
+      role: "fixer",
+      spec: {
+        key: `mode-${mode.mode_id}-round-${mode.current_round}-fix-approved`,
+        goal: `${mode.objective}\nApply one coordinated fix for exactly the RAVF-approved findings: ${fingerprints.join(", ")}.`,
+        intent_hint: "fix",
+        complexity_hint: "high",
+        model_tier_hint: "strong",
+        priority: 95,
+        output_contract: outputContract("fixer"),
+        constraints: taskConstraints(context, {
+          readOnly: false,
+          notes: [
+            `The main Agent integrated the independent ballots and approved exactly: ${fingerprints.join(", ")}.`,
+            "Keep the fix scoped; do not implement rejected, unresolved, or unrelated suggestions.",
+          ],
+        }),
+        depends_on: voterIds.map((taskId) => ({ task_id: taskId, condition: "success" })),
+      },
+    };
+}
+
 export function startMode(
   connection: stateStore.Connection,
   context: RuntimeRecord,
@@ -371,16 +582,19 @@ export function startMode(
 ): RuntimeRecord {
   const data = modeModels.validateStartPayload(payload);
   const execution = decoded(context.run, "execution_config_json");
-  if (data.kind === "multi_session_review" && execution.backend !== "acp") {
-    throw new ValueError("multi_session_review is ACP-only");
+  if (new Set(["multi_session_review", "ravf"]).has(String(data.recipe)) && execution.backend !== "acp") {
+    throw new ValueError(`${data.recipe} is ACP-only`);
   }
-  const reviewers = data.kind === "multi_session_review" ? data.config.reviewers as RuntimeRecord[] : [];
-  if (reviewers.length > Number(context.run.max_children_per_action)) {
-    throw new ValueError("reviewer count exceeds the Run max_children_per_action guard");
+  const reviewers = new Set(["multi_session_review", "ravf"]).has(String(data.recipe))
+    ? data.config.reviewers as RuntimeRecord[] : [];
+  const arguers = data.recipe === "ravf" ? data.config.arguers as RuntimeRecord[] : [];
+  const voters = data.recipe === "ravf" ? data.config.voters as RuntimeRecord[] : [];
+  if ([reviewers, arguers, voters].some((participants) => participants.length > Number(context.run.max_children_per_action))) {
+    throw new ValueError("reviewer, arguer, or voter count exceeds the Run max_children_per_action guard");
   }
-  for (const reviewer of reviewers) {
-    if (reviewer.profile_hint !== null) {
-      executionConfig.selectProfile(execution, { profileHint: reviewer.profile_hint });
+  for (const participant of [...reviewers, ...arguers, ...voters]) {
+    if (participant.profile_hint !== null) {
+      executionConfig.selectProfile(execution, { profileHint: participant.profile_hint });
     }
   }
   const [parent, depth] = parentMode(connection, context, data.parent_mode_id);
@@ -394,23 +608,27 @@ export function startMode(
     no_progress_count: 0,
     candidate_expansions: 0,
     candidate_overflow: [],
+    fixed_fingerprints: [],
   };
-  const phase = data.kind === "swarm"
+  const phase = data.recipe === "swarm"
     ? "swarm"
-    : data.kind === "develop_review_improve"
+    : data.recipe === "develop_review_improve"
       ? (data.config.phases?.[0] ?? "develop")
-      : "review";
+      : data.recipe === "verification_fix"
+        ? "validate"
+        : "review";
   const modeId = connection.execute(
     `INSERT INTO modes(
-       root_id, owner_task_id, parent_mode_id, kind, status, phase,
+       root_id, owner_task_id, parent_mode_id, kind, recipe, status, phase,
        current_round, depth, objective, config_json, state_json,
        deadline_at, started_at, updated_at
-     ) VALUES (?, ?, ?, ?, 'running', ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, 'running', ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
     [
       context.run.root_id,
       context.task.task_id,
       parent?.mode_id ?? null,
       data.kind,
+      data.recipe,
       phase,
       depth,
       data.objective,
@@ -423,11 +641,15 @@ export function startMode(
   ).lastrowid;
   const mode = stateStore.getMode(modeId, connection)!;
   const roundId = newRound(connection, modeId, 1, phase);
-  const plans = data.kind === "swarm"
+  const plans = data.recipe === "swarm"
     ? swarmPlans(data.tasks)
-    : data.kind === "develop_review_improve"
+    : data.recipe === "develop_review_improve"
       ? [developerPlan(context, mode, 1)]
-      : reviewerPlans(context, mode, data.config);
+      : data.recipe === "verification_fix"
+        ? [validatorPlan(context, mode, 1, undefined, "validation")]
+        : data.recipe === "ravf"
+          ? ravfReviewerPlans(context, mode, data.config)
+          : reviewerPlans(context, mode, data.config);
   const taskIds = compile(connection, context, mode, roundId, plans, compileTasks);
   const fingerprint = snapshotFingerprint(connection, modeId);
   connection.execute("UPDATE modes SET state_fingerprint=? WHERE mode_id=?", [fingerprint, modeId]);
@@ -435,7 +657,7 @@ export function startMode(
     connection,
     context.run.root_id,
     "ModeStarted",
-    { mode_id: modeId, kind: data.kind, task_ids: taskIds, parent_mode_id: data.parent_mode_id },
+    { mode_id: modeId, kind: data.kind, recipe: data.recipe, task_ids: taskIds, parent_mode_id: data.parent_mode_id },
     context.task.task_id,
     context.attempt.attempt_id,
     null,
@@ -444,7 +666,7 @@ export function startMode(
   return {
     accepted: true,
     mode_id: modeId,
-    mode: data.kind,
+    mode: data.recipe,
     status: "running",
     phase,
     round: 1,
@@ -506,6 +728,11 @@ function consensusSummary(
     connection,
   );
   const findings: Record<string, RuntimeRecord[]> = { confirmed: [], rejected: [], unresolved: [] };
+  const state = decoded(mode, "state_json");
+  const fixedFingerprints = new Set(
+    Array.isArray(state.fixed_fingerprints) ? state.fixed_fingerprints.map((item) => String(item)) : [],
+  );
+  const fixed: RuntimeRecord[] = [];
   const quorum: RuntimeRecord[] = [];
   for (const row of findingRows) {
     const canonical = decoded({ canonical_json: row.canonical_json }, "canonical_json");
@@ -515,23 +742,37 @@ function consensusSummary(
     canonical.adjudication = row.adjudication_json
       ? decoded({ adjudication_json: row.adjudication_json }, "adjudication_json")
       : null;
-    if (row.status in findings) findings[row.status]!.push(canonical);
-    const verifications = stateStore.fetchall(
-      `SELECT task_id, verifier_kind, verdict, evidence_hash
-         FROM mode_verifications WHERE finding_id=?
-        ORDER BY verifier_kind, task_id`,
-      [row.finding_id],
-      connection,
-    );
-    const kinds = new Set(verifications.map((item) => item.verifier_kind));
-    quorum.push({
-      fingerprint: row.fingerprint,
-      status: row.status,
-      required: { independent_verifiers: 2, kinds: ["reproduce", "falsify"] },
-      observed: verifications,
-      met: new Set(verifications.map((item) => item.task_id)).size >= 2 &&
-        kinds.size === 2 && kinds.has("reproduce") && kinds.has("falsify"),
-    });
+    if (recipe(mode) === "ravf" && fixedFingerprints.has(String(row.fingerprint))) fixed.push(canonical);
+    else if (row.status in findings) findings[row.status]!.push(canonical);
+    if (recipe(mode) === "ravf") {
+      const adjudication = canonical.adjudication as RuntimeRecord | null;
+      const vote = isRecord(adjudication?.vote) ? adjudication.vote : {};
+      const ballots = Array.isArray(vote.ballots) ? vote.ballots as RuntimeRecord[] : [];
+      quorum.push({
+        fingerprint: row.fingerprint,
+        status: row.status,
+        required: { voters: Number(vote.quorum ?? 0), rule: "strict_majority" },
+        observed: ballots,
+        met: Number(vote.quorum ?? 0) >= 3 && new Set(ballots.map((item) => item.task_id)).size >= Number(vote.quorum),
+      });
+    } else {
+      const verifications = stateStore.fetchall(
+        `SELECT task_id, verifier_kind, verdict, evidence_hash
+           FROM mode_verifications WHERE finding_id=?
+          ORDER BY verifier_kind, task_id`,
+        [row.finding_id],
+        connection,
+      );
+      const kinds = new Set(verifications.map((item) => item.verifier_kind));
+      quorum.push({
+        fingerprint: row.fingerprint,
+        status: row.status,
+        required: { independent_verifiers: 2, kinds: ["reproduce", "falsify"] },
+        observed: verifications,
+        met: new Set(verifications.map((item) => item.task_id)).size >= 2 &&
+          kinds.size === 2 && kinds.has("reproduce") && kinds.has("falsify"),
+      });
+    }
   }
   const provenance = stateStore.fetchall(
     `SELECT f.fingerprint, p.task_id, p.source_kind, p.evidence_hash
@@ -546,13 +787,13 @@ function consensusSummary(
     : findings.confirmed!.length > 0 || findings.unresolved!.length > 0
       ? "changes_requested"
       : "pass";
-  const state = decoded(mode, "state_json");
   return {
     verdict,
     reviewed_artifact: state.evidence_bundle,
     confirmed_findings: findings.confirmed,
     rejected_findings: findings.rejected,
     unresolved_findings: findings.unresolved,
+    fixed_findings: fixed,
     provenance,
     quorum,
     revision_input: {
@@ -644,6 +885,21 @@ function recordFinding(
   } else {
     findingId = Number(existing.finding_id);
     created = false;
+    if (existing.status !== "candidate" && Number(existing.first_seen_round) < Number(mode.current_round)) {
+      connection.execute(
+        `UPDATE mode_findings
+            SET status='candidate', canonical_json=?, adjudication_json=NULL, updated_at=?
+          WHERE finding_id=?`,
+        [json(normalized), stateStore.now(), findingId],
+      );
+      connection.execute("DELETE FROM mode_verifications WHERE finding_id=?", [findingId]);
+      const state = decoded(mode, "state_json");
+      state.fixed_fingerprints = Array.isArray(state.fixed_fingerprints)
+        ? state.fixed_fingerprints.filter((item) => item !== fingerprint)
+        : [];
+      connection.execute("UPDATE modes SET state_json=? WHERE mode_id=?", [json(state), mode.mode_id]);
+      mode.state_json = json(state);
+    }
     if ((SEVERITY_RANK[normalized.severity] ?? -1) > (SEVERITY_RANK[existing.severity] ?? -1)) {
       connection.execute(
         "UPDATE mode_findings SET severity=?, updated_at=? WHERE finding_id=?",
@@ -731,8 +987,8 @@ function verifierPlans(
     ] as const) {
       const existing = connection.execute(
         `SELECT 1 FROM mode_tasks
-          WHERE mode_id=? AND candidate_fingerprint=? AND role=?`,
-        [mode.mode_id, finding.fingerprint, role],
+          WHERE mode_id=? AND round_id=? AND candidate_fingerprint=? AND role=?`,
+        [mode.mode_id, currentRound(connection, mode).round_id, finding.fingerprint, role],
       ).fetchone();
       if (existing !== null) continue;
       plans.push({
@@ -740,7 +996,7 @@ function verifierPlans(
         candidate_fingerprint: finding.fingerprint,
         proposer_task_id: proposer,
         spec: {
-          key: `mode-${mode.mode_id}-${finding.fingerprint}-${suffix}`,
+          key: `mode-${mode.mode_id}-round-${mode.current_round}-${finding.fingerprint}-${suffix}`,
           goal: `${mode.objective}\n${suffix[0]!.toUpperCase()}${suffix.slice(1)} candidate ${finding.fingerprint} independently.`,
           intent_hint: "review",
           complexity_hint: "high",
@@ -767,7 +1023,13 @@ function ingestVerifications(connection: stateStore.Connection, mode: RuntimeRec
   const state = decoded(mode, "state_json");
   let expansions = Number(state.candidate_expansions ?? 0);
   const overflow: RuntimeRecord[] = [...(state.candidate_overflow ?? [])];
-  const rows = modeRows(connection, Number(mode.mode_id), new Set(["verifier_reproduce", "verifier_falsify"]));
+  const round = currentRound(connection, mode);
+  const rows = modeRows(
+    connection,
+    Number(mode.mode_id),
+    new Set(["verifier_reproduce", "verifier_falsify"]),
+    Number(round.round_id),
+  );
   for (const row of rows) {
     if (row.status !== "done") continue;
     if (connection.execute("SELECT 1 FROM mode_verifications WHERE task_id=?", [row.task_id]).fetchone() !== null) continue;
@@ -832,6 +1094,7 @@ function ingestVerifications(connection: stateStore.Connection, mode: RuntimeRec
 }
 
 function adjudicate(connection: stateStore.Connection, mode: RuntimeRecord): void {
+  const round = currentRound(connection, mode);
   const findings = stateStore.fetchall(
     "SELECT * FROM mode_findings WHERE mode_id=? AND status='candidate' ORDER BY fingerprint",
     [mode.mode_id],
@@ -840,10 +1103,10 @@ function adjudicate(connection: stateStore.Connection, mode: RuntimeRecord): voi
   for (const finding of findings) {
     const assigned = stateStore.fetchall(
       `SELECT task_id, role, proposer_task_id FROM mode_tasks
-        WHERE mode_id=? AND candidate_fingerprint=?
+        WHERE mode_id=? AND round_id=? AND candidate_fingerprint=?
           AND role IN ('verifier_reproduce','verifier_falsify')
         ORDER BY role`,
-      [mode.mode_id, finding.fingerprint],
+      [mode.mode_id, round.round_id, finding.fingerprint],
       connection,
     );
     const verifications = stateStore.fetchall(
@@ -883,16 +1146,18 @@ function fixerPlans(
   context: RuntimeRecord,
   mode: RuntimeRecord,
 ): RuntimeRecord[] {
+  const round = currentRound(connection, mode);
   const findings = stateStore.fetchall(
     `SELECT * FROM mode_findings f
       WHERE mode_id=? AND status='confirmed'
         AND NOT EXISTS (
           SELECT 1 FROM mode_tasks mt
            WHERE mt.mode_id=f.mode_id AND mt.role='fixer'
+             AND mt.round_id=?
              AND mt.candidate_fingerprint=f.fingerprint
         )
       ORDER BY fingerprint`,
-    [mode.mode_id],
+    [mode.mode_id, round.round_id],
     connection,
   );
   return findings.map((finding) => {
@@ -905,7 +1170,7 @@ function fixerPlans(
       role: "fixer",
       candidate_fingerprint: finding.fingerprint,
       spec: {
-        key: `mode-${mode.mode_id}-fix-${finding.fingerprint}`,
+        key: `mode-${mode.mode_id}-round-${mode.current_round}-fix-${finding.fingerprint}`,
         goal: `${mode.objective}\nFix confirmed finding ${finding.fingerprint} only.`,
         intent_hint: "fix",
         complexity_hint: "high",
@@ -932,7 +1197,7 @@ function response(
   const value: RuntimeRecord = {
     accepted: true,
     mode_id: mode.mode_id,
-    mode: mode.kind,
+    mode: recipe(mode),
     status: mode.status,
     phase: mode.phase,
     round: mode.current_round,
@@ -1128,6 +1393,454 @@ function advanceLoop(
   return response(mode, { taskIds, schedule: true });
 }
 
+function modeFindingFingerprints(rows: RuntimeRecord[]): string[] {
+  const fingerprints = new Set<string>();
+  for (const row of rows) {
+    const values = modeResult(row).findings ?? [];
+    if (!Array.isArray(values)) throw new ValueError("mode_result.findings must be an array");
+    for (const value of values) fingerprints.add(String(modeModels.validateFinding(value).fingerprint));
+  }
+  return [...fingerprints].sort();
+}
+
+function advanceVerificationFix(
+  connection: stateStore.Connection,
+  context: RuntimeRecord,
+  mode: RuntimeRecord,
+  compileTasks: CompileTasks,
+): RuntimeRecord {
+  const round = currentRound(connection, mode);
+  const rows = modeRows(connection, Number(mode.mode_id), undefined, Number(round.round_id));
+  const roles: Record<string, Set<string>> = {
+    validate: new Set(["validator"]),
+    diagnose: new Set(["reviewer"]),
+    fix: new Set(["improver"]),
+  };
+  const expected = roles[mode.phase];
+  if (!expected) return closeMode(connection, mode, "blocked", "verification_fix phase is invalid");
+  const phaseRows = rows.filter((row) => expected.has(String(row.role)));
+  if (phaseRows.length === 0) return closeMode(connection, mode, "blocked", "verification_fix phase has no compiled task");
+  if (phaseRows.some((row) => new Set(["failed", "blocked", "cancelled"]).has(String(row.status)))) {
+    return closeMode(connection, mode, "blocked", "verification_fix phase task did not complete");
+  }
+  if (!phaseRows.every((row) => row.status === "done")) {
+    return response(mode, { reason: "verification_fix phase tasks are still running" });
+  }
+  const config = decoded(mode, "config_json");
+  const exitConditions = config.exit_conditions as RuntimeRecord;
+  if (mode.phase === "validate") {
+    const result = modeResult(phaseRows[0]!);
+    if (result.status === "passed") {
+      return closeMode(
+        connection,
+        mode,
+        "completed",
+        `deterministic validation passed (exit condition: ${exitConditions.passed})`,
+        "passed",
+      );
+    }
+    if (result.status === "blocked") {
+      return closeMode(connection, mode, "blocked", "deterministic validation was blocked", exitConditions.blocked);
+    }
+    const plan = diagnosisPlan(context, mode, Number(mode.current_round), Number(phaseRows[0]!.task_id));
+    const taskIds = compile(connection, context, mode, Number(round.round_id), [plan], compileTasks);
+    setPhase(connection, mode, "diagnose");
+    return response(mode, { taskIds, schedule: true });
+  }
+  if (mode.phase === "diagnose") {
+    const overflow = recordReviewFindings(connection, mode, phaseRows);
+    if (overflow.length > 0) return closeMode(connection, mode, "blocked", "diagnosis candidate budget guard reached");
+    const fingerprints = modeFindingFingerprints(phaseRows);
+    if (fingerprints.length === 0) return closeMode(connection, mode, "blocked", "failed validation produced no diagnosed finding");
+    const state = decoded(mode, "state_json");
+    state.current_fix_fingerprints = fingerprints;
+    connection.execute("UPDATE modes SET state_json=? WHERE mode_id=?", [json(state), mode.mode_id]);
+    mode.state_json = json(state);
+    const plan = improverPlan(
+      context,
+      mode,
+      Number(mode.current_round),
+      phaseRows.map((row) => Number(row.task_id)),
+      fingerprints,
+    );
+    const taskIds = compile(connection, context, mode, Number(round.round_id), [plan], compileTasks);
+    setPhase(connection, mode, "fix");
+    return response(mode, { taskIds, schedule: true });
+  }
+  const result = modeResult(phaseRows[0]!);
+  const state = decoded(mode, "state_json");
+  const required = Array.isArray(state.current_fix_fingerprints)
+    ? state.current_fix_fingerprints.map((item) => String(item)) : [];
+  const addressed = new Set(Array.isArray(result.addressed_fingerprints)
+    ? result.addressed_fingerprints.map((item) => String(item)) : []);
+  if (!result.changed || required.some((fingerprint) => !addressed.has(fingerprint))) {
+    return closeMode(connection, mode, "blocked", "fix made no complete progress", exitConditions.no_progress);
+  }
+  state.fixed_fingerprints = [...new Set([
+    ...(Array.isArray(state.fixed_fingerprints) ? state.fixed_fingerprints.map((item) => String(item)) : []),
+    ...required,
+  ])].sort();
+  state.current_fix_fingerprints = [];
+  connection.execute("UPDATE modes SET state_json=? WHERE mode_id=?", [json(state), mode.mode_id]);
+  mode.state_json = json(state);
+  for (const fingerprint of required) connection.execute(
+    "UPDATE mode_findings SET status='confirmed', updated_at=? WHERE mode_id=? AND fingerprint=?",
+    [stateStore.now(), mode.mode_id, fingerprint],
+  );
+  if (Number(mode.current_round) >= Number(config.max_rounds)) {
+    return closeMode(
+      connection,
+      mode,
+      "blocked",
+      "max_rounds guard reached before a clean post-fix validation",
+      exitConditions.max_rounds,
+    );
+  }
+  connection.execute(
+    "UPDATE mode_rounds SET status='completed', completed_at=? WHERE round_id=?",
+    [stateStore.now(), round.round_id],
+  );
+  const nextRound = Number(mode.current_round) + 1;
+  const nextRoundId = newRound(connection, Number(mode.mode_id), nextRound, "validate");
+  const plan = validatorPlan(context, mode, nextRound, Number(phaseRows[0]!.task_id), "validation");
+  const taskIds = compile(connection, context, mode, nextRoundId, [plan], compileTasks);
+  setPhase(connection, mode, "validate", nextRound);
+  return response(mode, { taskIds, schedule: true });
+}
+
+function ravfDecisionDossier(
+  connection: stateStore.Connection,
+  mode: RuntimeRecord,
+  round: RuntimeRecord,
+  config: RuntimeRecord,
+): RuntimeRecord {
+  const quorum = Number(config.vote_quorum);
+  const arguerRows = modeRows(
+    connection,
+    Number(mode.mode_id),
+    "verifier_falsify",
+    Number(round.round_id),
+  );
+  const voterRows = modeRows(
+    connection,
+    Number(mode.mode_id),
+    "verifier_reproduce",
+    Number(round.round_id),
+  );
+  if (
+    arguerRows.length !== (config.arguers as RuntimeRecord[]).length ||
+    voterRows.length !== (config.voters as RuntimeRecord[]).length ||
+    voterRows.length < quorum ||
+    [...arguerRows, ...voterRows].some((row) => row.status !== "done")
+  ) throw new ValueError("RAVF requires complete fixed-size arguer and voter pools before integration");
+
+  const candidates: RuntimeRecord[] = [];
+  for (const finding of currentCandidateRows(connection, mode, Number(round.round_id))) {
+    const argumentsForFinding: RuntimeRecord[] = arguerRows.map((row) => {
+      const values = modeResult(row).arguments;
+      if (!Array.isArray(values)) throw new ValueError("RAVF arguer result is missing arguments");
+      const argument = values.find((item) => isRecord(item) && item.candidate_fingerprint === finding.fingerprint);
+      if (!isRecord(argument)) throw new ValueError(`RAVF candidate ${finding.fingerprint} lacks complete argument coverage`);
+      return { task_id: row.task_id, ...argument } as RuntimeRecord;
+    });
+    const decisions: RuntimeRecord[] = voterRows.map((row) => {
+      const values = modeResult(row).ballots;
+      if (!Array.isArray(values)) throw new ValueError("RAVF voter result is missing ballots");
+      const ballot = values.find((item) => isRecord(item) && item.candidate_fingerprint === finding.fingerprint);
+      if (!isRecord(ballot)) throw new ValueError(`RAVF candidate ${finding.fingerprint} lacks complete vote coverage`);
+      return { task_id: row.task_id, ...ballot };
+    });
+    const originalVotes = decisions.filter((vote) => vote.decision === "accept_original").length;
+    const revisedVotes = decisions.filter((vote) => vote.decision === "accept_revised").length;
+    const acceptVotes = originalVotes + revisedVotes;
+    const rejectVotes = decisions.filter((vote) => vote.decision === "reject").length;
+    const majority = Math.floor(voterRows.length / 2) + 1;
+    const preliminary = acceptVotes >= majority ? "accepted" : rejectVotes >= majority ? "rejected" : "unresolved";
+    const provenance = stateStore.fetchall(
+      `SELECT p.task_id, p.source_kind, p.raw_finding_json, p.evidence_hash
+         FROM mode_finding_provenance p WHERE p.finding_id=? ORDER BY p.provenance_id`,
+      [finding.finding_id],
+      connection,
+    ).map((item) => ({
+      task_id: item.task_id,
+      source_kind: item.source_kind,
+      finding: parseOptionalJson(item.raw_finding_json, "raw reviewer finding"),
+      evidence_hash: item.evidence_hash,
+    }));
+    candidates.push({
+      candidate_fingerprint: finding.fingerprint,
+      original_review: decoded({ canonical_json: finding.canonical_json }, "canonical_json"),
+      reviewer_provenance: provenance,
+      arguments: argumentsForFinding.map((argument) => ({
+          task_id: argument.task_id,
+          challenge_outcome: argument.challenge_outcome,
+          roi: argument.roi,
+          bloat_risk: argument.bloat_risk,
+          rationale: argument.rationale,
+          proposed_revision: argument.proposed_revision,
+          evidence_hash: modeModels.digest(argument.evidence),
+      })),
+      vote: {
+        quorum,
+        majority,
+        accept_original_votes: originalVotes,
+        accept_revised_votes: revisedVotes,
+        accept_votes: acceptVotes,
+        reject_votes: rejectVotes,
+        abstentions: voterRows.length - acceptVotes - rejectVotes,
+        preliminary,
+        ballots: decisions.map((vote) => ({
+          task_id: vote.task_id,
+          decision: vote.decision,
+          expected_value: vote.expected_value,
+          rationale: vote.rationale,
+          revision_basis_task_ids: vote.revision_basis_task_ids,
+          evidence_hash: modeModels.digest(vote.evidence),
+        })),
+      },
+    });
+  }
+  return {
+    protocol: "ravf-v3-review-origin",
+    arguer_task_ids: arguerRows.map((row) => Number(row.task_id)),
+    voter_task_ids: voterRows.map((row) => Number(row.task_id)),
+    candidates,
+  };
+}
+
+function applyRavfIntegration(
+  connection: stateStore.Connection,
+  mode: RuntimeRecord,
+  dossier: RuntimeRecord,
+  integration: unknown,
+): RuntimeRecord {
+  if (!isRecord(integration) || !Array.isArray(integration.decisions)) {
+    throw new ValueError("RAVF main-Agent integration requires a decisions array");
+  }
+  const candidates = dossier.candidates as RuntimeRecord[];
+  const decisions = integration.decisions;
+  const candidateMap = new Map(candidates.map((candidate) => [String(candidate.candidate_fingerprint), candidate]));
+  exactFingerprintCoverage(
+    decisions.map((decision) => isRecord(decision) ? String(decision.candidate_fingerprint ?? "") : ""),
+    [...candidateMap.keys()],
+    "RAVF main-Agent integration",
+  );
+  const integrated: RuntimeRecord = {
+    approved_fingerprints: [],
+    rejected_fingerprints: [],
+    unresolved_fingerprints: [],
+    approved_findings: [],
+  };
+  for (const rawDecision of decisions) {
+    if (!isRecord(rawDecision)) throw new ValueError("RAVF integration decisions must be objects");
+    const fingerprint = String(rawDecision.candidate_fingerprint);
+    const candidate = candidateMap.get(fingerprint)!;
+    const vote = candidate.vote as RuntimeRecord;
+    const preliminary = String(vote.preliminary);
+    const disposition = rawDecision.disposition;
+    if (preliminary === "unresolved") throw new ValueError(`RAVF candidate ${fingerprint} has no voter majority`);
+    if (preliminary === "rejected" && disposition !== "reject") {
+      throw new ValueError(`RAVF candidate ${fingerprint} was rejected by voter majority`);
+    }
+    if (
+      preliminary === "accepted" &&
+      disposition !== "accept_original" && disposition !== "accept_revised"
+    ) throw new ValueError(`RAVF candidate ${fingerprint} was accepted and requires an original or revised adoption`);
+    if (typeof rawDecision.rationale !== "string" || !rawDecision.rationale.trim()) {
+      throw new ValueError(`RAVF integration rationale is required for ${fingerprint}`);
+    }
+
+    const original = candidate.original_review as RuntimeRecord;
+    let adoptedFinding: RuntimeRecord | null = null;
+    let revisionBasis: number[] = [];
+    if (disposition === "accept_original") {
+      if (rawDecision.revised_finding !== null && rawDecision.revised_finding !== undefined) {
+        throw new ValueError(`RAVF accept_original cannot include revised_finding for ${fingerprint}`);
+      }
+      adoptedFinding = { ...original };
+    } else if (disposition === "accept_revised") {
+      if (Number(vote.accept_revised_votes) === 0) {
+        throw new ValueError(`RAVF accept_revised requires voter support for ${fingerprint}`);
+      }
+      const basis = rawDecision.revision_basis_task_ids;
+      if (
+        !Array.isArray(basis) || basis.length === 0 ||
+        !basis.every((taskId) => Number.isSafeInteger(taskId) && typeof taskId !== "boolean") ||
+        new Set(basis).size !== basis.length
+      ) throw new ValueError(`RAVF accept_revised requires unique revision_basis_task_ids for ${fingerprint}`);
+      const argumentsForFinding = candidate.arguments as RuntimeRecord[];
+      const revisionArguments = new Map(argumentsForFinding
+        .filter((argument) => argument.challenge_outcome === "review_needs_revision" && isRecord(argument.proposed_revision))
+        .map((argument) => [Number(argument.task_id), argument]));
+      const voterSupported = new Set((vote.ballots as RuntimeRecord[])
+        .filter((ballot) => ballot.decision === "accept_revised")
+        .flatMap((ballot) => ballot.revision_basis_task_ids as number[]));
+      if (basis.some((taskId) => !revisionArguments.has(Number(taskId)) || !voterSupported.has(Number(taskId)))) {
+        throw new ValueError(`RAVF revision basis for ${fingerprint} must be proposed by an arguer and cited by a voter`);
+      }
+      const revised = modeModels.validateFinding(rawDecision.revised_finding, "RAVF revised_finding", true);
+      delete revised.fingerprint;
+      adoptedFinding = revised;
+      revisionBasis = basis.map((taskId) => Number(taskId));
+    }
+
+    const status = disposition === "reject" ? "rejected" : "confirmed";
+    const adjudication = {
+      protocol: dossier.protocol,
+      source_fingerprint: fingerprint,
+      original_review: original,
+      reviewer_provenance: candidate.reviewer_provenance,
+      arguments: candidate.arguments,
+      vote,
+      integration: {
+        disposition,
+        rationale: rawDecision.rationale.trim(),
+        revision_basis_task_ids: revisionBasis,
+      },
+      adopted_finding: adoptedFinding,
+    };
+    connection.execute(
+      "UPDATE mode_findings SET status=?, adjudication_json=?, updated_at=? WHERE mode_id=? AND fingerprint=?",
+      [status, json(adjudication), stateStore.now(), mode.mode_id, fingerprint],
+    );
+    if (status === "confirmed") {
+      (integrated.approved_fingerprints as unknown[]).push(fingerprint);
+      (integrated.approved_findings as unknown[]).push({
+        source_fingerprint: fingerprint,
+        disposition,
+        finding: adoptedFinding,
+      });
+    } else {
+      (integrated.rejected_fingerprints as unknown[]).push(fingerprint);
+    }
+  }
+  return integrated;
+}
+
+function advanceRavf(
+  connection: stateStore.Connection,
+  context: RuntimeRecord,
+  mode: RuntimeRecord,
+  compileTasks: CompileTasks,
+  payload: RuntimeRecord,
+): RuntimeRecord {
+  const config = decoded(mode, "config_json");
+  const exitConditions = config.exit_conditions as RuntimeRecord;
+  const round = currentRound(connection, mode);
+  if (payload.ravf_integration !== undefined && mode.phase !== "vote") {
+    throw new ValueError("ravf_integration is valid only after the RAVF vote phase completes");
+  }
+  const phaseRoles: Record<string, string> = {
+    review: "reviewer",
+    argue: "verifier_falsify",
+    vote: "verifier_reproduce",
+    fix: "fixer",
+  };
+  const role = phaseRoles[String(mode.phase)];
+  if (!role) return closeMode(connection, mode, "blocked", "RAVF phase is invalid");
+  const rows = modeRows(connection, Number(mode.mode_id), role, Number(round.round_id));
+  if (rows.length === 0) return closeMode(connection, mode, "blocked", "RAVF phase has no compiled task");
+  if (rows.some((row) => new Set(["failed", "blocked", "cancelled"]).has(String(row.status)))) {
+    return closeMode(connection, mode, "blocked", `RAVF ${mode.phase} task did not complete`);
+  }
+  if (!rows.every((row) => row.status === "done")) {
+    return response(mode, { reason: `RAVF ${mode.phase} tasks are still running` });
+  }
+  if (mode.phase === "review") {
+    const overflow = recordReviewFindings(connection, mode, rows);
+    if (overflow.length > 0) return closeMode(connection, mode, "blocked", "RAVF candidate budget guard reached");
+    if (currentCandidateRows(connection, mode, Number(round.round_id)).length === 0) {
+      return closeMode(
+        connection,
+        mode,
+        "completed",
+        `RAVF clean review passed (exit condition: ${exitConditions.passed})`,
+        "passed",
+      );
+    }
+    const plans = ravfArguerPlans(connection, context, mode, round, config);
+    const taskIds = compile(connection, context, mode, Number(round.round_id), plans, compileTasks);
+    setPhase(connection, mode, "argue");
+    return response(mode, { taskIds, schedule: true });
+  }
+  if (mode.phase === "argue") {
+    const plans = ravfVoterPlans(connection, context, mode, round, config);
+    const taskIds = compile(connection, context, mode, Number(round.round_id), plans, compileTasks);
+    setPhase(connection, mode, "vote");
+    return response(mode, { taskIds, schedule: true });
+  }
+  if (mode.phase === "vote") {
+    const dossier = ravfDecisionDossier(connection, mode, round, config);
+    const unresolved = (dossier.candidates as RuntimeRecord[])
+      .filter((candidate) => (candidate.vote as RuntimeRecord).preliminary === "unresolved")
+      .map((candidate) => candidate.candidate_fingerprint);
+    if (unresolved.length > 0) {
+      return closeMode(connection, mode, "blocked", "RAVF vote did not resolve every candidate", exitConditions.unresolved);
+    }
+    if (payload.ravf_integration === undefined) {
+      const result = response(mode, {
+        reason: "RAVF ballots are complete; main-Agent integration is required before fixing",
+      });
+      result.integration_required = true;
+      result.decision_context = dossier;
+      result.integration_contract = {
+        decisions: "exactly one per original candidate",
+        dispositions: ["accept_original", "accept_revised", "reject"],
+        revised_rule: "accept_revised must cite voter-supported arguer revision task ids and include revised_finding",
+        source_rule: "every adopted finding retains its original reviewer candidate_fingerprint",
+      };
+      return result;
+    }
+    const integrated = applyRavfIntegration(connection, mode, dossier, payload.ravf_integration);
+    const fixer = ravfFixerPlan(connection, context, mode, round);
+    if (fixer === null) {
+      return closeMode(connection, mode, "completed", "RAVF vote rejected all proposed fixes", "passed");
+    }
+    const taskIds = compile(connection, context, mode, Number(round.round_id), [fixer], compileTasks);
+    setPhase(connection, mode, "fix");
+    const result = response(mode, { taskIds, schedule: true });
+    result.integrated_decision = integrated;
+    return result;
+  }
+  const remaining = ravfFixerPlan(connection, context, mode, round);
+  if (remaining !== null) {
+    const taskIds = compile(connection, context, mode, Number(round.round_id), [remaining], compileTasks);
+    return response(mode, { taskIds, schedule: true });
+  }
+  const fixedResult = modeResult(rows[0]!);
+  const fixed = Array.isArray(fixedResult.fixed_fingerprints)
+    ? fixedResult.fixed_fingerprints.map((item) => String(item))
+    : [];
+  const state = decoded(mode, "state_json");
+  state.fixed_fingerprints = [...new Set([
+    ...(Array.isArray(state.fixed_fingerprints) ? state.fixed_fingerprints.map((item) => String(item)) : []),
+    ...fixed,
+  ])].sort();
+  state.candidate_overflow = [];
+  connection.execute("UPDATE modes SET state_json=? WHERE mode_id=?", [json(state), mode.mode_id]);
+  mode.state_json = json(state);
+  if (Number(mode.current_round) >= Number(config.max_rounds)) {
+    return closeMode(
+      connection,
+      mode,
+      "blocked",
+      "max_rounds guard reached before a clean post-fix review",
+      exitConditions.max_rounds,
+    );
+  }
+  connection.execute(
+    "UPDATE mode_rounds SET status='completed', completed_at=? WHERE round_id=?",
+    [stateStore.now(), round.round_id],
+  );
+  const nextRound = Number(mode.current_round) + 1;
+  const nextRoundId = newRound(connection, Number(mode.mode_id), nextRound, "review");
+  mode.current_round = nextRound;
+  const plans = ravfReviewerPlans(context, mode, config);
+  const taskIds = compile(connection, context, mode, nextRoundId, plans, compileTasks);
+  setPhase(connection, mode, "review", nextRound);
+  return response(mode, { taskIds, schedule: true });
+}
+
 function advanceReview(
   connection: stateStore.Connection,
   context: RuntimeRecord,
@@ -1279,6 +1992,9 @@ export function advanceMode(
   const mode = stateStore.getMode(modeId, connection);
   if (mode === null || mode.root_id !== context.run.root_id) throw new ValueError("mode must belong to the current Run");
   if (mode.owner_task_id !== context.task.task_id) throw new ValueError("only the mode owner Task can advance it");
+  if (payload.ravf_integration !== undefined && recipe(mode) !== "ravf") {
+    throw new ValueError("ravf_integration is valid only for a RAVF mode");
+  }
   const operation = payload.operation ?? "advance";
   if (operation !== "advance" && operation !== "cancel") {
     throw new ValueError("advance_mode operation must be advance or cancel");
@@ -1291,10 +2007,14 @@ export function advanceMode(
     result = closeMode(connection, mode, "cancelled", reason, "cancelled");
   } else if (stateStore.now() >= Number(mode.deadline_at)) {
     result = closeMode(connection, mode, "blocked", "max_seconds guard reached", "budget_exhausted");
-  } else if (mode.kind === "swarm") {
+  } else if (recipe(mode) === "swarm") {
     result = advanceSwarm(connection, mode);
-  } else if (mode.kind === "develop_review_improve") {
+  } else if (recipe(mode) === "develop_review_improve") {
     result = advanceLoop(connection, context, mode, compileTasks);
+  } else if (recipe(mode) === "verification_fix") {
+    result = advanceVerificationFix(connection, context, mode, compileTasks);
+  } else if (recipe(mode) === "ravf") {
+    result = advanceRavf(connection, context, mode, compileTasks, payload);
   } else {
     result = advanceReview(connection, context, mode, compileTasks);
   }
@@ -1331,6 +2051,70 @@ export function advanceMode(
   return result;
 }
 
+function exactFingerprintCoverage(actual: string[], expected: string[], label: string): void {
+  const actualSet = new Set(actual);
+  const expectedSet = new Set(expected);
+  if (
+    actualSet.size !== actual.length ||
+    actualSet.size !== expectedSet.size ||
+    [...expectedSet].some((fingerprint) => !actualSet.has(fingerprint))
+  ) throw new ValueError(`${label} must cover every current RAVF candidate exactly once`);
+}
+
+function validateRavfPoolResult(
+  connection: stateStore.Connection,
+  mode: RuntimeRecord,
+  link: RuntimeRecord,
+  normalized: RuntimeRecord,
+): void {
+  const roundId = Number(link.round_id);
+  if (!Number.isSafeInteger(roundId)) throw new ValueError("RAVF task is missing its round");
+  if (link.role === "verifier_falsify" || link.role === "verifier_reproduce") {
+    const expected = currentCandidateRows(connection, mode, roundId).map((row) => String(row.fingerprint));
+    const field = link.role === "verifier_falsify" ? "arguments" : "ballots";
+    const values = normalized[field];
+    if (!Array.isArray(values)) throw new ValueError(`RAVF ${field} result is required`);
+    exactFingerprintCoverage(
+      values.map((item) => isRecord(item) ? String(item.candidate_fingerprint) : ""),
+      expected,
+      `RAVF ${field}`,
+    );
+    if (link.role === "verifier_reproduce") {
+      const arguerRows = new Map(modeRows(connection, Number(mode.mode_id), "verifier_falsify", roundId)
+        .map((row) => [Number(row.task_id), row]));
+      for (const ballot of values as RuntimeRecord[]) {
+        if (ballot.decision !== "accept_revised") continue;
+        for (const taskId of ballot.revision_basis_task_ids as number[]) {
+          const arguer = arguerRows.get(Number(taskId));
+          const argument = arguer && Array.isArray(modeResult(arguer).arguments)
+            ? (modeResult(arguer).arguments as RuntimeRecord[]).find(
+              (item) => item.candidate_fingerprint === ballot.candidate_fingerprint,
+            )
+            : null;
+          if (
+            !argument || argument.challenge_outcome !== "review_needs_revision" ||
+            !isRecord(argument.proposed_revision)
+          ) throw new ValueError("RAVF voter revision basis must cite a current arguer correction for that candidate");
+        }
+      }
+    }
+    return;
+  }
+  if (link.role === "fixer") {
+    const expected = stateStore.fetchall(
+      `SELECT DISTINCT f.fingerprint FROM mode_findings f
+        JOIN mode_finding_provenance p ON p.finding_id=f.finding_id
+        JOIN mode_tasks proposed ON proposed.task_id=p.task_id AND proposed.round_id=?
+       WHERE f.mode_id=? AND f.status='confirmed' ORDER BY f.fingerprint`,
+      [roundId, mode.mode_id],
+      connection,
+    ).map((row) => String(row.fingerprint));
+    const values = normalized.fixed_fingerprints;
+    if (!Array.isArray(values)) throw new ValueError("RAVF fixed_fingerprints result is required");
+    exactFingerprintCoverage(values.map((item) => String(item)), expected, "RAVF fixed_fingerprints");
+  }
+}
+
 export function validateTaskModeResult(
   connection: stateStore.Connection,
   context: RuntimeRecord,
@@ -1346,6 +2130,7 @@ export function validateTaskModeResult(
   const mode = stateStore.getMode(Number(link.mode_id), connection);
   if (mode === null) throw new ValueError("mode task references a missing mode");
   const normalized = modeModels.validateModeResult(link, mode, payload.mode_result);
+  if (recipe(mode) === "ravf") validateRavfPoolResult(connection, mode, link, normalized);
   payload.mode_result = normalized;
   connection.execute("UPDATE mode_tasks SET result_validated=1 WHERE mode_task_id=?", [link.mode_task_id]);
   return normalized;
@@ -1405,6 +2190,7 @@ export function promptContext(connection: stateStore.Connection, taskId: number)
       connection,
     );
     let candidate: RuntimeRecord | null = null;
+    let candidates: RuntimeRecord[] = [];
     let provenance: RuntimeRecord[] = [];
     if (link.candidate_fingerprint) {
       candidate = connection.execute(
@@ -1425,29 +2211,83 @@ export function promptContext(connection: stateStore.Connection, taskId: number)
         );
       }
     }
+    if (
+      recipe(mode) === "ravf" &&
+      new Set(["verifier_falsify", "verifier_reproduce", "fixer"]).has(String(link.role))
+    ) {
+      candidates = stateStore.fetchall(
+        `SELECT DISTINCT f.* FROM mode_findings f
+          JOIN mode_finding_provenance p ON p.finding_id=f.finding_id
+          JOIN mode_tasks proposed ON proposed.task_id=p.task_id AND proposed.round_id=?
+         WHERE f.mode_id=? ORDER BY f.fingerprint`,
+        [link.round_id, mode.mode_id],
+        connection,
+      ).flatMap<RuntimeRecord>((finding): RuntimeRecord[] => {
+        const canonical = decoded({ canonical_json: finding.canonical_json }, "canonical_json");
+        const adjudication = finding.adjudication_json
+          ? parseOptionalJson(finding.adjudication_json, "RAVF adjudication")
+          : null;
+        if (link.role === "fixer") {
+          if (finding.status !== "confirmed" || !isRecord(adjudication)) return [];
+          return [{
+            fingerprint: finding.fingerprint,
+            status: finding.status,
+            source_fingerprint: adjudication.source_fingerprint,
+            original_review: adjudication.original_review,
+            adopted_finding: adjudication.adopted_finding,
+            integration: adjudication.integration,
+          } as RuntimeRecord];
+        }
+        const reviewerProvenance = stateStore.fetchall(
+          `SELECT p.task_id, p.source_kind, p.raw_finding_json, p.evidence_hash
+             FROM mode_finding_provenance p WHERE p.finding_id=? ORDER BY p.provenance_id`,
+          [finding.finding_id],
+          connection,
+        ).map((item) => ({
+          task_id: item.task_id,
+          source_kind: item.source_kind,
+          finding: parseOptionalJson(item.raw_finding_json, "raw finding"),
+          evidence_hash: item.evidence_hash,
+        }));
+        return [{
+          ...canonical,
+          fingerprint: finding.fingerprint,
+          status: finding.status,
+          adjudication,
+          reviewer_provenance: reviewerProvenance,
+        } as RuntimeRecord];
+      });
+    }
     const evidence = {
       base: state.evidence_bundle,
       dependencies: dependencies.map((row) => ({
         task_id: row.task_id,
         status: row.status,
-        result: parseOptionalJson(row.result_json, "attempt result_json"),
+        result: (() => {
+          const parsed = parseOptionalJson(row.result_json, "attempt result_json");
+          return isRecord(parsed) && isRecord(parsed.mode_result) ? parsed.mode_result : parsed;
+        })(),
       })),
       candidate,
+      candidates,
       provenance,
     };
+    const evidenceLimit = recipe(mode) === "ravf" ? RAVF_CONTEXT_BYTES : modeModels.MAX_EVIDENCE_BYTES;
     payload.assignment = {
       mode_id: mode.mode_id,
-      kind: mode.kind,
+      kind: recipe(mode),
+      engine_kind: mode.kind,
       phase: mode.phase,
       round: mode.current_round,
-      role: link.role,
+      role: semanticRole(mode, link.role),
+      runtime_role: link.role,
       candidate_fingerprint: link.candidate_fingerprint ?? null,
       proposer_task_id: link.proposer_task_id ?? null,
       profile_hint: parseOptionalJson(link.profile_hint_json, "mode profile_hint_json"),
       dependency_evidence_bundle: modeModels.boundedBundle(
         evidence,
-        modeModels.MAX_EVIDENCE_BYTES,
-        ["candidate", "dependencies", "provenance"],
+        evidenceLimit,
+        ["candidate", "candidates", "dependencies", "provenance"],
       ),
     };
   }

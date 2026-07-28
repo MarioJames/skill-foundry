@@ -1,7 +1,7 @@
 import { accessSync, constants as fsConstants, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
-import * as compatEnv from "../../compat_env.ts";
+import * as runtimeEnv from "../../runtime_env.ts";
 import { isRecord, RuntimeError, type RuntimeRecord, ValueError } from "../../runtime_types.ts";
 
 export const SDK_DISTRIBUTION = "@agentclientprotocol/sdk";
@@ -28,11 +28,11 @@ function executable(path: unknown): path is string {
   }
 }
 
-function environmentValue(suffix: string, environment: compatEnv.Environment): string | undefined {
-  return compatEnv.value(suffix, environment);
+function environmentValue(suffix: string, environment: runtimeEnv.Environment): string | undefined {
+  return runtimeEnv.value(suffix, environment);
 }
 
-export function managedRoot(environment: compatEnv.Environment = process.env): string {
+export function managedRoot(environment: runtimeEnv.Environment = process.env): string {
   const root = environmentValue("MANAGED_ROOT", environment);
   if (!root || !isAbsolute(root)) {
     throw new RuntimeError("managed TypeScript dependency cache is unavailable; run through scripts/bootstrap.ts");
@@ -40,7 +40,7 @@ export function managedRoot(environment: compatEnv.Environment = process.env): s
   return resolve(root);
 }
 
-export function dependencyHome(environment: compatEnv.Environment = process.env): string {
+export function dependencyHome(environment: runtimeEnv.Environment = process.env): string {
   const configured = environmentValue("DEPENDENCY_HOME", environment);
   if (configured) {
     if (!isAbsolute(configured)) throw new ValueError("dependency home must be an absolute path");
@@ -60,7 +60,7 @@ function packageMetadata(root: string, packageName: string): RuntimeRecord | nul
 }
 
 export function ensureSdkAvailable(
-  environment: compatEnv.Environment = process.env,
+  environment: runtimeEnv.Environment = process.env,
 ): RuntimeRecord {
   const root = managedRoot(environment);
   const metadata = packageMetadata(root, SDK_DISTRIBUTION);
@@ -197,7 +197,7 @@ export function resolveProfile(
   return profile;
 }
 
-function managedCommand(profile: RuntimeRecord, environment: compatEnv.Environment): string | null {
+function managedCommand(profile: RuntimeRecord, environment: runtimeEnv.Environment): string | null {
   if (profile.command_override || profile.agent === "custom") return null;
   const name = profile.command;
   if (typeof name !== "string" || !name) return null;
@@ -206,7 +206,7 @@ function managedCommand(profile: RuntimeRecord, environment: compatEnv.Environme
 
 export function freezeProfile(
   profile: AgentProfile,
-  environment: compatEnv.Environment = process.env,
+  environment: runtimeEnv.Environment = process.env,
 ): AgentProfile {
   const frozen: AgentProfile = {
     ...profile,
@@ -234,7 +234,7 @@ export function freezeProfile(
 
 export function installProfile(
   profile: AgentProfile,
-  environment: compatEnv.Environment = process.env,
+  environment: runtimeEnv.Environment = process.env,
 ): AgentProfile {
   if (profile.agent === "custom" || profile.command_override) return profile;
   ensureSdkAvailable(environment);
@@ -267,7 +267,7 @@ export function installProfile(
 }
 
 export function installDefaultProfiles(
-  environment: compatEnv.Environment = process.env,
+  environment: runtimeEnv.Environment = process.env,
 ): Record<string, AgentProfile> {
   return Object.fromEntries(
     DEFAULT_INSTALL_PROFILES.map((name) => [name, installProfile(resolveProfile(name), environment)]),
@@ -276,7 +276,7 @@ export function installDefaultProfiles(
 
 export function ensureAvailable(
   profile: RuntimeRecord,
-  environment: compatEnv.Environment = process.env,
+  environment: runtimeEnv.Environment = process.env,
 ): string {
   const command = profile.resolved_command ?? profile.command;
   if (executable(command)) return command;
@@ -296,7 +296,7 @@ export function ensureAvailable(
 
 export function preflight(
   profile: RuntimeRecord,
-  environment: compatEnv.Environment = process.env,
+  environment: runtimeEnv.Environment = process.env,
 ): RuntimeRecord {
   const report: RuntimeRecord = {
     backend: "acp",

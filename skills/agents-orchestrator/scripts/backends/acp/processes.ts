@@ -49,7 +49,7 @@ export function processGroupAlive(pgid: unknown): boolean {
 export function processHasNonce(pid: unknown, expectedNonce: unknown): boolean {
   const value = integer(pid);
   if (!value || !pidAlive(value) || typeof expectedNonce !== "string" || !expectedNonce) return false;
-  const needle = `AGENT_SWARM_EXECUTION_NONCE=${expectedNonce}`;
+  const needle = `AGENTS_ORCHESTRATOR_EXECUTION_NONCE=${expectedNonce}`;
   try { return readFileSync(`/proc/${value}/environ`).toString().split("\0").includes(needle); } catch { /* macOS */ }
   const result = Bun.spawnSync({ cmd: ["ps", "eww", "-p", String(value), "-o", "command="], stdout: "pipe", stderr: "ignore", timeout: 1000 });
   return result.exitCode === 0 && result.stdout.toString().split(/\s/u).includes(needle);

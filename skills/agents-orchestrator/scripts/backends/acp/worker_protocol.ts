@@ -34,11 +34,11 @@ export function endpointPath(runtimeRoot: string, rootId: string, launchId: numb
   }
   if (byteLength(candidate) > UNIX_SOCKET_PATH_LIMIT) {
     const uid = typeof process.getuid === "function" ? process.getuid() : "unknown";
-    directory = join("/tmp", `.agent-swarm-control-${uid}`);
+    directory = join("/tmp", `.agents-orchestrator-control-${uid}`);
     candidate = join(directory, `${digest(`${root}|${rootId}|${Math.trunc(launchId)}`, 24)}.sock`);
   }
   if (byteLength(candidate) > UNIX_SOCKET_PATH_LIMIT) {
-    throw new RuntimeError("AGENT_SWARM_HOME is too long for a secure Unix control socket path");
+    throw new RuntimeError("AGENTS_ORCHESTRATOR_HOME is too long for a secure Unix control socket path");
   }
   ensurePrivateDirectory(directory);
   return candidate;

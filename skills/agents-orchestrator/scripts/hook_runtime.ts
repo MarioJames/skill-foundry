@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import * as compatEnv from "./compat_env.ts";
+import * as runtimeEnv from "./runtime_env.ts";
 import * as hookManager from "./hook_manager.ts";
 import * as stateStore from "./state_store.ts";
 import { RuntimeError, ValueError, type RuntimeRecord } from "./runtime_types.ts";
@@ -73,22 +73,22 @@ export function inspectCurrent(rootId: string, taskId: number, actorToken: strin
 }
 
 function identity(): { rootId: string; taskId: number; attemptId: number; actorToken: string } {
-  // Validate configuration aliases at the same boundary as the four identity fields.
-  compatEnv.value("HOME");
-  compatEnv.value("SKILL_DIR");
-  const values = compatEnv.validateIdentity();
+  // Validate configuration at the same boundary as the four identity fields.
+  runtimeEnv.value("HOME");
+  runtimeEnv.value("SKILL_DIR");
+  const values = runtimeEnv.validateIdentity();
   const rootId = values.ROOT_ID;
   const actorToken = values.ACTOR_TOKEN;
   if (!rootId || !actorToken || !values.TASK_ID || !values.ATTEMPT_ID) throw new ValueError("missing orchestration identity");
   const taskId = Number(values.TASK_ID);
   const attemptId = Number(values.ATTEMPT_ID);
   if (!Number.isSafeInteger(taskId) || !Number.isSafeInteger(attemptId)) throw new ValueError("orchestration task and attempt IDs must be integers");
-  Object.assign(process.env, compatEnv.exportBoth({ ROOT_ID: rootId, TASK_ID: taskId, ATTEMPT_ID: attemptId, ACTOR_TOKEN: actorToken }));
+  Object.assign(process.env, runtimeEnv.exportEnvironment({ ROOT_ID: rootId, TASK_ID: taskId, ATTEMPT_ID: attemptId, ACTOR_TOKEN: actorToken }));
   return { rootId, taskId, attemptId, actorToken };
 }
 
 function optionalIdentity(): ReturnType<typeof identity> | null {
-  const values = compatEnv.validateIdentity();
+  const values = runtimeEnv.validateIdentity();
   if (!values.ROOT_ID && !values.TASK_ID && !values.ATTEMPT_ID && !values.ACTOR_TOKEN) return null;
   return identity();
 }

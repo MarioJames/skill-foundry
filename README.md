@@ -17,13 +17,15 @@
 
 ## The Skills
 
-### `agents-orchestrator` — task-tree orchestration for multi-agent runs
+### `agents-orchestrator` — Agents orchestration patterns and routing
 
-Canonical successor to `agent-swarm` and `ultra-team`. Coordinates one foreground Root and background child Agents through one TypeScript/Bun Runtime: an explicit Task tree, append-only Attempt/Launch history, durable SQLite facts, idempotent Effects, bounded loops, consensus review, and recovery that must use `recover` (never silently fall back to `init`). Codex ACP is the default Backend/profile; Claude CLI remains available through explicit `--backend claude_cli`. ACP v1 stores real Agent-issued Session IDs, fences detached Workers and Launches, negotiates advertised model/permission options, and can load Agent-owned history without persisting dialogue locally. A dependency-free bootstrap installs the exact locked SDK plus Codex and Claude Code ACP Agents into `$HOME/.agents-orchestrator/dependencies`; Claude is prepared but never selected automatically, and the repository contains no dependency directory or generated Runtime bundle.
+`agents-orchestrator` is an aggregation and routing layer for reusable Agents orchestration patterns, not one specific tree topology. It selects and composes parallel Swarm, develop-review-improve, verification-fix, RAVF (Review-Argue-Vote-Fix), and read-only multi-session review. One TypeScript/Bun Runtime gives every recipe append-only Attempt/Launch history, durable SQLite facts, idempotent Effects, bounded loops, and recovery that must use `recover` (never silently fall back to `init`). Tasks and dependencies may form a tree or graph internally; that representation is an execution detail rather than the definition of Orchestrator.
 
-The skill is dormant by default. It activates only on an explicit orchestration request such as `agents-orchestrator`, `swarm mode`, `loop mode`, `multi-agent review`, or on a Runtime-injected `[ORCHESTRATION IDENTITY]` block. Ordinary reviews, paths, links, and quoted examples do not trigger it. `agent-swarm` remains a thin explicit-only alias that defaults to swarm mode and delegates to the same canonical Runtime; it contains no Runtime copy.
+Explicit requests start the selected recipe. During ordinary work the skill may recommend — but never auto-start — a recipe only when it sees a concrete signal: multiple substantial independent workstreams, repeated failing unit/browser validation, or a high-risk change that warrants independent adjudication. Complexity alone, ordinary reviews, paths, links, and quoted examples are outside that boundary.
 
-**Reach for it when** large work needs delegated children, durable tracking, review loops, and safe resume.
+Codex ACP is the default Backend/profile; Claude CLI remains available through explicit `--backend claude_cli`. ACP stores real Agent-issued Session IDs, fences detached Workers and Launches, negotiates advertised model/permission options, and can load Agent-owned history without persisting dialogue locally. A dependency-free bootstrap installs the exact locked SDK plus Codex and Claude Code ACP Agents into `$HOME/.agents-orchestrator/dependencies`; Claude is prepared but never selected automatically, and the repository contains no dependency directory or generated Runtime bundle.
+
+**Reach for it when** work benefits from explicit Agents coordination, durable convergence loops, independent adjudication, or safe resume.
 
 ### `asset-validation` — evidence-backed acceptance for agent assets
 
@@ -74,14 +76,6 @@ bunx skills add MarioJames/skill-foundry --all -a claude-code   # or: -a codex
 bunx skills add MarioJames/skill-foundry --all -g
 ```
 
-Existing `agent-swarm` prompts need both packages. Install the canonical skill first, then the
-optional alias:
-
-```bash
-bunx skills add MarioJames/skill-foundry --skill agents-orchestrator
-bunx skills add MarioJames/skill-foundry --skill agent-swarm
-```
-
 Restart or reload the target agent runtime after installation so it can discover the skills.
 
 The first Runtime launch requires Bun and network access. It installs the exact `bun.lock` graph
@@ -106,8 +100,6 @@ cd skill-foundry
 mkdir -p ~/.codex/skills
 cp -R skills/agents-orchestrator skills/asset-validation skills/browser-harness \
   skills/awesome-presentation skills/workspace-knowledge-graph ~/.codex/skills/
-# Optional compatibility alias; it requires the canonical directory above.
-cp -R skills/agent-swarm ~/.codex/skills/
 ```
 
 Claude-style runtimes:
@@ -118,8 +110,6 @@ cd skill-foundry
 mkdir -p ~/.claude/skills
 cp -R skills/agents-orchestrator skills/asset-validation skills/browser-harness \
   skills/awesome-presentation skills/workspace-knowledge-graph ~/.claude/skills/
-# Optional compatibility alias; it requires the canonical directory above.
-cp -R skills/agent-swarm ~/.claude/skills/
 ```
 
 Verify the installation:
@@ -139,11 +129,10 @@ test -f ~/.codex/skills/workspace-knowledge-graph/SKILL.md
 ```bash
 cd skill-foundry
 git pull
-rm -rf ~/.codex/skills/agents-orchestrator ~/.codex/skills/agent-swarm \
-  ~/.codex/skills/asset-validation \
+rm -rf ~/.codex/skills/agents-orchestrator ~/.codex/skills/asset-validation \
   ~/.codex/skills/browser-harness ~/.codex/skills/awesome-presentation \
   ~/.codex/skills/workspace-knowledge-graph
-cp -R skills/agents-orchestrator skills/agent-swarm skills/asset-validation skills/browser-harness \
+cp -R skills/agents-orchestrator skills/asset-validation skills/browser-harness \
   skills/awesome-presentation skills/workspace-knowledge-graph ~/.codex/skills/
 ```
 
@@ -151,28 +140,34 @@ cp -R skills/agents-orchestrator skills/agent-swarm skills/asset-validation skil
 
 After installation, invoke the installed skills through normal agent requests.
 
-Orchestrate a large task tree:
+Orchestrate substantial parallel work:
 
 ```text
 Use agents-orchestrator in swarm mode to coordinate implementation, validation, and final review.
 ```
 
-Run a bounded improvement loop:
+Route a generic bounded loop from the current work state:
 
 ```text
 Use agents-orchestrator in loop mode, at most 3 iterations, and stop when the acceptance tests pass.
+```
+
+Converge failing unit and browser validation:
+
+```text
+Use agents-orchestrator in verification-fix mode. Re-run tests, diagnose failures independently, fix them, and repeat until a clean pass.
+```
+
+Run ROI-aware review convergence:
+
+```text
+Use agents-orchestrator in RAVF mode: five Reviewers may contribute up to 25 original findings; a fixed five-Agent Argue pool challenges the complete Review; a fixed five-Agent low-cost Vote pool votes on every original issue; then the main Agent integrates original, revised, and rejected decisions before one coordinated fix and repeats to a clean Review.
 ```
 
 Review a plan through independent consensus:
 
 ```text
 Use agents-orchestrator for a multi-Agent plan review with 3 independent reviewers and a consensus result.
-```
-
-Use the compatibility spelling:
-
-```text
-Run this with agent-swarm.
 ```
 
 Validate an asset:
@@ -199,9 +194,9 @@ Bootstrap or refresh a multi-repo knowledge graph:
 Use workspace-knowledge-graph to scan this workspace, build the knowledge graph, and refresh AGENTS.md.
 ```
 
-Each skill defines its own activation rules in `SKILL.md`. In particular, `agents-orchestrator` and
-its `agent-swarm` alias are explicit-only; quoted names, file paths, links, and ordinary reviews do
-not activate orchestration.
+Each skill defines its own activation rules in `SKILL.md`. `agents-orchestrator` starts only after
+explicit authorization; an implicit high-signal match may produce one recommendation but cannot
+initialize a Run. Quoted names, file paths, links, and ordinary reviews do not activate it.
 
 ## Repository Layout
 
@@ -216,10 +211,6 @@ skill-foundry/
 │   │   ├── assets/
 │   │   ├── hooks/
 │   │   ├── references/
-│   │   └── scripts/
-│   ├── agent-swarm/           # thin legacy alias; no Runtime copy
-│   │   ├── SKILL.md
-│   │   ├── agents/
 │   │   └── scripts/
 │   ├── asset-validation/
 │   │   ├── SKILL.md
@@ -247,7 +238,6 @@ skill-foundry/
 Installable skill packages:
 
 - `skills/agents-orchestrator/`
-- `skills/agent-swarm/` (optional compatibility alias; requires `agents-orchestrator`)
 - `skills/asset-validation/`
 - `skills/browser-harness/`
 - `skills/awesome-presentation/`
@@ -263,7 +253,6 @@ find skills -name SKILL.md -print
 
 ```bash
 cd skills/agents-orchestrator
-bun test --max-concurrency 1
 bun run typecheck
 ```
 

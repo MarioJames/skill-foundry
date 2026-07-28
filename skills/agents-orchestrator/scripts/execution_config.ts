@@ -1,7 +1,7 @@
 import { accessSync, constants as fsConstants, statSync } from "node:fs";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 
-import * as compatEnv from "./compat_env.ts";
+import * as runtimeEnv from "./runtime_env.ts";
 import { isRecord, type RuntimeRecord, ValueError } from "./runtime_types.ts";
 import * as registry from "./backends/acp/registry.ts";
 
@@ -10,15 +10,13 @@ export const PERMISSION_POLICIES = new Set(["allow_in_workspace", "allow_all", "
 export const DEFAULT_BACKEND = "acp";
 export const DEFAULT_PROFILE = "codex";
 
-compatEnv.promoteCanonicalEnvironment();
-
 function configured(
   explicit: string | undefined,
-  environment: compatEnv.Environment,
+  environment: runtimeEnv.Environment,
   suffix: string,
   fallback?: string,
 ): string | undefined {
-  return explicit ?? compatEnv.value(suffix, environment, fallback);
+  return explicit ?? runtimeEnv.value(suffix, environment, fallback);
 }
 
 function executable(path: string): boolean {
@@ -29,7 +27,7 @@ function executable(path: string): boolean {
   }
 }
 
-function claudeCommand(environment: compatEnv.Environment): string {
+function claudeCommand(environment: runtimeEnv.Environment): string {
   const override = configured(undefined, environment, "CLAUDE_BIN");
   if (override) return override;
   for (const entry of (environment.PATH ?? "").split(delimiter)) {
@@ -78,7 +76,7 @@ function parseProfileNames(value: unknown): string[] | null {
   return names;
 }
 
-function profileAllowlist(explicit: unknown, environment: compatEnv.Environment): string[] | null {
+function profileAllowlist(explicit: unknown, environment: runtimeEnv.Environment): string[] | null {
   if (explicit !== undefined && explicit !== null) return parseProfileNames(explicit);
   let raw: string | undefined;
   let selectedSuffix: string | undefined;
@@ -89,7 +87,7 @@ function profileAllowlist(explicit: unknown, environment: compatEnv.Environment)
     "PROFILES",
     "ALLOWED_PROFILES",
   ]) {
-    const candidate = compatEnv.value(suffix, environment);
+    const candidate = runtimeEnv.value(suffix, environment);
     if (candidate === undefined) continue;
     if (raw !== undefined && candidate !== raw) {
       throw new ValueError(`conflicting profile allowlist environment: ${selectedSuffix} and ${suffix}`);
@@ -100,10 +98,10 @@ function profileAllowlist(explicit: unknown, environment: compatEnv.Environment)
   return parseProfileNames(raw);
 }
 
-function defaultProfile(explicit: string | undefined, environment: compatEnv.Environment): string | undefined {
+function defaultProfile(explicit: string | undefined, environment: runtimeEnv.Environment): string | undefined {
   if (explicit !== undefined) return explicit;
-  const primary = compatEnv.value("ACP_DEFAULT_PROFILE", environment);
-  const alias = compatEnv.value("DEFAULT_PROFILE", environment);
+  const primary = runtimeEnv.value("ACP_DEFAULT_PROFILE", environment);
+  const alias = runtimeEnv.value("DEFAULT_PROFILE", environment);
   if (primary !== undefined && alias !== undefined && primary !== alias) {
     throw new ValueError("conflicting default profile environment: ACP_DEFAULT_PROFILE and DEFAULT_PROFILE");
   }
@@ -113,7 +111,7 @@ function defaultProfile(explicit: string | undefined, environment: compatEnv.Env
 function freezeAcpProfile(
   name: string,
   options: {
-    environment: compatEnv.Environment;
+    environment: runtimeEnv.Environment;
     command?: string;
     args?: string[];
     permission?: string;
@@ -154,7 +152,7 @@ function freezeAcpProfile(
   };
 }
 
-function legacyClaudeProfile(environment: compatEnv.Environment): RuntimeRecord {
+function legacyClaudeProfile(environment: runtimeEnv.Environment): RuntimeRecord {
   return {
     backend: "claude_cli",
     agent: "claude",
@@ -175,13 +173,13 @@ export interface ResolveRunExecutionOptions {
   allowedProfiles?: unknown;
   profiles?: unknown;
   defaultProfile?: string;
-  environment?: compatEnv.Environment;
+  environment?: runtimeEnv.Environment;
   installDependencies?: boolean;
 }
 
 export function resolveRunExecution(options: ResolveRunExecutionOptions = {}): RuntimeRecord {
   const environment = options.environment ?? process.env;
-  compatEnv.validateIdentity(environment);
+  runtimeEnv.validateIdentity(environment);
   const backend = configured(options.backend, environment, "BACKEND", DEFAULT_BACKEND)!;
   if (!BACKENDS.has(backend)) throw new ValueError("backend must be claude_cli or acp");
   const declaredArguments = [options.profileAllowlist, options.allowedProfiles, options.profiles].filter(
