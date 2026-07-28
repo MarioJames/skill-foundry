@@ -37,7 +37,9 @@ Read [routing.md](references/routing.md) before recommending or selecting a mode
   must come from a fresh validation or review phase.
 - In RAVF, keep every original Reviewer finding immutable. Argue may rebut or propose a revision
   but cannot create the source issue; Vote decides per original fingerprint, and the main Agent must
-  submit the final original/revised/rejected integration before one coordinated fix starts.
+  submit the final original/revised/rejected integration before one coordinated fix starts. Apply
+  the 25-candidate ceiling independently to each five-Reviewer round; new post-fix findings must
+  re-enter Argue -> Vote -> Fix rather than being counted against earlier rounds.
 
 ## Operate
 

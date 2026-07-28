@@ -928,20 +928,45 @@ function recordReviewFindings(
     const findings = modeResult(row).findings ?? [];
     if (!Array.isArray(findings)) throw new ValueError("mode_result.findings must be an array");
     for (const finding of findings) {
-      const count = Number(connection.execute(
-        "SELECT COUNT(*) AS n FROM mode_findings WHERE mode_id=?",
-        [mode.mode_id],
-      ).fetchone()?.n ?? 0);
+      const normalized = modeModels.validateFinding(finding);
+      const ravf = recipe(mode) === "ravf";
+      const roundId = Number(row.round_id);
+      if (ravf && !Number.isSafeInteger(roundId)) {
+        throw new ValueError("RAVF Reviewer task is missing its round identity");
+      }
+      const alreadyInRound = ravf && connection.execute(
+        `SELECT 1
+           FROM mode_findings f
+           JOIN mode_finding_provenance p ON p.finding_id=f.finding_id
+           JOIN mode_tasks mt ON mt.task_id=p.task_id
+          WHERE f.mode_id=? AND f.fingerprint=? AND mt.round_id=?
+          LIMIT 1`,
+        [mode.mode_id, normalized.fingerprint, roundId],
+      ).fetchone() !== null;
+      const count = ravf
+        ? currentCandidateRows(connection, mode, roundId).length
+        : Number(connection.execute(
+          "SELECT COUNT(*) AS n FROM mode_findings WHERE mode_id=?",
+          [mode.mode_id],
+        ).fetchone()?.n ?? 0);
+      if (ravf && !alreadyInRound && count >= Number(config.max_candidates)) {
+        overflow.push({
+          fingerprint: normalized.fingerprint,
+          severity: normalized.severity,
+          task_id: row.task_id,
+          evidence_hash: modeModels.digest(normalized.evidence),
+        });
+        continue;
+      }
       const [fingerprint] = recordFinding(
         connection,
         mode,
         Number(row.task_id),
-        finding,
+        normalized,
         "reviewer",
-        count < Number(config.max_candidates),
+        ravf || count < Number(config.max_candidates),
       );
       if (fingerprint === null) {
-        const normalized = modeModels.validateFinding(finding);
         overflow.push({
           fingerprint: normalized.fingerprint,
           severity: normalized.severity,
@@ -1558,8 +1583,11 @@ function ravfDecisionDossier(
     const preliminary = acceptVotes >= majority ? "accepted" : rejectVotes >= majority ? "rejected" : "unresolved";
     const provenance = stateStore.fetchall(
       `SELECT p.task_id, p.source_kind, p.raw_finding_json, p.evidence_hash
-         FROM mode_finding_provenance p WHERE p.finding_id=? ORDER BY p.provenance_id`,
-      [finding.finding_id],
+         FROM mode_finding_provenance p
+         JOIN mode_tasks mt ON mt.task_id=p.task_id
+        WHERE p.finding_id=? AND p.source_kind='reviewer' AND mt.round_id=?
+        ORDER BY p.provenance_id`,
+      [finding.finding_id, round.round_id],
       connection,
     ).map((item) => ({
       task_id: item.task_id,
@@ -2240,8 +2268,11 @@ export function promptContext(connection: stateStore.Connection, taskId: number)
         }
         const reviewerProvenance = stateStore.fetchall(
           `SELECT p.task_id, p.source_kind, p.raw_finding_json, p.evidence_hash
-             FROM mode_finding_provenance p WHERE p.finding_id=? ORDER BY p.provenance_id`,
-          [finding.finding_id],
+             FROM mode_finding_provenance p
+             JOIN mode_tasks mt ON mt.task_id=p.task_id
+            WHERE p.finding_id=? AND p.source_kind='reviewer' AND mt.round_id=?
+            ORDER BY p.provenance_id`,
+          [finding.finding_id, link.round_id],
           connection,
         ).map((item) => ({
           task_id: item.task_id,

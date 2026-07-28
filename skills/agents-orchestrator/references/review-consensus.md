@@ -96,7 +96,8 @@ New candidates are expanded only within the configured bounds.
 cost-sensitive adjudication. It has these hard boundaries:
 
 - Exactly five independent Reviewers, with at most five material findings each.
-- The merged Review candidate set is capped at 25 original findings.
+- Each merged Review-round candidate set is capped at 25 original findings. The cap resets for the
+  next fresh Review and does not consume a lifetime Mode-wide allowance.
 - `argue` and `vote` each use one fixed odd pool of 3, 5, or 7 Agents, defaulting to 5. Pool size is
   independent of finding count, so 25 findings still compile only five Arguer Tasks and five Voter
   Tasks.
@@ -118,8 +119,14 @@ may challenge or propose a correction, but it cannot add a finding or replace it
 | Vote | `reject` / `abstain` | Reject the Reviewer finding or withhold a vote. |
 | Main integration | `accept_original` / `accept_revised` / `reject` | Produce the final adopted set under the voter-majority constraints. |
 
+After the coordinated Fix, a fresh five-Reviewer round starts. If it finds new or recurring issues,
+those findings become that round's immutable Reviewer candidates and traverse a new Argue, Vote,
+main-integration, and Fix cycle. Only a clean fresh Review passes; hitting a declared guard is an
+explicit non-pass outcome.
+
 Every Arguer receives the complete normalized Review result and all Reviewer provenance, then
-covers every candidate exactly once:
+covers every candidate exactly once. That decision input is scoped to the current Review round;
+prior-round provenance remains in the audit history but cannot bleed into a new round's adjudication:
 
 ```json
 {

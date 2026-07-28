@@ -237,11 +237,13 @@ cancelled；否则保持 stopping 并返回 open Launch IDs。
   unresolved；未解决的 high/critical finding 会阻止 mode 成功。
 - `verification_fix` 以 validate → diagnose → fix 迭代；单元或浏览器验证失败后先由只读 Agent
   定位，再定向修复，并要求下一轮干净验证才能完成。
-- `ravf` 仅用于 ACP：固定五个 Reviewer、每个最多五个 finding，合并后的原始问题上限为 25；
+- `ravf` 仅用于 ACP：固定五个 Reviewer、每个最多五个 finding，每轮合并后的原始问题上限为 25，
+  新一轮 Review 独立重置该上限而不是累计消耗 Mode 级额度；
   Argue/Vote 各使用一次固定奇数 Agent 池（3/5/7，默认 5），不随问题数相乘。Argue 只能驳倒或
   提议订正 Reviewer 原问题，不能创建修复来源；`fast` Voter 逐问题投票后，主 Agent 必须在多数票
   约束下整合为采纳原文、采纳订正版或拒绝。订正版保留原 Reviewer 指纹和溯源，只启动一次集中
-  修复，随后必须进入全新五 Reviewer 轮次。
+  修复，随后必须进入全新五 Reviewer 轮次；若发现新问题，则重新执行完整 Argue/Vote/主 Agent
+  整合/Fix 循环，直到干净 Review 或显式预算门禁终止。
 
 ## 7. 首次启动依赖安装
 

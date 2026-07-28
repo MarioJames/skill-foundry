@@ -143,11 +143,12 @@ than the development loop:
 ```
 
 For ROI-aware review convergence, select ACP-only `ravf`. It fixes the Reviewer pool at five,
-limits each Reviewer to five findings, caps the merged candidate set at 25, and optionally accepts
-odd `arguers` / `voters` pools of 3, 5, or 7 (default 5); `vote_quorum` must equal the Voter-pool
-size. After voting,
+limits each Reviewer to five findings, caps each Review round's merged candidate set at 25, and
+optionally accepts odd `arguers` / `voters` pools of 3, 5, or 7 (default 5); `vote_quorum` must equal
+the Voter-pool size. After voting,
 `advance_mode` returns `integration_required`; call it again with `ravf_integration.decisions` from
-the main Agent. Read `review-consensus.md` before composing either Action.
+the main Agent. A post-fix Review with findings starts another full RAVF cycle; the 25-candidate
+budget resets for that round. Read `review-consensus.md` before composing either Action.
 
 ## Finish
 

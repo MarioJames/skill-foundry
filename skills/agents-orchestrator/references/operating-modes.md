@@ -100,15 +100,17 @@ fair value judgment. RAVF is ACP-only:
 printf '%s' '{"mode":"ravf","objective":"Converge the reusable skill without low-value code growth","config":{"max_rounds":3,"max_candidates":25,"max_tasks":120,"max_seconds":5400},"evidence":{"change":"<bounded change evidence>"}}' | bun <skill_dir>/scripts/bootstrap.ts action --type start_mode --stdin
 ```
 
-RAVF always uses five Reviewers with at most five findings each, so the merged original-Review set
-has a hard 25-candidate ceiling. `argue` and `vote` use fixed odd pools of 3, 5, or 7 Agents and
+RAVF always uses five Reviewers with at most five findings each, so each round's merged
+original-Review set has a hard 25-candidate ceiling. The ceiling resets for every fresh Review; it
+is not a lifetime cap across the Mode. `argue` and `vote` use fixed odd pools of 3, 5, or 7 Agents and
 default to 5, independent of candidate count. Every Arguer challenges the complete Review result
 without creating findings. Every `fast` Voter independently chooses `accept_original`,
 `accept_revised`, `reject`, or `abstain` per original issue after seeing its Reviewer and all Arguer
 evidence. After a strict majority, the Runtime requires the main Agent to integrate every decision;
 an Argue-informed revision keeps the original Reviewer fingerprint and provenance. One coordinated
-fixer receives exactly the adopted set. Any fix starts a fresh Review round; completion requires a
-clean Review after the latest fix. See
+fixer receives exactly the adopted set. Any fix starts a fresh Review round; findings from that
+round enter another complete Argue -> Vote -> Fix cycle. Completion requires a clean Review after
+the latest fix, while round/task/time/no-progress guards provide explicit non-pass exits. See
 [review-consensus.md](review-consensus.md#ravf-convergence) for result contracts.
 
 ## Composition

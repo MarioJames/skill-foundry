@@ -161,7 +161,7 @@ Use agents-orchestrator in verification-fix mode. Re-run tests, diagnose failure
 Run ROI-aware review convergence:
 
 ```text
-Use agents-orchestrator in RAVF mode: five Reviewers may contribute up to 25 original findings; a fixed five-Agent Argue pool challenges the complete Review; a fixed five-Agent low-cost Vote pool votes on every original issue; then the main Agent integrates original, revised, and rejected decisions before one coordinated fix and repeats to a clean Review.
+Use agents-orchestrator in RAVF mode: in each Review round, five Reviewers may contribute up to 25 original findings; a fixed five-Agent Argue pool challenges that round's complete Review; a fixed five-Agent low-cost Vote pool votes on every original issue; then the main Agent integrates original, revised, and rejected decisions before one coordinated fix. Any new post-fix findings enter another complete Argue → Vote → Fix round until a fresh Review is clean or a declared guard is reached.
 ```
 
 Review a plan through independent consensus:
