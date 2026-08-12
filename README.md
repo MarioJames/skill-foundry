@@ -41,6 +41,14 @@ Frontend acceptance helper around [vercel-labs/agent-browser](https://github.com
 
 **Reach for it when** doing smoke checks, journey prep with `APP_URL`, interactive browser exploration, or reusable headed login profiles.
 
+### `herdr` — proactive multi-pane routing for Herdr
+
+`herdr` shortens the critical path by routing independent work to the right pane, tab, or workspace instead of serializing everything in the caller. It classifies each lane as `oneshot`, `service`, or `coding-agent`; matches target directories using cwd and Git roots; verifies every created resource; and returns an explicit cleanup contract.
+
+The bundled Bun/TypeScript router can split the caller tab, create a tab in an existing directory-matched workspace, or create a new workspace when no safe match exists. It preserves focus and rolls back newly created resources when verification fails.
+
+**Reach for it when** running inside Herdr (`HERDR_ENV=1`) and independent commands, services, checks, or coding-agent deliverables can overlap safely.
+
 ### `awesome-presentation` — content-first React slide decks
 
 Turns a presentation idea into a runnable React deck. The hard gate is content discovery first: grilling, outline approval, then scaffold / pages / build. Uses the open-source [awesome-presentation](https://github.com/MarioJames/awesome-presentation) scaffold (layouts, components, deck rules, offline single-file build).
@@ -68,6 +76,7 @@ bunx skills add MarioJames/skill-foundry --all
 bunx skills add MarioJames/skill-foundry --skill agents-orchestrator
 bunx skills add MarioJames/skill-foundry --skill asset-validation
 bunx skills add MarioJames/skill-foundry --skill browser-harness
+bunx skills add MarioJames/skill-foundry --skill herdr
 bunx skills add MarioJames/skill-foundry --skill awesome-presentation
 bunx skills add MarioJames/skill-foundry --skill workspace-knowledge-graph
 
@@ -77,6 +86,10 @@ bunx skills add MarioJames/skill-foundry --all -g
 ```
 
 Restart or reload the target agent runtime after installation so it can discover the skills.
+
+`herdr` requires Bun and an installed Herdr CLI. Its control interface is available only inside a
+Herdr session where `HERDR_ENV=1`; outside Herdr the skill does not attempt pane or workspace
+mutation.
 
 The first Runtime launch requires Bun and network access. It installs the exact `bun.lock` graph
 into `$HOME/.agents-orchestrator/dependencies` (override with
@@ -99,7 +112,7 @@ git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
 mkdir -p ~/.codex/skills
 cp -R skills/agents-orchestrator skills/asset-validation skills/browser-harness \
-  skills/awesome-presentation skills/workspace-knowledge-graph ~/.codex/skills/
+  skills/herdr skills/awesome-presentation skills/workspace-knowledge-graph ~/.codex/skills/
 ```
 
 Claude-style runtimes:
@@ -109,7 +122,7 @@ git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
 mkdir -p ~/.claude/skills
 cp -R skills/agents-orchestrator skills/asset-validation skills/browser-harness \
-  skills/awesome-presentation skills/workspace-knowledge-graph ~/.claude/skills/
+  skills/herdr skills/awesome-presentation skills/workspace-knowledge-graph ~/.claude/skills/
 ```
 
 Verify the installation:
@@ -120,6 +133,7 @@ test -f ~/.codex/skills/agents-orchestrator/scripts/bootstrap.ts
 test -f ~/.codex/skills/agents-orchestrator/bun.lock
 test -f ~/.codex/skills/asset-validation/SKILL.md
 test -f ~/.codex/skills/browser-harness/SKILL.md
+test -x ~/.codex/skills/herdr/scripts/route-lane.ts
 test -f ~/.codex/skills/awesome-presentation/SKILL.md
 test -f ~/.codex/skills/workspace-knowledge-graph/SKILL.md
 ```
@@ -130,10 +144,10 @@ test -f ~/.codex/skills/workspace-knowledge-graph/SKILL.md
 cd skill-foundry
 git pull
 rm -rf ~/.codex/skills/agents-orchestrator ~/.codex/skills/asset-validation \
-  ~/.codex/skills/browser-harness ~/.codex/skills/awesome-presentation \
+  ~/.codex/skills/browser-harness ~/.codex/skills/herdr ~/.codex/skills/awesome-presentation \
   ~/.codex/skills/workspace-knowledge-graph
 cp -R skills/agents-orchestrator skills/asset-validation skills/browser-harness \
-  skills/awesome-presentation skills/workspace-knowledge-graph ~/.codex/skills/
+  skills/herdr skills/awesome-presentation skills/workspace-knowledge-graph ~/.codex/skills/
 ```
 
 ## Usage
@@ -182,6 +196,12 @@ Browser acceptance:
 Use browser-harness to prepare the app, open it, and collect screenshot + console + network evidence.
 ```
 
+Route independent work across Herdr panes and workspaces:
+
+```text
+Use herdr to run independent checks in parallel, route different cwd targets to their matching workspaces, and clean up oneshot panes after collecting results.
+```
+
 Build a presentation:
 
 ```text
@@ -197,6 +217,8 @@ Use workspace-knowledge-graph to scan this workspace, build the knowledge graph,
 Each skill defines its own activation rules in `SKILL.md`. `agents-orchestrator` starts only after
 explicit authorization; an implicit high-signal match may produce one recommendation but cannot
 initialize a Run. Quoted names, file paths, links, and ordinary reviews do not activate it.
+`herdr` may activate implicitly only when `HERDR_ENV=1` and a concrete independent lane can shorten
+the critical path.
 
 ## Repository Layout
 
@@ -220,6 +242,10 @@ skill-foundry/
 │   ├── browser-harness/
 │   │   ├── SKILL.md
 │   │   └── scripts/
+│   ├── herdr/
+│   │   ├── SKILL.md
+│   │   ├── agents/
+│   │   └── scripts/
 │   ├── awesome-presentation/
 │   │   ├── SKILL.md
 │   │   ├── agents/
@@ -240,6 +266,7 @@ Installable skill packages:
 - `skills/agents-orchestrator/`
 - `skills/asset-validation/`
 - `skills/browser-harness/`
+- `skills/herdr/`
 - `skills/awesome-presentation/`
 - `skills/workspace-knowledge-graph/`
 
@@ -254,6 +281,11 @@ find skills -name SKILL.md -print
 ```bash
 cd skills/agents-orchestrator
 bun run typecheck
+```
+
+```bash
+skills/herdr/scripts/route-lane.ts --help
+skills/herdr/scripts/probe-workspace.ts --help
 ```
 
 ```bash

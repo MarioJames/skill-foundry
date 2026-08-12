@@ -1,0 +1,7 @@
+interface:
+  display_name: "Herdr"
+  short_description: "Route independent work across Herdr panes and workspaces"
+  default_prompt: "Use $herdr to route independent work into the right Herdr pane, tab, or workspace and clean it up by lifecycle."
+
+policy:
+  allow_implicit_invocation: true
