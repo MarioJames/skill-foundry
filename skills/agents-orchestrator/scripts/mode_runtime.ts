@@ -61,10 +61,11 @@ function taskConstraints(
 }
 
 function outputContract(role: string): string {
+  const lifecycleContract = 'If the assigned phase ran and produced a valid role result, normal finish.status MUST be "done"; domain-negative outcomes belong in mode_result. Use normal finish.status "failed" only when the phase itself could not be completed. ';
   const contracts: Record<string, string> = {
     swarm: 'Complete the assigned task and finish with mode_result {"status":"done|partial","evidence":[...]} as well as normal finish fields.',
     developer: 'Develop the requested round and finish with mode_result {"summary":"...","state":{...},"evidence":[...]} as well as normal finish fields.',
-    validator: 'Run deterministic validation without modifying files. Finish with mode_result {"stage":"validation|revalidation","status":"passed|failed|blocked","artifact_version":"...","commands":[...],"evidence":[...]} and the normal structured review object with "source":"self".',
+    validator: 'Run deterministic validation without modifying files. A completed test command that reports failing tests still uses normal finish.status "done" and mode_result.status "failed"; the failed test outcome is evidence, not a failed Runtime Task. Finish with mode_result {"stage":"validation|revalidation","status":"passed|failed|blocked","artifact_version":"...","commands":[...],"evidence":[...]} and the normal structured review object with "source":"self".',
     reviewer: 'Independently review the supplied bounded evidence. Finish with mode_result containing "findings":[{"title","description","claim","severity","location","rule","evidence","impact","confidence"}]. For develop_review_improve also include "verdict":"pass|changes_requested|blocked". The normal finish review object uses "source":"self".',
     verifier_reproduce: 'Reproduce the assigned candidate independently. Finish with mode_result containing "candidate_fingerprint", "verdict":"confirmed|rejected|unresolved", non-empty "evidence", optional "discovered_findings", and the normal structured review object with "source":"self".',
     verifier_falsify: 'Try to falsify the assigned candidate independently. Report the candidate truth, not whether the falsification attempt itself ran: finish with mode_result containing "candidate_fingerprint", "verdict":"confirmed|rejected|unresolved", non-empty "evidence", optional "discovered_findings", and the normal structured review object with "source":"self".',
@@ -76,7 +77,7 @@ function outputContract(role: string): string {
   };
   const contract = contracts[role];
   if (!contract) throw new ValueError(`unsupported mode task role: ${role}`);
-  return contract;
+  return `${lifecycleContract}${contract}`;
 }
 
 function currentRound(connection: stateStore.Connection, mode: RuntimeRecord): RuntimeRecord {

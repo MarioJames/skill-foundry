@@ -1,5 +1,7 @@
 # 输出契约
 
+本文中的 `bootstrap`、`scan`、`init`、`validate` 都指向 Bun CLI：`bun "$SKILL_DIR/scripts/workspace_graph.ts" <command> --workspace "$WORKSPACE_ROOT"`；`SKILL_DIR` 与 `WORKSPACE_ROOT` 的取值规则见技能主文档。
+
 `bootstrap` 之后，工作区至少包含：
 
 ```text

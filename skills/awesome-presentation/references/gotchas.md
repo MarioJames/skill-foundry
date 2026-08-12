@@ -98,5 +98,5 @@
     项目内 `presentation-layouts` / `presentation-components`：完整选型目录（实现阶段）。
     init 后不读项目内技能就写页，容易选错 recipe/组件。
 
-28. **与 inspecs / browser-harness 的关系**
-    保险迭代工作流插件不是做 slide 的必选项。browser-harness 可选用于额外浏览器证据，不能替代项目 visual runner。
+28. **与 browser-harness 的关系**
+    browser-harness 可选用于额外浏览器证据，不能替代项目 visual runner。

@@ -11,14 +11,19 @@ export const ROOT_FIELD = "agents_orchestrator_root_id";
 export const WORKTREE_SETTINGS_PATH = ".claude/settings.local.json";
 export const WORKTREE_INCLUDE_FILE = ".worktreeinclude";
 export const HOOK_BINDINGS: ReadonlyArray<readonly [string, string]> = [
-  ["SessionStart", "heartbeat.sh"], ["PostToolUse", "heartbeat.sh"],
-  ["PostToolUseFailure", "failure_context.sh"], ["Stop", "finish_gate.sh"], ["SessionEnd", "clean.sh"],
+  ["SessionStart", "heartbeat.ts"], ["PostToolUse", "heartbeat.ts"],
+  ["PostToolUseFailure", "failure_context.ts"], ["Stop", "finish_gate.ts"], ["SessionEnd", "clean.ts"],
 ];
+const LEGACY_HOOK_NAMES = ["heartbeat.sh", "failure_context.sh", "finish_gate.sh", "clean.sh"] as const;
 const SKILL_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
 function settingsPath(cwd: string): string { return join(cwd, WORKTREE_SETTINGS_PATH); }
 function sourceHookPath(name: string): string { return resolve(SKILL_DIR, "hooks", name); }
 function runtimeHookCommand(name: string): string {
+  return `bun "\${AGENTS_ORCHESTRATOR_HOME:-$HOME/.agents-orchestrator}/hooks/${name}"`;
+}
+
+function legacyRuntimeHookCommand(name: string): string {
   return `bash -c 'exec "\${AGENTS_ORCHESTRATOR_HOME:-$HOME/.agents-orchestrator}/hooks/${name}"'`;
 }
 
@@ -95,8 +100,10 @@ function isOwned(hook: unknown): boolean {
   if (!hook || typeof hook !== "object" || Array.isArray(hook)) return false;
   const item = hook as RuntimeRecord;
   if (item[OWNER_FIELD] === OWNER_VALUE) return true;
-  return HOOK_BINDINGS.some(([, name]) =>
-    item.command === runtimeHookCommand(name) || item.command === sourceHookPath(name));
+  if (HOOK_BINDINGS.some(([, name]) =>
+    item.command === runtimeHookCommand(name) || item.command === sourceHookPath(name))) return true;
+  return LEGACY_HOOK_NAMES.some((name) =>
+    item.command === legacyRuntimeHookCommand(name) || item.command === sourceHookPath(name));
 }
 
 function ensureAt(cwd: string, rootId?: string | null): string {

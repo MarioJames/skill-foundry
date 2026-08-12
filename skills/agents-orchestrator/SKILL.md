@@ -63,8 +63,9 @@ For an explicit new Run, follow this fast path without exploratory detours:
    Intent is `review`, while another Task's review must use that completed review Task's integer ID.
    If the Run changed files and final review is required, the root `finish` must cite that completed
    review Task id; a passing self-review from a non-review root is rejected.
-   Use `inspect` or source-level diagnosis only after a concrete Action failure.
-
+   Use `review: {"status":"pass","source":<integer completed review task id>,"findings":[],"summary":"..."}` in that case; `{"source":<id>}` alone is rejected. Query `action-schema finish` before the first finish if this exact shape was not retained.
+   A parent with children must include `integration_check: {"status":"passed","summary":"..."}`. The owner/root omits `mode_result`; only a Runtime-created mode Task submits the role-specific `mode_result` required by its output contract.
+   For every Runtime mode Task, normal `finish.status` describes whether the assigned phase itself completed, not whether its domain result passed. A validator whose test command completed with failing tests must finish the Task as `done` and put `"status":"failed"` in `mode_result`; using normal `finish.status:"failed"` triggers Attempt retry and blocks the recipe instead of advancing to diagnosis. Use `inspect` or source-level diagnosis only after a concrete Action failure.
 Bun is required. The first launch needs network access and installs the exact locked dependencies
 into `$HOME/.agents-orchestrator/dependencies` (override with
 `$AGENTS_ORCHESTRATOR_DEPENDENCY_HOME`). Later launches reuse the verified content-addressed cache.
@@ -88,6 +89,12 @@ Keep every returned identity field and actor token. A child with injected identi
 bun "$AGENTS_ORCHESTRATOR_SKILL_DIR/scripts/bootstrap.ts" bootstrap-cwd
 ```
 
+Shell tool calls are separate processes: exports from `init` do not survive, while the host may retain the previous cwd; resolve the skill directory from the loaded `SKILL.md`/Base directory in every batch, never from `$PWD` after `cd`. Keep `init` and its first Actions in one batch, or explicitly export `AGENTS_ORCHESTRATOR_HOME` and rehydrate all four
+`AGENTS_ORCHESTRATOR_ROOT_ID` / `TASK_ID` / `ATTEMPT_ID` / `ACTOR_TOKEN` values at the start of every
+later batch. If the identity must cross calls, write the complete `init` JSON to a task-scoped file
+created with `umask 077`, parse it inside the later command, and remove it after terminal cleanup.
+Run final `inspect` / `doctor` / `metrics` with that actor token before removing the identity file. Never echo the actor token—including a prefix, suffix, or truncated fragment—or embed it literally in tool command text. A bare later Action otherwise
+fails closed with `root_id is required` or a partial-identity error.
 An explicit recipe may persist `--entry-mode
 swarm|loop|develop-review-improve|verification-fix|review|ravf`. Generic `loop` is a routing hint;
 select `develop_review_improve`, `verification_fix`, or `ravf` from the work state. A mode begins

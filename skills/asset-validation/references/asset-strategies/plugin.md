@@ -2,7 +2,7 @@
 
 Apply [common.md](common.md) for the shared dimensions. Below is what is specific to plugin assets.
 
-Distribution unit: evaluate the plugin as the installable distribution unit, not as isolated files. Inspect `plugin.json` for stable name/version, declared capabilities, bundled skills/agents/hooks, and any marketplace metadata. A plugin that works only when hand-copied from source but cannot be staged or distributed is AMBER or FAIL.
+Distribution unit: evaluate the plugin as the installable distribution unit, not as isolated files. Inspect the applicable `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, or legacy root `plugin.json` for stable name/version, declared capabilities, bundled skills/agents/hooks, and any marketplace metadata. A plugin that works only when hand-copied from source but cannot be staged or distributed is AMBER or FAIL.
 
 Install process: install produces a correct session-local plugin load path; isolated env vars redirect writes; the core path runs end-to-end. `acc launch --round <round_id>` auto-stages plugin assets under `ACCEPTANCE_SANDBOX` before starting the host CLI, then launches Claude with sandbox `--settings` and `--plugin-dir`. It must not write bundled skills/agents into a real or symlinked HOME skill root.
 

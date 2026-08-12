@@ -4,7 +4,7 @@
 
 The full pipeline is not complete after the first observed round. Continue the observe -> record -> fix -> re-run loop until one of these terminal states is true:
 
-- **Clean PASS:** a fresh round, started after the latest asset or strategy fix, satisfies the acceptance criteria in one uninterrupted run; `acc finalize` reports cleanup, and independent checks show no relevant sandbox, tmux, plugin staging, or asset-owned background residue. Freshness is recorded mechanically: each round stores the asset source hash at start, and `acc history` marks a round `stale` when the asset changed after it ran; a stale PASS never satisfies this contract.
+- **Clean PASS:** a fresh round, started after the latest asset or strategy fix, satisfies the acceptance criteria in one uninterrupted run; `acc finalize` reports cleanup, and independent checks show no relevant sandbox, tmux, plugin staging, or asset-owned background residue. Freshness is recorded mechanically: each round stores the asset source hash at start, and `acc history --asset <asset-name-or-id>` marks a round `stale` when the asset changed after it ran; a stale PASS never satisfies this contract.
 - **Blocked:** the same blocker (same `finding --key`) repeats after at least three consecutive attempts, the acceptance exceeds its `--budget-max-rounds` limit, or the next fix would require user approval because it changes destructive scope, touches assets outside the asset-under-test, or needs unavailable credentials/quota.
 
 A FAIL, CONDITIONAL, partial PASS, manual hot-fix, or "this should be fixed now" is an intermediate result. Record and finalize that round, fix the asset-under-test or acceptance design, then start a new fresh round. Do not return a final verdict until a post-fix round passes cleanly or the run is explicitly blocked.
@@ -26,6 +26,8 @@ Acceptance tasks must be derived from the asset type and capability profile. Dec
 - **Negative / boundary:** neighboring tasks and decoy phrases that should not trigger.
 
 Each rung must have explicit observer-owned evidence and cleanup checks. If a rung fails and is fixed, re-run that rung from a fresh round, then continue upward. A smoke PASS may justify continuing; it is not a final PASS for a complex asset. The meaning of "small", "medium", and "complex" must be reasonable for the asset category: a browser-validation skill might scale from one static page to a project with dev server and cleanup; an orchestration skill might scale from one delegated task to a multi-module product delivery; a rule asset might scale from one ambiguous instruction to a realistic conflicting-constraints workflow.
+
+For staged skills, split the smoke evidence when the selected host uses explicit slash activation: one natural-language probe measures host selection, while an explicit staged slash invocation proves the skill and its scripts actually execute. Do not accept a hand-computed natural-language answer as functional evidence, and do not repeat an identical host-selection bypass until the budget is exhausted after explicit activation is available.
 
 ## Scenario-Grade Tasks
 

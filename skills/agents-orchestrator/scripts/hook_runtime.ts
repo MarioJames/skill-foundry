@@ -148,26 +148,36 @@ export function handleHookEvent(kind: string, rawInput: unknown): RuntimeRecord 
   return {};
 }
 
-if (import.meta.main) {
+export async function runHookEventCli(kind: string): Promise<number> {
   try {
-    const command = process.argv[2];
-    let result: RuntimeRecord;
-    if (command === "hook-event") {
-      let input: unknown = {};
-      try { input = JSON.parse(await Bun.stdin.text()); } catch { /* missing event is skipped */ }
-      result = handleHookEvent(String(process.argv[3] ?? ""), input);
-    } else {
+    let input: unknown = {};
+    try { input = JSON.parse(await Bun.stdin.text()); } catch { /* missing event is skipped */ }
+    process.stdout.write(`${JSON.stringify(handleHookEvent(kind, input))}\n`);
+    return 0;
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : "hook runtime failed"}\n`);
+    return 2;
+  }
+}
+
+if (import.meta.main) {
+  const command = process.argv[2];
+  if (command === "hook-event") {
+    process.exitCode = await runHookEventCli(String(process.argv[3] ?? ""));
+  } else {
+    try {
       const current = identity();
+      let result: RuntimeRecord;
       if (command === "heartbeat") {
-      if (stateStore.getRun(current.rootId)) hookManager.ensureProjectHooks(process.cwd(), current.rootId);
-      result = heartbeat(current.rootId, current.taskId, current.attemptId, current.actorToken);
+        if (stateStore.getRun(current.rootId)) hookManager.ensureProjectHooks(process.cwd(), current.rootId);
+        result = heartbeat(current.rootId, current.taskId, current.attemptId, current.actorToken);
       } else if (command === "inspect-current") result = inspectCurrent(current.rootId, current.taskId, current.actorToken);
       else if (command === "session-end") result = observeSessionEnd(current.rootId, current.taskId, current.attemptId, current.actorToken);
       else throw new ValueError("command must be hook-event, heartbeat, inspect-current, or session-end");
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+    } catch (error) {
+      process.stderr.write(`${error instanceof Error ? error.message : "hook runtime failed"}\n`);
+      process.exitCode = 2;
     }
-    process.stdout.write(`${JSON.stringify(result)}\n`);
-  } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : "hook runtime failed"}\n`);
-    process.exit(2);
   }
 }

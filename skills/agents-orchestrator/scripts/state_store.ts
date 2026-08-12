@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 import * as runtimeEnv from "./runtime_env.ts";
 import { canonicalJson, isRecord, RuntimeError, type RuntimeRecord, ValueError } from "./runtime_types.ts";
@@ -606,7 +606,7 @@ function copyRuntimeAsset(source: string, target: string): void {
   const temporary = join(dirname(target), `.${randomUUID()}.tmp`);
   try {
     copyFileSync(source, temporary);
-    chmodSync(temporary, source.endsWith(".sh") ? 0o700 : 0o600);
+    chmodSync(temporary, target.includes(`${sep}hooks${sep}`) ? 0o700 : 0o600);
     renameSync(temporary, target);
   } finally {
     if (existsSync(temporary)) unlinkSync(temporary);

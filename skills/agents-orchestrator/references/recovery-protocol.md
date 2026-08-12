@@ -71,14 +71,16 @@ and schedules the new Attempt only after stop completes.
 ## Inspect
 
 ```bash
-bun <skill_dir>/scripts/bootstrap.ts inspect --run <root_id>
-bun <skill_dir>/scripts/bootstrap.ts doctor --root-id <root_id>
-bun <skill_dir>/scripts/bootstrap.ts metrics --root-id <root_id>
+bun <skill_dir>/scripts/bootstrap.ts inspect --run <root_id> --actor-token <actor_token>
+bun <skill_dir>/scripts/bootstrap.ts doctor --root-id <root_id> --actor-token <actor_token>
+bun <skill_dir>/scripts/bootstrap.ts metrics --root-id <root_id> --actor-token <actor_token>
 ```
 
 Full inspection returns Tasks, Attempts, Launches, ACP Sessions, and Effects. This is enough to
 reconstruct the logical tree and every execution attempt. It intentionally does not include local
-conversation history.
+conversation history. All three reads are authenticated; preserve the task-scoped identity until
+terminal inspection and cleanup finish, then delete it. A root id without the actor token fails
+closed with `actor_token is required`.
 
 For ACP history, query the actual Agent store:
 

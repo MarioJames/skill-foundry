@@ -27,6 +27,7 @@ description: 当用户要求为多仓工作区初始化或刷新知识图谱、�
 ## **HARD CONSTRAINTS**（**MUST** / **DO NOT**）
 
 - **MUST** 用用户给定目录或调用时 `$PWD` 作为 `WORKSPACE_ROOT`；**DO NOT** 用 `git rev-parse --show-toplevel`、向上探测父目录、查找祖先 `.git` / `.workspace`、枚举工作区外同级目录、目录名推断或其它启发式发现/归一化/覆盖根目录。
+- **MUST** 在首次调用前把 `WORKSPACE_ROOT` 解析并保存为经过 `test -d` 的绝对物理路径，后续每个 shell 批次复用该值；shell 工具的 cwd 可能跨批次保留，**DO NOT** 在后续批次用当前 `$PWD` 再拼接 `fixture/...`，否则会得到重复路径。验收 fixture 从稳定的 `$ACCEPTANCE_SANDBOX` 根解析。探测性 `cd` 只能放在子 shell，或批次结束前恢复原 cwd。
 - **MUST** 在目标工作区根目录执行命令；**DO NOT** 在技能安装目录里执行并把该 `$PWD` 当成工作区。
 - **MUST** 手改 `.workspace/metadata.yaml` 为合法 JSON（扩展名是 `.yaml` 但语法是 JSON）。
 - **DO NOT** 用脚本规则替代 Research/Writer/Review 闭环的业务语义判断。
@@ -41,17 +42,24 @@ description: 当用户要求为多仓工作区初始化或刷新知识图谱、�
 - 否则使用调用时的当前工作目录：`WORKSPACE_ROOT="$PWD"`。
 - **DO NOT** 通过 `git rev-parse --show-toplevel`、向上探测父目录、查找祖先 `.git` / `.workspace`、枚举 `WORKSPACE_ROOT` 之外的同级目录、目录名推断或任何其他启发式来发现、归一化或覆盖根目录。
 - 只有用户明确要求换目标目录时才更改 `WORKSPACE_ROOT`。
+- 首次确定目标后立即转成绝对物理路径并 `test -d`；不要在后续命令批次重新用 `$PWD/<相对路径>` 计算。若处于验收沙箱，始终从 `$ACCEPTANCE_SANDBOX/<fixture-path>` 解析，而不是从可能已改变的 `$PWD` 解析。
 
 命令在目标工作区根目录下执行。使用本技能目录的绝对路径；**DO NOT** 在技能目录里执行并把那个 `$PWD` 当成工作区。
 
 ```bash
 SKILL_DIR="$HOME/.cc-switch/skills/workspace-knowledge-graph"  # 以实际加载本 SKILL.md 的目录为准；安装位置不同时先替换。
 WORKSPACE_ROOT="$PWD"
-python3 "$SKILL_DIR/scripts/workspace_graph.py" bootstrap --workspace "$WORKSPACE_ROOT"
-python3 "$SKILL_DIR/scripts/workspace_graph.py" scan --workspace "$WORKSPACE_ROOT"
-python3 "$SKILL_DIR/scripts/workspace_graph.py" init --workspace "$WORKSPACE_ROOT"
-python3 "$SKILL_DIR/scripts/workspace_graph.py" validate --workspace "$WORKSPACE_ROOT"
+WORKSPACE_ROOT="$(cd "$WORKSPACE_ROOT" && pwd -P)"
+test -d "$WORKSPACE_ROOT"
+bun "$SKILL_DIR/scripts/workspace_graph.ts" bootstrap --workspace "$WORKSPACE_ROOT"
+bun "$SKILL_DIR/scripts/workspace_graph.ts" scan --workspace "$WORKSPACE_ROOT"
+bun "$SKILL_DIR/scripts/workspace_graph.ts" init --workspace "$WORKSPACE_ROOT"
+bun "$SKILL_DIR/scripts/workspace_graph.ts" validate --workspace "$WORKSPACE_ROOT"
 ```
+
+这些入口都接受显式 `--workspace`，无需持久 `cd`。若只是检查目录内容，使用 `(cd "$WORKSPACE_ROOT" && ...)` 子 shell，避免污染下一批命令。
+
+脚本要求 Bun `>=1.3.0`，运行时只使用 Bun / Node 内置能力，无需安装第三方依赖。
 
 `.workspace/metadata.yaml` 已存在时，`init` 会把扫描结果与本地声明合并后重新渲染派生文档。agent 撰写的内容按 [references/config-schema.md](references/config-schema.md) 中的所有权规则保留。遗留声明（顶层 `repos` / `memory_seed`、仓库级 `meta.yaml`）不做自动迁移：`init` 会拒绝执行并提示手动迁移。
 

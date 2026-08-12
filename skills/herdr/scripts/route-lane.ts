@@ -104,13 +104,28 @@ await runCli(async () => {
       label: (flags.get("--label") as string | undefined) ?? "",
     });
   }
+  const cleanupTargetId = {
+    pane: result.paneId,
+    tab: result.tabId,
+    workspace: result.workspaceId,
+  }[cleanupResource];
+  const cleanupCommand = dryRun || !cleanupTargetId
+    ? null
+    : ["herdr", cleanupResource, "close", cleanupTargetId];
 
   emit({
     ok: true,
     dry_run: dryRun,
     action,
     reason,
-    lane: { type: laneType, scope, cleanup, cleanup_resource: cleanupResource },
+    lane: {
+      type: laneType,
+      scope,
+      cleanup,
+      cleanup_resource: cleanupResource,
+      cleanup_target_id: cleanupTargetId,
+      cleanup_command: cleanupCommand,
+    },
     target: { cwd: probe.target.cwd, git_root: probe.target.gitRoot },
     caller: {
       workspace_id: caller.workspaceId,

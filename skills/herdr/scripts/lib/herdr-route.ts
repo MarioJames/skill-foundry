@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 
 export type LaneType = "oneshot" | "service" | "coding-agent";
@@ -56,7 +57,7 @@ export function parseFlags(
   const parsed = new Map<string, string | true>();
 
   for (let index = 0; index < argv.length; index += 1) {
-    const flag = argv[index];
+    const flag = argv[index]!;
     if (flag === "-h") {
       parsed.set("--help", true);
     } else if (booleans.has(flag)) {
@@ -83,8 +84,8 @@ export function requireHerdr(): void {
 async function capture(command: string[]): Promise<{ stdout: string; stderr: string; status: number }> {
   const child = Bun.spawn(command, { stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, status] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
+    Bun.readableStreamToText(child.stdout),
+    Bun.readableStreamToText(child.stderr),
     child.exited,
   ]);
   return { stdout: stdout.trim(), stderr: stderr.trim(), status };
@@ -99,6 +100,13 @@ async function herdr(...args: string[]): Promise<any> {
     return JSON.parse(result.stdout);
   } catch {
     throw new CliError("invalid_herdr_json", "Herdr returned non-JSON output");
+  }
+}
+
+async function herdrWithoutJson(...args: string[]): Promise<void> {
+  const result = await capture(["herdr", ...args]);
+  if (result.status !== 0) {
+    throw new CliError("herdr_failed", [result.stdout, result.stderr].filter(Boolean).join("\n"), result.status);
   }
 }
 
@@ -219,6 +227,69 @@ async function closeQuietly(kind: "pane" | "tab" | "workspace", id: string | nul
   await child.exited;
 }
 
+const INTERACTIVE_SHELLS = new Set(["bash", "dash", "fish", "ksh", "nu", "pwsh", "sh", "zsh"]);
+
+function shellName(process: any): string {
+  const raw = typeof process?.name === "string"
+    ? process.name
+    : typeof process?.argv0 === "string" ? process.argv0 : "";
+  const name = raw.replace(/^-+/u, "").split("/").at(-1) ?? "";
+  return name.toLowerCase();
+}
+
+export async function waitForPaneShell(paneId: string, timeoutMs = 15_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastFailure = "foreground shell not reported";
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await herdr("pane", "process-info", "--pane", paneId);
+      const processes = response?.result?.process_info?.foreground_processes;
+      const shellIsIdle = Array.isArray(processes)
+        && processes.length > 0
+        && processes.every((process: any) => INTERACTIVE_SHELLS.has(shellName(process)));
+      if (!shellIsIdle) {
+        const names = Array.isArray(processes) ? processes.map(shellName).filter(Boolean) : [];
+        lastFailure = names.length > 0
+          ? `foreground processes still active: ${names.join(", ")}`
+          : "foreground shell not reported";
+        await Bun.sleep(50);
+        continue;
+      }
+
+      // process-info can report zsh just before the pane starts accepting input.
+      // A round-trip probe closes that race instead of handing a busy pane to an agent.
+      const token = randomUUID().replaceAll("-", "");
+      const marker = `HERDR_READY_${token}`;
+      const payload = `printf 'HERDR_READY_%s\\n' '${token}'`;
+      await herdrWithoutJson("pane", "run", paneId, payload);
+
+      const remainingMs = Math.max(1, deadline - Date.now());
+      await herdr(
+        "pane", "wait-output", paneId,
+        "--match", marker,
+        "--source", "recent-unwrapped",
+        "--timeout", String(remainingMs),
+      );
+
+      while (Date.now() < deadline) {
+        const settled = await herdr("pane", "process-info", "--pane", paneId);
+        const foreground = settled?.result?.process_info?.foreground_processes;
+        if (Array.isArray(foreground)
+          && foreground.length > 0
+          && foreground.every((process: any) => INTERACTIVE_SHELLS.has(shellName(process)))) {
+          return;
+        }
+        await Bun.sleep(50);
+      }
+    } catch (error) {
+      lastFailure = error instanceof Error ? error.message : String(error);
+    }
+    await Bun.sleep(50);
+  }
+  throw new CliError("pane_not_ready", `Created pane ${paneId} did not reach an idle shell: ${lastFailure}`);
+}
+
 function ids(pane: any): ResourceIds {
   return {
     workspaceId: typeof pane?.workspace_id === "string" ? pane.workspace_id : null,
@@ -264,6 +335,12 @@ export async function createResource(options: {
       await closeQuietly("pane", result.paneId);
       throw new CliError("verification_failed", "Created pane did not match the intended workspace, tab, and cwd");
     }
+    try {
+      await waitForPaneShell(result.paneId);
+    } catch (error) {
+      await closeQuietly("pane", result.paneId);
+      throw error;
+    }
     return result;
   }
 
@@ -287,6 +364,12 @@ export async function createResource(options: {
       await closeQuietly("tab", result.tabId);
       throw new CliError("verification_failed", "Created tab did not match the intended workspace and cwd");
     }
+    try {
+      await waitForPaneShell(result.paneId!);
+    } catch (error) {
+      await closeQuietly("tab", result.tabId);
+      throw error;
+    }
     return result;
   }
 
@@ -303,6 +386,12 @@ export async function createResource(options: {
   if (!result.workspaceId || !result.tabId || !result.paneId || createdCwd !== options.cwd) {
     await closeQuietly("workspace", result.workspaceId);
     throw new CliError("verification_failed", "Created workspace did not match the intended cwd");
+  }
+  try {
+    await waitForPaneShell(result.paneId);
+  } catch (error) {
+    await closeQuietly("workspace", result.workspaceId);
+    throw error;
   }
   return result;
 }

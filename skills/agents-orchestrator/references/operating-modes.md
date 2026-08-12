@@ -90,6 +90,10 @@ Validator results include `stage`, `passed|failed|blocked`, `artifact_version`, 
 evidence. Diagnosis results include `root_cause` and standard findings. Fix results include
 `changed`, every `addressed_fingerprint`, and evidence. A failed or incomplete fix, time/task
 budget, repeated state, or missing clean validation closes with an explicit non-pass outcome.
+The Task lifecycle is separate from these domain results: when a validator successfully runs the
+check and observes failing tests, it submits normal `finish.status:"done"` plus
+`mode_result.status:"failed"`. Normal `finish.status:"failed"` means the validation phase itself
+could not complete; it invokes Attempt retry and cannot advance the recipe to diagnosis.
 
 ## RAVF
 

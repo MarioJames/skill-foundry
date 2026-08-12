@@ -149,7 +149,7 @@ function runtimeFiles(skillDirectory: string): string[] {
         const path = join(directory, entry.name);
         if (entry.isDirectory()) {
           pending.push(path);
-        } else if (entry.isFile() && (path.endsWith(".ts") || root.endsWith(`${sep}hooks`))) {
+        } else if (entry.isFile() && path.endsWith(".ts")) {
           included.push(path);
         }
       }
@@ -360,7 +360,7 @@ function copyRuntime(skillDirectory: string, stage: string, files: readonly stri
     const destination = join(stage, relativePath);
     ensurePrivateDirectory(dirname(destination));
     copyFileSync(source, destination, fsConstants.COPYFILE_EXCL);
-    chmodSync(destination, source.endsWith(".sh") ? 0o700 : 0o600);
+    chmodSync(destination, relativePath.startsWith(`hooks${sep}`) ? 0o700 : 0o600);
   }
 }
 

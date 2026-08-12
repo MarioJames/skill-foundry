@@ -91,6 +91,10 @@ Restart or reload the target agent runtime after installation so it can discover
 Herdr session where `HERDR_ENV=1`; outside Herdr the skill does not attempt pane or workspace
 mutation.
 
+Bun 1.3 or newer is the runtime for every bundled executable script and hook. No bundled
+entrypoint is implemented in Python or Bash; external tools and user-provided commands retain
+their own runtime requirements.
+
 The first Runtime launch requires Bun and network access. It installs the exact `bun.lock` graph
 into `$HOME/.agents-orchestrator/dependencies` (override with
 `$AGENTS_ORCHESTRATOR_DEPENDENCY_HOME`) and reuses that verified content-addressed cache on later
@@ -131,11 +135,11 @@ Verify the installation:
 test -f ~/.codex/skills/agents-orchestrator/SKILL.md
 test -f ~/.codex/skills/agents-orchestrator/scripts/bootstrap.ts
 test -f ~/.codex/skills/agents-orchestrator/bun.lock
-test -f ~/.codex/skills/asset-validation/SKILL.md
-test -f ~/.codex/skills/browser-harness/SKILL.md
+test -x ~/.codex/skills/asset-validation/scripts/acc.ts
+test -x ~/.codex/skills/browser-harness/scripts/bh.ts
 test -x ~/.codex/skills/herdr/scripts/route-lane.ts
 test -f ~/.codex/skills/awesome-presentation/SKILL.md
-test -f ~/.codex/skills/workspace-knowledge-graph/SKILL.md
+test -x ~/.codex/skills/workspace-knowledge-graph/scripts/workspace_graph.ts
 ```
 
 ### Update Manual Installs
@@ -276,16 +280,27 @@ Useful local checks before publishing changes:
 
 ```bash
 find skills -name SKILL.md -print
+find skills -path '*/node_modules' -prune -o -type f \
+  \( -path '*/scripts/*' -o -path '*/hooks/*' \) ! -name '*.ts' -print
 ```
 
+The pre-existing agents-orchestrator Runtime keeps its package-level checks:
+
 ```bash
-cd skills/agents-orchestrator
-bun run typecheck
+(cd skills/agents-orchestrator && bun run typecheck && bun run test)
+
+# Package-free migrated skills run their behavior tests directly with Bun.
+bun test skills/asset-validation/tests
+bun test skills/browser-harness/tests
+bun test skills/workspace-knowledge-graph/test
 ```
 
 ```bash
 skills/herdr/scripts/route-lane.ts --help
 skills/herdr/scripts/probe-workspace.ts --help
+bun skills/asset-validation/scripts/acc.ts --help
+bun skills/browser-harness/scripts/bh.ts --version
+bun skills/workspace-knowledge-graph/scripts/workspace_graph.ts --help
 ```
 
 ```bash
