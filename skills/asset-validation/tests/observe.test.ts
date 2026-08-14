@@ -17,6 +17,24 @@ afterEach(() => {
 });
 
 describe("tmux task transport", () => {
+  test("recognizes Claude and Codex prompts without treating trust choices as input", () => {
+    expect(observe.hasInputPrompt("\n❯ Fix the tests\n")).toBe(true);
+    expect(observe.hasInputPrompt("\n› Run /review on my changes\n")).toBe(true);
+    expect(observe.hasInputPrompt("› 1. Yes, continue")).toBe(false);
+    expect(observe.isWorkspaceTrustPrompt(
+      "Do you trust the contents of this directory?\n"
+      + "› 1. Yes, continue\nPress enter to continue",
+    )).toBe(true);
+  });
+
+  test("prefers a live Codex prompt when trust text remains in scrollback", () => {
+    const captured = "Do you trust the contents of this directory?\n"
+      + "› 1. Yes, continue\nPress enter to continue\n"
+      + "› Use /skills to list available skills\n";
+    expect(observe.isWorkspaceTrustPrompt(captured)).toBe(true);
+    expect(observe.hasInputPrompt(captured)).toBe(true);
+  });
+
   test("uses one bracketed paste and explicit Enter pulses for multiline tasks", () => {
     const root = mkdtempSync(join(tmpdir(), "acc-observe-"));
     temporaryPaths.push(root);
@@ -107,5 +125,29 @@ describe("sandbox-local skill staging", () => {
     const cleaned = observe.cleanupPluginInstall(sandbox);
     expect(cleaned?.removed_plugin_dir).toBe(true);
     expect(cleaned?.plugin_dir).toBe(installed.plugin_dir);
+  });
+
+  test("stages Codex skills under the round-local repository discovery path", () => {
+    const root = mkdtempSync(join(tmpdir(), "acc-codex-skill-"));
+    temporaryPaths.push(root);
+    const source = join(root, "source");
+    const sandbox = join(root, "sandbox");
+    mkdirSync(source, { recursive: true });
+    writeFileSync(
+      join(source, "SKILL.md"),
+      "---\nname: staged-demo\ndescription: demo\n---\n",
+      "utf8",
+    );
+
+    const installed = observe.installCodexSkillSource(sandbox, source);
+    const staged = join(sandbox, ".agents", "skills", "staged-demo");
+    expect(installed.installed).toBe(true);
+    expect(installed.skill_dir).toBe(staged);
+    expect(readFileSync(join(staged, "SKILL.md"), "utf8")).toBe(
+      readFileSync(join(source, "SKILL.md"), "utf8"),
+    );
+    expect(installed.cli_args?.[0]).toBe("-c");
+    expect(installed.cli_args?.[1]).toContain(join(source, "SKILL.md"));
+    expect(installed.cli_args?.[1]).toContain("enabled=false");
   });
 });

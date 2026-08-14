@@ -13,11 +13,16 @@ import {
   shellQuote,
 } from "./lib/common.ts";
 import {
+  readPreparedAppUrl,
   resolveDevCommand,
   startDevServer,
   stopDevServer,
 } from "./lib/dev-server.ts";
 import { collectEvidence } from "./lib/evidence.ts";
+import {
+  startPublicTunnel,
+  stopPublicTunnel,
+} from "./lib/public-tunnel.ts";
 import { resolveTarget } from "./lib/target-resolve.ts";
 
 function usage(): void {
@@ -25,7 +30,9 @@ function usage(): void {
 
 subcommands:
   prepare <target>                          target = URL | *.html | project dir
-  cleanup [target]                          默认 . ；传 prepare 使用的同一 target
+  share <target>                            公开已由 prepare 启动的项目
+  publish <target>                          启动项目并公开到 Cloudflare
+  cleanup [target]                          停止 tunnel + dev；传相同 target
   login <url> [--profile <name>]
   collect-evidence <url> [--profile <n>] [--har] [--reuse-page]
   profile-dir [name]                        打印 profile 目录路径（供直接调 agent-browser）
@@ -121,6 +128,73 @@ async function prepare(arguments_: string[]): Promise<number> {
   return 0;
 }
 
+function resolveProjectTarget(target: string | undefined, command: string): string {
+  if (!target) fail(2, `usage: bh ${command} <project-dir>`);
+  const resolved = resolveTarget(target);
+  if (resolved.kind !== "project") {
+    fail(2, `bh ${command} 仅支持包含 package.json 的项目目录`);
+  }
+  return resolved.dir;
+}
+
+function emitServerAssignments(server: {
+  appUrl: string;
+  pid: number;
+  logPath: string;
+}): void {
+  process.stdout.write(`APP_URL=${shellQuote(server.appUrl)}\n`);
+  process.stdout.write(`DEV_SERVER_PID=${shellQuote(String(server.pid))}\n`);
+  process.stdout.write(`DEV_SERVER_LOG=${shellQuote(server.logPath)}\n`);
+}
+
+function emitTunnelAssignments(tunnel: {
+  publicUrl: string;
+  pid: number;
+  logPath: string;
+}): void {
+  process.stdout.write(`REMOTE_REVIEW_URL=${shellQuote(tunnel.publicUrl)}\n`);
+  process.stdout.write(`CLOUDFLARED_PID=${shellQuote(String(tunnel.pid))}\n`);
+  process.stdout.write(`CLOUDFLARED_LOG=${shellQuote(tunnel.logPath)}\n`);
+}
+
+async function share(arguments_: string[]): Promise<number> {
+  const projectDir = resolveProjectTarget(arguments_[0], "share");
+  const appUrl = readPreparedAppUrl(projectDir);
+  const tunnel = await startPublicTunnel(
+    process.env.BH_ITERATION || "default",
+    projectDir,
+    appUrl,
+  );
+  process.stdout.write(`APP_URL=${shellQuote(appUrl)}\n`);
+  emitTunnelAssignments(tunnel);
+  return 0;
+}
+
+async function publish(arguments_: string[]): Promise<number> {
+  const projectDir = resolveProjectTarget(arguments_[0], "publish");
+  requireAgentBrowser();
+  const devCommand = resolveDevCommand(projectDir);
+  const server = await startDevServer(
+    process.env.BH_ITERATION || "default",
+    projectDir,
+    devCommand,
+  );
+
+  try {
+    const tunnel = await startPublicTunnel(
+      process.env.BH_ITERATION || "default",
+      projectDir,
+      server.appUrl,
+    );
+    emitServerAssignments(server);
+    emitTunnelAssignments(tunnel);
+    return 0;
+  } catch (error) {
+    await stopDevServer(projectDir);
+    throw error;
+  }
+}
+
 async function cleanup(arguments_: string[]): Promise<number> {
   const target = arguments_[0] || ".";
   let absolute: string;
@@ -132,6 +206,7 @@ async function cleanup(arguments_: string[]): Promise<number> {
   } catch {
     fail(2, `cleanup 的 target 不存在或不受支持：${target}`);
   }
+  await stopPublicTunnel(absolute);
   await stopDevServer(absolute);
   return 0;
 }
@@ -187,6 +262,10 @@ export async function main(arguments_ = Bun.argv.slice(2)): Promise<number> {
       return 0;
     case "prepare":
       return await prepare(rest);
+    case "share":
+      return await share(rest);
+    case "publish":
+      return await publish(rest);
     case "cleanup":
       return await cleanup(rest);
     case "login":

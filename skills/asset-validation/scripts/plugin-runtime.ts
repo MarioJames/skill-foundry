@@ -355,6 +355,46 @@ export function installSkillSource(
   };
 }
 
+export function installCodexSkillSource(
+  sandbox: string,
+  sourcePath: string,
+  options: { name?: string } = {},
+): PluginInstall {
+  if (!existsSync(sourcePath)) {
+    return { installed: false, reason: `source not found: ${sourcePath}` };
+  }
+  const env = prepareRoundEnvironment(sandbox);
+  const skillName = readSkillName(sourcePath, options.name);
+  const skillDirectory = join(
+    env.ACCEPTANCE_SANDBOX,
+    ".agents",
+    "skills",
+    skillName,
+  );
+  copyEntry(sourcePath, skillDirectory);
+  const sourceSkill = statSync(sourcePath).isDirectory()
+    ? join(sourcePath, "SKILL.md")
+    : sourcePath;
+  const cliArgs = [
+    "-c",
+    `skills.config=[{path=${JSON.stringify(sourceSkill)},enabled=false}]`,
+  ];
+  const manifest = {
+    name: skillName,
+    source: sourcePath,
+    plugin_dir: skillDirectory,
+    skill_dir: skillDirectory,
+    settings: null,
+    skills: [skillName],
+    agents: [] as string[],
+    cli_args: cliArgs,
+    staged_asset_type: "skill",
+    staging: "codex-repo-skill",
+  };
+  writeInstallManifest(sandbox, manifest);
+  return { installed: true, ...manifest };
+}
+
 export function cleanupPluginInstall(sandbox: string): Record<string, unknown> | null {
   const manifest = readInstallManifest(sandbox);
   if (!Object.keys(manifest).length) return null;

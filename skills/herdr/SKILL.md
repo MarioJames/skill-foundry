@@ -1,6 +1,6 @@
 ---
 name: herdr
-description: "Proactively control Herdr to shorten the critical path. Trigger automatically when HERDR_ENV=1 and a task has independent repository, module, file-ownership, research, check, or test lanes; a long-running command, service, or monitor can overlap useful work; an additive independent user request arrives while another task is still running; or a coding agent can own an independent deliverable. Also trigger whenever the user mentions Herdr, panes, or tabs. Do not trigger for a superseding request, one short command, tightly serial work, overlapping mutable state, or coordination overhead that exceeds the likely saving. Requires HERDR_ENV=1."
+description: "Use Herdr whenever parallel execution can materially shorten a task: two or more independent repository, module, file-ownership, research, check, or test lanes; a command, build, test, service, or monitor can run while useful work continues; an additive independent request arrives during active work; or a coding agent can own an independent deliverable. This includes simple shell commands when their wait time overlaps useful work—ordinary shell backgrounding is not a reason to skip Herdr. Also use when the user explicitly asks to operate Herdr panes, tabs, or workspaces. Do not use for replacement requests, one short command, tightly serial work, overlapping mutable state, or coordination overhead that outweighs the benefit."
 ---
 
 # Herdr
@@ -16,9 +16,9 @@ Use Herdr when it shortens the task's critical path, not merely to increase pane
 
 ## Decide and split
 
-1. Check `test "${HERDR_ENV:-}" = 1`. If false, continue without Herdr unless the user explicitly required it; then report that Herdr is unavailable.
+1. Run [`scripts/check-availability.ts`](scripts/check-availability.ts). If it returns `use_herdr: false`, stay in the caller channel and continue normally without Herdr routing. When the user explicitly required Herdr, briefly report the returned reason while still completing any work that does not require Herdr.
 2. Identify independent lanes before splitting. Start the slowest useful lanes first and keep doing useful work in the caller pane.
-3. Estimate whether `max(lane durations) + coordination overhead` beats serial execution. Avoid delegating trivial work or splitting tightly dependent steps.
+3. Estimate whether `max(lane durations) + coordination overhead` beats serial execution. If it does not, stay in the caller channel and continue normally. Avoid delegating trivial work or splitting tightly dependent steps.
 4. Use sibling panes in the current tab only when the lane belongs to the caller's workspace/repository. When its target cwd is materially different, route it to the workspace that represents that directory and create a tab there; do not put it in the caller's workspace merely because that workspace is current.
 5. Classify every created pane before launch: `oneshot`, `service`, or `coding-agent`. This classification determines cleanup.
 
@@ -26,7 +26,7 @@ Inspect only the relevant current CLI group before using it, for example `herdr 
 
 ## Route by directory
 
-Prefer [`scripts/route-lane.ts`](scripts/route-lane.ts) for create-time classification, workspace probing, and resource creation:
+After availability succeeds, prefer [`scripts/route-lane.ts`](scripts/route-lane.ts) for create-time classification, workspace probing, and resource creation:
 
 ```bash
 target_cwd=$PWD
@@ -79,8 +79,9 @@ The router applies this fallback decision process internally; use it manually on
 - Prove cleanup with a non-faulting collection read: use `herdr workspace list` and confirm the closed workspace ID is absent, or inspect a still-existing parent before closing it. Do not query a deleted workspace/tab/pane merely to obtain `not_found` and call that success; the transcript must remain free of avoidable command errors.
 - Do not treat `unknown` agent state as completion; inspect state and recent output.
 - Close a task-created `oneshot` pane as soon as its exit status and bounded result have been collected, including after handled failures. Keep it only while concrete debugging evidence is still needed.
-- Keep a useful `coding-agent` pane available for follow-up by default. Close it only when it was explicitly disposable, the user requests full cleanup, or it has no remaining value after its result is integrated.
+- Keep a `coding-agent` pane only while it has concrete follow-up or reuse value. At every phase or task transition, re-evaluate all retained task-created panes before starting new lanes. If a pane's findings are integrated and no pending follow-up depends on it, close it immediately without waiting for the user to ask.
 - Keep a `service` pane only while something depends on it; then stop the service and close the pane. Report every retained pane's purpose and identifier, plus the port for services.
+- At handoff, report each retained pane's identifier, purpose, and remaining value; explicitly say when no task-created panes remain.
 - Never close the caller/root coding-agent pane as part of child-lane cleanup.
 
 ## Gotchas

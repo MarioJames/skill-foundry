@@ -30,6 +30,23 @@ describe("runtime and external validator documentation", () => {
     expect(strategy).toContain("exact staged slash token");
   });
 
+  test("documents host-specific standalone skill staging and provenance", () => {
+    const skill = readFileSync(join(SKILL_DIR, "SKILL.md"), "utf8");
+    const unattended = readFileSync(
+      join(SKILL_DIR, "references", "unattended-execution.md"),
+      "utf8",
+    );
+    const strategy = readFileSync(
+      join(SKILL_DIR, "references", "asset-strategies", "skill.md"),
+      "utf8",
+    );
+    expect(skill).toContain("host-specific launch settings");
+    expect(unattended).toContain("`.agents/skills/<name>`");
+    expect(unattended).toContain("same-name global skill wins");
+    expect(strategy).toContain("For Codex");
+    expect(strategy).toContain("verify executed script/file paths");
+  });
+
   test("documents the closed set of scheduling mode values", () => {
     const unattended = readFileSync(
       join(SKILL_DIR, "references", "unattended-execution.md"),

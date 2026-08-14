@@ -66,6 +66,13 @@ export function launchRoundForTarget(row: rounds.LaunchTarget, cli: string): Tar
         );
       }
       cliArgs = [...(pluginInstall.cli_args ?? []), ...cliArgs];
+    } else if (row.asset_type === "skill" && supportsCodexRepoSkills(cli)) {
+      pluginInstall = observe.installCodexSkillSource(
+        row.sandbox_path,
+        row.asset_source,
+        { name: row.asset_name },
+      );
+      cliArgs = [...(pluginInstall.cli_args ?? [])];
     } else {
       pluginInstall = {
         installed: false,
@@ -173,6 +180,10 @@ function sourceAddDir(sourcePath: string): string {
 
 function supportsClaudeSessionPlugins(cli: string): boolean {
   return basename(cli).startsWith("claude");
+}
+
+function supportsCodexRepoSkills(cli: string): boolean {
+  return basename(cli).startsWith("codex");
 }
 
 function validateTaskKey(connection: Connection, acceptanceId: string, taskKey: string): void {

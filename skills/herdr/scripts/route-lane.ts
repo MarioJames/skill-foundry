@@ -82,7 +82,7 @@ await runCli(async () => {
   const cleanup = {
     oneshot: "close-after-result",
     service: "close-after-dependents",
-    "coding-agent": "keep-for-follow-up",
+    "coding-agent": "keep-while-useful",
   }[laneType as LaneType];
   const cleanupResource = {
     "split-pane": "pane",

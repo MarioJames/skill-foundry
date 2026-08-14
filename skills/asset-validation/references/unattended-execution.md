@@ -18,7 +18,11 @@ Resolve `ACC` from the staged skill copy first; this keeps sandboxed standalone-
 ```
 ACC=""
 if [ -n "${ACCEPTANCE_SANDBOX:-}" ]; then
-  ACC="$(find "$ACCEPTANCE_SANDBOX/.iso" -path '*/skills/asset-validation/scripts/acc.ts' -type f 2>/dev/null | head -1)"
+  if [ -f "$ACCEPTANCE_SANDBOX/.agents/skills/asset-validation/scripts/acc.ts" ]; then
+    ACC="$ACCEPTANCE_SANDBOX/.agents/skills/asset-validation/scripts/acc.ts"
+  else
+    ACC="$(find "$ACCEPTANCE_SANDBOX/.iso" -path '*/skills/asset-validation/scripts/acc.ts' -type f 2>/dev/null | head -1)"
+  fi
 fi
 if [ -z "$ACC" ] && [ -f "skills/asset-validation/scripts/acc.ts" ]; then
   ACC="skills/asset-validation/scripts/acc.ts"
@@ -72,7 +76,7 @@ After updating acceptance artifacts, prefer the typed profile runner when it sup
 
 ## Observe Loop Details
 
-`acc start` idempotently prepares the round environment. It creates the sandbox workdir, the isolated acceptance DB root, `ACCEPTANCE_TMPDIR`, sandbox runtime roots, and sandbox Claude settings file before the asset-under-test starts. It preserves the invoking `HOME` so Claude/Code keeps the user's real auth and keychain state, while sandboxing acceptance state, temp files, marketplace/profile roots, and plugin staging through env vars plus Claude `--settings`/`--plugin-dir`. As a known exception, the observed CLI's own session logs (for example `~/.claude/projects` JSONL) land under the real home; treat that as expected, not as sandbox pollution, and never quote secrets from those logs.
+`acc start` idempotently prepares the round environment. It creates the sandbox workdir, the isolated acceptance DB root, `ACCEPTANCE_TMPDIR`, sandbox runtime roots, and host-specific launch settings before the asset-under-test starts. It preserves the invoking `HOME` so the observed CLI keeps the user's real auth and keychain state, while sandboxing acceptance state, temp files, marketplace/profile roots, and staged assets through host-specific launch arguments. As a known exception, the observed CLI's own session logs may land under the real home; treat that as expected, not as sandbox pollution, and never quote secrets from those logs.
 
 The returned env includes `ACCEPTANCE_HOME` for the isolated acceptance DB, plus `ACCEPTANCE_SANDBOX`, `ACCEPTANCE_TMPDIR`, `TMPDIR`/`TMP`/`TEMP` pointing to `ACCEPTANCE_TMPDIR`, `HOME` pointing at the invoking user home, and `CMDAI_CLAUDE_SETTINGS_PATH`.
 
@@ -82,7 +86,7 @@ Sandbox settings may contain auth env values copied only so `--bare` launches ca
 
 Observer scratch/evidence workdirs must be created under `ACCEPTANCE_TMPDIR` from the `acc start` output, or under the returned round sandbox. **DO NOT** create top-level `asset-validation-round*`, sibling `/tmp/acc-*` scratch directories, or fixed marker files directly under `/tmp` outside the current round boundary. `acc finalize` removes the round sandbox, kills only this round's `acc-<round_tag>` tmux session, cleans plugin staging, and cleans nested round sandboxes recorded in the sandboxed acceptance DB before deleting the parent sandbox.
 
-`acc launch --round <round_id> --cli <claude|codex>` starts tmux with the selected real asset-under-test CLI and the start output's isolation env. For Claude plugin assets it stages the plugin under the round sandbox and launches with `--bare`, an isolation `--append-system-prompt`, sandbox `--settings`, and `--plugin-dir`, not by writing bundled skills/agents into the real or symlinked HOME skill root. Standalone skill assets are staged the same way through a temporary sandbox-local plugin wrapper so the observed CLI can discover the skill by name without polluting real HOME skill roots or being shadowed by a global same-name skill.
+`acc launch --round <round_id> --cli <claude|codex>` starts tmux with the selected real asset-under-test CLI and the start output's isolation env. Claude plugin and standalone-skill assets are staged under the round sandbox and launched with `--bare`, an isolation `--append-system-prompt`, sandbox `--settings`, and `--plugin-dir`, not by writing into real or symlinked HOME skill roots. Codex standalone skills are copied to the round sandbox's `.agents/skills/<name>` repository discovery path. For either host, verify the executed asset path: if a same-name global skill wins, behavior may be green but isolated provenance is not, so record FAIL or CONDITIONAL rather than a clean PASS.
 
 `acc feed-task --round <round_id> --task t1` waits for the round pane input prompt, then sends the de-guided task body and records the fed task key on the round; the ladder PASS gate reads that recorded coverage, so always feed through `feed-task --round` or `profile run-task`. After `acc feed-task`, do not run an open-ended background poll and do not wait for the round DB row to leave `running` before `finalize` because only `acc finalize` changes that DB verdict. Use `acc wait --round <round_id> --idle-seconds <N> --max-seconds <M>` to wait until the pane stops changing (idle) or the max time elapses, then capture.
 

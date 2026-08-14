@@ -19,6 +19,7 @@ const temporaryRoots = new Set<string>();
 
 interface Harness {
   root: string;
+  binDir: string;
   env: Record<string, string>;
   callsPath: string;
   logDir: string;
@@ -53,7 +54,7 @@ function createHarness(): Harness {
   const fakeAgentBrowser = join(binDir, "agent-browser");
   writeFileSync(
     fakeAgentBrowser,
-    `#!/usr/bin/env bun
+    `#!${process.execPath}
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 const args = Bun.argv.slice(2);
@@ -109,6 +110,7 @@ process.exit(4);
 
   return {
     root,
+    binDir,
     callsPath,
     logDir,
     env: cleanEnvironment({
@@ -119,6 +121,35 @@ process.exit(4);
       FAKE_AGENT_BROWSER_LOG: callsPath,
     }),
   };
+}
+
+function installFakeCloudflare(harness: Harness): string {
+  const callsPath = join(harness.root, "cloudflared-calls.jsonl");
+  const fakeCloudflared = join(harness.binDir, "cloudflared");
+  writeFileSync(
+    fakeCloudflared,
+    `#!${process.execPath}
+import { appendFileSync } from "node:fs";
+const args = Bun.argv.slice(2);
+appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify(args) + "\\n");
+console.error("INF Your quick Tunnel has been created! Visit it at https://fixture-remote.trycloudflare.com");
+const stop = () => process.exit(0);
+process.on("SIGTERM", stop);
+process.on("SIGINT", stop);
+setInterval(() => {}, 1_000);
+`,
+  );
+  chmodSync(fakeCloudflared, 0o755);
+
+  const fakeCurl = join(harness.binDir, "curl");
+  writeFileSync(
+    fakeCurl,
+    `#!${process.execPath}
+process.stdout.write("200");
+`,
+  );
+  chmodSync(fakeCurl, 0o755);
+  return callsPath;
 }
 
 function runBh(
@@ -195,7 +226,7 @@ describe("CLI contracts", () => {
   test("version, usage, and error exit codes stay stable", () => {
     const version = runBh(["--version"]);
     expect(version.exitCode).toBe(0);
-    expect(version.stdout.toString()).toBe("browser-harness 0.3.0\n");
+    expect(version.stdout.toString()).toBe("browser-harness 0.4.0\n");
 
     const usage = runBh([]);
     expect(usage.exitCode).toBe(1);
@@ -205,6 +236,12 @@ describe("CLI contracts", () => {
     const missingTarget = runBh(["prepare"]);
     expect(missingTarget.exitCode).toBe(2);
     expect(missingTarget.stderr.toString()).toContain("usage: bh prepare <target>");
+
+    const missingPublishTarget = runBh(["publish"]);
+    expect(missingPublishTarget.exitCode).toBe(2);
+    expect(missingPublishTarget.stderr.toString()).toContain(
+      "usage: bh publish <project-dir>",
+    );
 
     const unknown = runBh(["unknown"]);
     expect(unknown.exitCode).toBe(1);
@@ -498,4 +535,131 @@ process.on("SIGINT", () => { server.stop(true); process.exit(0); });
       : [];
     expect(stateFiles).toEqual([]);
   }, 10_000);
+});
+
+describe("public tunnel lifecycle", () => {
+  test("share reuses prepare, publish starts both, and cleanup removes all state", async () => {
+    const harness = createHarness();
+    const cloudflaredCallsPath = installFakeCloudflare(harness);
+    const projectDir = join(harness.root, "public-project");
+    const serverPath = join(projectDir, "server.ts");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, "package.json"),
+      JSON.stringify({
+        name: "fixture",
+        scripts: {
+          dev: `${quoteForShell(process.execPath)} ${quoteForShell(serverPath)}`,
+        },
+      }),
+    );
+    writeFileSync(
+      serverPath,
+      `const server = Bun.serve({ port: 0, fetch: () => new Response("public-ok") });
+console.log(\`http://localhost:\${server.port}\`);
+process.on("SIGTERM", () => { server.stop(true); process.exit(0); });
+process.on("SIGINT", () => { server.stop(true); process.exit(0); });
+`,
+    );
+
+    const env: Record<string, string> = {
+      ...harness.env,
+      BASE_PATH: "/preview/",
+      BH_ITERATION: "public-test",
+      BH_DEV_PID_WAIT_ATTEMPTS: "10",
+    };
+
+    const trackedPids: number[] = [];
+    try {
+      const prepared = runBh(["prepare", projectDir], {
+        cwd: harness.root,
+        env,
+      });
+      expect(prepared.exitCode).toBe(0);
+      const appUrl = assignment(prepared.stdout.toString(), "APP_URL");
+      const firstDevPid = Number(
+        assignment(prepared.stdout.toString(), "DEV_SERVER_PID"),
+      );
+      trackedPids.push(firstDevPid);
+
+      const shared = runBh(["share", projectDir], {
+        cwd: harness.root,
+        env,
+      });
+      if (shared.exitCode !== 0) {
+        throw new Error(`share failed:\n${shared.stderr.toString()}`);
+      }
+      expect(assignment(shared.stdout.toString(), "APP_URL")).toBe(appUrl);
+      expect(assignment(shared.stdout.toString(), "REMOTE_REVIEW_URL")).toBe(
+        "https://fixture-remote.trycloudflare.com/preview/",
+      );
+      const firstTunnelPid = Number(
+        assignment(shared.stdout.toString(), "CLOUDFLARED_PID"),
+      );
+      trackedPids.push(firstTunnelPid);
+      expect(isAlive(firstDevPid)).toBe(true);
+      expect(isAlive(firstTunnelPid)).toBe(true);
+
+      const invocation = JSON.parse(
+        readFileSync(cloudflaredCallsPath, "utf8").trim().split("\n")[0] || "[]",
+      ) as string[];
+      expect(invocation).toContain("tunnel");
+      expect(invocation).toContain("--config");
+      expect(invocation).toContain("--url");
+      expect(invocation).toContain(new URL(appUrl).origin);
+      expect(invocation).toContain("--http-host-header");
+      expect(invocation).toContain(new URL(appUrl).host);
+
+      const cleanedShared = runBh(["cleanup", projectDir], {
+        cwd: harness.root,
+        env,
+      });
+      expect(cleanedShared.exitCode).toBe(0);
+      expect(await waitForExit(firstTunnelPid)).toBe(true);
+      expect(await waitForExit(firstDevPid)).toBe(true);
+
+      const published = runBh(["publish", projectDir], {
+        cwd: harness.root,
+        env,
+      });
+      if (published.exitCode !== 0) {
+        throw new Error(`publish failed:\n${published.stderr.toString()}`);
+      }
+      expect(assignment(published.stdout.toString(), "REMOTE_REVIEW_URL")).toBe(
+        "https://fixture-remote.trycloudflare.com/preview/",
+      );
+      const publishedDevPid = Number(
+        assignment(published.stdout.toString(), "DEV_SERVER_PID"),
+      );
+      const publishedTunnelPid = Number(
+        assignment(published.stdout.toString(), "CLOUDFLARED_PID"),
+      );
+      trackedPids.push(publishedDevPid, publishedTunnelPid);
+      expect(isAlive(publishedDevPid)).toBe(true);
+      expect(isAlive(publishedTunnelPid)).toBe(true);
+
+      const cleanedPublished = runBh(["cleanup", projectDir], {
+        cwd: harness.root,
+        env,
+      });
+      expect(cleanedPublished.exitCode).toBe(0);
+      expect(await waitForExit(publishedTunnelPid)).toBe(true);
+      expect(await waitForExit(publishedDevPid)).toBe(true);
+
+      const stateFiles = existsSync(harness.logDir)
+        ? readdirSync(harness.logDir).filter(
+            (name) =>
+              name.endsWith(".pid") ||
+              name.endsWith(".label") ||
+              name.endsWith(".url"),
+          )
+        : [];
+      expect(stateFiles).toEqual([]);
+    } finally {
+      runBh(["cleanup", projectDir], { cwd: harness.root, env });
+      for (const pid of trackedPids) {
+        if (isAlive(pid)) process.kill(pid, "SIGKILL");
+      }
+    }
+  }, 45_000);
 });

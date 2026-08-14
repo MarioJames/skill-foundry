@@ -36,7 +36,7 @@ All state reads/writes go through `scripts/acc.ts` on the Bun runtime. If a read
 
 State lives in `~/.acceptance/state.sqlite3`; `ACCEPTANCE_HOME` overrides for tests or isolation. ACC requires Bun and uses `bun:sqlite`; its bundled runtime has no Python dependency. Review of an external skill may separately invoke the active skill-creator's canonical validator, including its external Python fallback documented in `references/review-and-fix.md`. Select CLI at start/launch: ask `claude`/`codex` in attended mode, default `claude` when absent.
 
-`acc start` idempotently prepares sandbox workdir, isolated DB root, `ACCEPTANCE_TMPDIR`, runtime roots, and Claude settings. Use returned `isolation_env`.
+`acc start` idempotently prepares sandbox workdir, isolated DB root, `ACCEPTANCE_TMPDIR`, runtime roots, and host-specific launch settings. Use returned `isolation_env`.
 
 ## Entry Routing
 

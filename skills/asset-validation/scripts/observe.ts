@@ -14,6 +14,7 @@ import { RuntimeActionError, TaskNotFoundError } from "./errors.ts";
 import {
   cleanupPluginInstall,
   installAgentSource,
+  installCodexSkillSource,
   installPluginSource,
   installSkillSource,
 } from "./plugin-runtime.ts";
@@ -30,6 +31,7 @@ export {
   cleanupPluginInstall,
   cleanupSandbox as cleanup,
   installAgentSource,
+  installCodexSkillSource,
   installPluginSource,
   installSkillSource,
   isolationEnv,
@@ -221,12 +223,12 @@ export function waitForPrompt(
     } catch (error) {
       if (!(error instanceof CalledProcessError)) throw error;
     }
+    if (hasInputPrompt(text)) return true;
     if (isWorkspaceTrustPrompt(text)) {
       runner(["tmux", "send-keys", "-t", pane, "Enter"]);
       sleepSeconds(interval);
       continue;
     }
-    if (text.includes("❯")) return true;
     sleepSeconds(interval);
   }
   return false;
@@ -250,7 +252,7 @@ export function waitForIdle(
       if (!(error instanceof CalledProcessError)) throw error;
     }
     const compacted = compactText(text);
-    const promptVisible = text.includes("❯");
+    const promptVisible = hasInputPrompt(text);
     const now = Date.now();
     if (compacted !== lastCompact) {
       lastCompact = compacted;
@@ -263,8 +265,22 @@ export function waitForIdle(
   return false;
 }
 
-function isWorkspaceTrustPrompt(text: string): boolean {
-  return text.includes("Yes, I trust this folder") && text.includes("Enter to confirm");
+export function isWorkspaceTrustPrompt(text: string): boolean {
+  const claudePrompt = text.includes("Yes, I trust this folder")
+    && text.includes("Enter to confirm");
+  const codexPrompt = text.includes("Do you trust the contents of this directory?")
+    && text.includes("Press enter to continue");
+  return claudePrompt || codexPrompt;
+}
+
+export function hasInputPrompt(text: string): boolean {
+  for (const line of String(text).split(/\r?\n/u)) {
+    const stripped = line.trimStart();
+    if (!stripped.startsWith("❯") && !stripped.startsWith("›")) continue;
+    if (/^[❯›]\s+\d+\.\s/u.test(stripped)) continue;
+    return true;
+  }
+  return false;
 }
 
 function compactText(text: string): string {

@@ -10,26 +10,27 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  appUrlFile,
   BhError,
   ensureLogDir,
   fail,
   findExecutable,
   isProcessAlive,
-  labelFile,
   log,
   logDir,
-  parsePositiveInteger,
-  pidFile,
-  shellQuote,
   sleep,
+  tunnelLabelFile,
+  tunnelPidFile,
+  tunnelUrlFile,
   warn,
 } from "./common.ts";
 
-const DEV_SERVER_MODULE = fileURLToPath(import.meta.url);
+const PUBLIC_TUNNEL_MODULE = fileURLToPath(import.meta.url);
+const TUNNEL_PID_WAIT_ATTEMPTS = 30;
+const TUNNEL_URL_WAIT_ATTEMPTS = 30;
+const TUNNEL_READY_WAIT_ATTEMPTS = 30;
 
-interface DevServerInfo {
-  appUrl: string;
+export interface PublicTunnelInfo {
+  publicUrl: string;
   pid: number;
   logPath: string;
 }
@@ -74,40 +75,6 @@ function syncCommand(
   }
 }
 
-export function resolveDevCommand(projectDir: string): string {
-  if (!projectDir || !existsSync(projectDir)) {
-    fail(2, `项目目录不存在：${projectDir}`);
-  }
-
-  const packagePath = join(projectDir, "package.json");
-  if (!existsSync(packagePath)) {
-    fail(2, `目录缺少 package.json：${projectDir}`);
-  }
-
-  if (process.env.BH_DEV_COMMAND) {
-    return process.env.BH_DEV_COMMAND;
-  }
-
-  let scripts: Record<string, unknown> = {};
-  try {
-    const packageJson = JSON.parse(readFileSync(packagePath, "utf8")) as {
-      scripts?: Record<string, unknown>;
-    };
-    scripts = packageJson.scripts || {};
-  } catch {
-    // 与旧实现一致：无法读取 scripts 时最终走显式命令错误。
-  }
-
-  for (const script of ["dev", "start", "serve"]) {
-    if (scripts[script]) return `${shellQuote(process.execPath)} run ${script}`;
-  }
-
-  fail(
-    2,
-    "package.json 里找不到 dev/start/serve 之一；请用 BH_DEV_COMMAND=... 显式指定",
-  );
-}
-
 function removeLaunchctlJob(label: string): void {
   if (!label || process.platform !== "darwin" || !findExecutable("launchctl")) {
     return;
@@ -141,7 +108,7 @@ function signalPid(pid: number, signal: NodeJS.Signals): void {
   try {
     process.kill(pid, signal);
   } catch {
-    // 进程可能在信号发送前已经退出。
+    // 进程可能已经退出。
   }
 }
 
@@ -166,15 +133,15 @@ function killDescendants(
   }
 }
 
-export async function stopDevServer(projectDir: string): Promise<void> {
-  const statePidFile = pidFile(projectDir);
-  const stateLabelFile = labelFile(projectDir);
-  rmSync(appUrlFile(projectDir), { force: true });
+export async function stopPublicTunnel(projectDir: string): Promise<void> {
+  const statePidFile = tunnelPidFile(projectDir);
+  const stateLabelFile = tunnelLabelFile(projectDir);
   const label = readText(stateLabelFile).trim();
   rmSync(stateLabelFile, { force: true });
+  rmSync(tunnelUrlFile(projectDir), { force: true });
 
   if (!existsSync(statePidFile)) {
-    log("无 pid 文件，跳过");
+    log("无 tunnel pid 文件，跳过");
     removeLaunchctlJob(label);
     return;
   }
@@ -187,7 +154,7 @@ export async function stopDevServer(projectDir: string): Promise<void> {
   }
 
   if (!isProcessAlive(pid)) {
-    log(`pid ${pid} 不存活，跳过`);
+    log(`tunnel pid ${pid} 不存活，跳过`);
     removeLaunchctlJob(label);
     return;
   }
@@ -197,41 +164,57 @@ export async function stopDevServer(projectDir: string): Promise<void> {
   const useProcessGroup =
     pgid !== null && currentPgid !== null && pgid !== currentPgid;
 
-  if (useProcessGroup) {
-    signalProcessGroup(pgid, "SIGTERM");
-  } else {
-    killDescendants(pid, "SIGTERM");
-  }
+  if (useProcessGroup) signalProcessGroup(pgid, "SIGTERM");
+  else killDescendants(pid, "SIGTERM");
   signalPid(pid, "SIGTERM");
   removeLaunchctlJob(label);
 
   for (let attempt = 0; attempt < 10; attempt += 1) {
     if (!isProcessAlive(pid)) {
-      log(`dev server ${pid} 已退出`);
+      log(`Cloudflare tunnel ${pid} 已退出`);
       return;
     }
-    await sleep(1_000);
+    await sleep(500);
   }
 
-  if (useProcessGroup && pgid !== null) {
-    signalProcessGroup(pgid, "SIGKILL");
-  } else {
-    killDescendants(pid, "SIGKILL");
-  }
+  if (useProcessGroup && pgid !== null) signalProcessGroup(pgid, "SIGKILL");
+  else killDescendants(pid, "SIGKILL");
   signalPid(pid, "SIGKILL");
 
   for (let attempt = 0; attempt < 40 && isProcessAlive(pid); attempt += 1) {
     await sleep(50);
   }
-  log(`dev server ${pid} force-killed`);
+  log(`Cloudflare tunnel ${pid} force-killed`);
+}
+
+function resolveTunnelCommand(originUrl: string, originHost: string): string[] {
+  const executable = findExecutable("cloudflared");
+  if (!executable) {
+    fail(2, "未找到 cloudflared；请先安装 Cloudflare Tunnel 客户端");
+  }
+
+  const configPath = join(logDir(), "quick-tunnel-empty.yml");
+  writeFileSync(configPath, "");
+
+  return [
+    executable,
+    "tunnel",
+    "--config",
+    configPath,
+    "--no-autoupdate",
+    "--url",
+    originUrl,
+    "--http-host-header",
+    originHost,
+  ];
 }
 
 function launchWithLaunchctl(
   label: string,
-  devLog: string,
+  tunnelLog: string,
   statePidFile: string,
   projectDir: string,
-  devCommand: string,
+  command: string[],
 ): void {
   const result = syncCommand([
     "launchctl",
@@ -239,31 +222,31 @@ function launchWithLaunchctl(
     "-l",
     label,
     "-o",
-    devLog,
+    tunnelLog,
     "-e",
-    devLog,
+    tunnelLog,
     "--",
     process.execPath,
-    DEV_SERVER_MODULE,
+    PUBLIC_TUNNEL_MODULE,
     "__worker",
     statePidFile,
     projectDir,
-    devCommand,
+    JSON.stringify(command),
   ]);
   if (result.exitCode !== 0) {
-    fail(2, `launchctl submit 失败（exit ${result.exitCode}）`);
+    fail(2, `launchctl submit Cloudflare tunnel 失败（exit ${result.exitCode}）`);
   }
 }
 
 function launchDetached(
-  devLog: string,
+  tunnelLog: string,
   statePidFile: string,
   projectDir: string,
-  devCommand: string,
+  command: string[],
 ): number {
-  const logDescriptor = openSync(devLog, "a");
+  const logDescriptor = openSync(tunnelLog, "a");
   try {
-    const child = Bun.spawn(["bash", "-lc", devCommand], {
+    const child = Bun.spawn(command, {
       cwd: projectDir,
       env: process.env,
       stdin: "ignore",
@@ -279,19 +262,27 @@ function launchDetached(
   }
 }
 
-function readPortFromLog(path: string): string {
-  const match = readText(path).match(
-    /http:\/\/(?:localhost|127\.0\.0\.1):([0-9]+)/,
-  );
-  return match?.[1] || "";
+function quickTunnelUrl(path: string): string {
+  return readText(path).match(
+    /https:\/\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.trycloudflare\.com/,
+  )?.[0] || "";
 }
 
-function curlStatus(url: string, noProxy: string): string {
+function appendAppPath(publicBase: string, appUrl: URL): string {
+  const result = new URL(publicBase);
+  result.pathname = appUrl.pathname;
+  result.search = appUrl.search;
+  result.hash = appUrl.hash;
+  return result.toString();
+}
+
+function curlStatus(url: string): string {
   const result = syncCommand(
     [
       "curl",
-      "--noproxy",
-      noProxy,
+      "-L",
+      "--max-time",
+      "10",
       "-s",
       "-o",
       "/dev/null",
@@ -305,38 +296,53 @@ function curlStatus(url: string, noProxy: string): string {
   return /^\d{3}$/.test(value) ? value : "000";
 }
 
-export async function startDevServer(
+export async function startPublicTunnel(
   iteration: string,
   projectDir: string,
-  devCommand: string,
-): Promise<DevServerInfo> {
+  appUrlValue: string,
+): Promise<PublicTunnelInfo> {
+  let appUrl: URL;
+  try {
+    appUrl = new URL(appUrlValue);
+    if (appUrl.protocol !== "http:" && appUrl.protocol !== "https:") {
+      throw new Error();
+    }
+  } catch {
+    fail(2, `APP_URL 不是有效 HTTP(S) URL：${appUrlValue}`);
+  }
+
   ensureLogDir();
   const timestamp = Math.floor(Date.now() / 1_000);
-  const devLog = join(logDir(), `dev-${iteration}-${timestamp}.log`);
-  const statePidFile = pidFile(projectDir);
-  const stateLabelFile = labelFile(projectDir);
+  const tunnelLog = join(logDir(), `tunnel-${iteration}-${timestamp}.log`);
+  const statePidFile = tunnelPidFile(projectDir);
+  const stateLabelFile = tunnelLabelFile(projectDir);
+  const command = resolveTunnelCommand(appUrl.origin, appUrl.host);
 
   const oldPid = readPid(statePidFile);
   if (oldPid !== null && isProcessAlive(oldPid)) {
-    warn(`已有 dev server pid ${oldPid} 仍存活，先停掉`);
-    await stopDevServer(projectDir);
+    warn(`已有 Cloudflare tunnel pid ${oldPid} 仍存活，先停掉`);
+    await stopPublicTunnel(projectDir);
+  } else {
+    rmSync(statePidFile, { force: true });
+    rmSync(stateLabelFile, { force: true });
+    rmSync(tunnelUrlFile(projectDir), { force: true });
   }
 
-  log(`启动 dev：${devCommand}`);
-  log(`log: ${devLog}`);
+  log(`启动 Cloudflare tunnel，origin: ${appUrl.origin}`);
+  log(`log: ${tunnelLog}`);
 
-  let devPid: number | null = null;
+  let tunnelPid: number | null = null;
   if (process.platform === "darwin" && findExecutable("launchctl")) {
     const sanitizedIteration = iteration.replace(/[^A-Za-z0-9_.-]/g, "-");
-    const label = `com.codex.browser-harness.${sanitizedIteration}.${timestamp}`;
+    const label = `com.codex.browser-harness.tunnel.${sanitizedIteration}.${timestamp}`;
     writeFileSync(stateLabelFile, `${label}\n`);
     try {
       launchWithLaunchctl(
         label,
-        devLog,
+        tunnelLog,
         statePidFile,
         projectDir,
-        devCommand,
+        command,
       );
     } catch (error) {
       rmSync(statePidFile, { force: true });
@@ -345,101 +351,91 @@ export async function startDevServer(
       throw error;
     }
 
-    const pidWaitAttempts = parsePositiveInteger(
-      process.env.BH_DEV_PID_WAIT_ATTEMPTS,
-      30,
-    );
-    for (let attempt = 0; attempt < pidWaitAttempts; attempt += 1) {
-      devPid = readPid(statePidFile);
-      if (devPid !== null && isProcessAlive(devPid)) break;
-      await sleep(1_000);
+    for (let attempt = 0; attempt < TUNNEL_PID_WAIT_ATTEMPTS; attempt += 1) {
+      tunnelPid = readPid(statePidFile);
+      if (tunnelPid !== null && isProcessAlive(tunnelPid)) break;
+      await sleep(500);
     }
-    if (devPid === null || !isProcessAlive(devPid)) {
-      tailLog(devLog);
-      await stopDevServer(projectDir);
-      fail(2, "launchctl job 没有发布存活 pid");
+    if (tunnelPid === null || !isProcessAlive(tunnelPid)) {
+      tailLog(tunnelLog);
+      await stopPublicTunnel(projectDir);
+      fail(2, "Cloudflare tunnel job 没有发布存活 pid");
     }
   } else {
-    devPid = launchDetached(devLog, statePidFile, projectDir, devCommand);
+    tunnelPid = launchDetached(tunnelLog, statePidFile, projectDir, command);
   }
 
-  log(`dev server pid: ${devPid}`);
+  log(`Cloudflare tunnel pid: ${tunnelPid}`);
 
   try {
-    const portWaitAttempts = parsePositiveInteger(
-      process.env.BH_DEV_PORT_WAIT_ATTEMPTS,
-      60,
-    );
-    let port = "";
-    for (let attempt = 0; attempt < portWaitAttempts; attempt += 1) {
-      if (!isProcessAlive(devPid)) {
-        tailLog(devLog);
-        fail(2, "dev 进程在打印端口前退出");
+    let publicUrl = "";
+    for (
+      let attempt = 0;
+      attempt < TUNNEL_URL_WAIT_ATTEMPTS && !publicUrl;
+      attempt += 1
+    ) {
+      if (!isProcessAlive(tunnelPid)) {
+        tailLog(tunnelLog);
+        fail(2, "Cloudflare tunnel 在生成公网 URL 前退出");
       }
-      port = readPortFromLog(devLog);
-      if (port) break;
-      await sleep(2_000);
+      const base = quickTunnelUrl(tunnelLog);
+      if (base) publicUrl = appendAppPath(base, appUrl);
+      else await sleep(500);
     }
-    if (!port) {
-      tailLog(devLog);
-      fail(2, "等待 dev 端口超时");
+    if (!publicUrl) {
+      tailLog(tunnelLog);
+      fail(2, "等待 Quick Tunnel 公网 URL 超时");
     }
 
-    const appHost = process.env.BH_APP_HOST || "localhost";
-    const basePath = process.env.BASE_PATH || "/";
-    const curlNoProxy = process.env.BH_CURL_NO_PROXY || "*";
-    const appUrl = `http://${appHost}:${port}${basePath}`;
-
-    const readyWaitAttempts = parsePositiveInteger(
-      process.env.BH_DEV_READY_WAIT_ATTEMPTS,
-      60,
-    );
     let readyCode = "000";
-    for (let attempt = 0; attempt < readyWaitAttempts; attempt += 1) {
-      readyCode = curlStatus(appUrl, curlNoProxy);
-      const numericCode = Number(readyCode);
-      if (readyCode !== "000" && numericCode < 500) break;
-      await sleep(2_000);
+    for (let attempt = 0; attempt < TUNNEL_READY_WAIT_ATTEMPTS; attempt += 1) {
+      if (!isProcessAlive(tunnelPid)) {
+        tailLog(tunnelLog);
+        fail(2, "Cloudflare tunnel 在公网探活前退出");
+      }
+      readyCode = curlStatus(publicUrl);
+      if (readyCode !== "000" && Number(readyCode) < 500) break;
+      await sleep(1_000);
     }
     if (readyCode === "000" || Number(readyCode) >= 500) {
-      tailLog(devLog);
-      fail(3, `APP_URL ${appUrl} 不可达`);
+      tailLog(tunnelLog);
+      fail(3, `远程走查 URL ${publicUrl} 不可达`);
     }
 
-    log(`ready: ${appUrl} (http ${readyCode})`);
-    writeFileSync(appUrlFile(projectDir), `${appUrl}\n`);
-    return { appUrl, pid: devPid, logPath: devLog };
+    writeFileSync(tunnelUrlFile(projectDir), `${publicUrl}\n`);
+    log(`remote ready: ${publicUrl} (http ${readyCode})`);
+    return { publicUrl, pid: tunnelPid, logPath: tunnelLog };
   } catch (error) {
-    await stopDevServer(projectDir);
+    await stopPublicTunnel(projectDir);
     throw error;
   }
 }
 
-export function readPreparedAppUrl(projectDir: string): string {
-  const pid = readPid(pidFile(projectDir));
-  const appUrl = readText(appUrlFile(projectDir)).trim();
-  if (pid === null || !isProcessAlive(pid) || !/^https?:\/\//.test(appUrl)) {
-    fail(2, `项目尚未由 bh prepare 启动，无法远程发布：${projectDir}`);
-  }
-  return appUrl;
-}
-
 async function runWorker(arguments_: string[]): Promise<number> {
-  const [mode, statePidFile, projectDir, devCommand] = arguments_;
+  const [mode, statePidFile, projectDir, commandJson] = arguments_;
+  if (mode !== "__worker" || !statePidFile || !projectDir || !commandJson) {
+    process.stderr.write("browser-harness tunnel worker: invalid arguments\n");
+    return 2;
+  }
+
+  let command: unknown;
+  try {
+    command = JSON.parse(commandJson);
+  } catch {
+    return 2;
+  }
   if (
-    mode !== "__worker" ||
-    !statePidFile ||
-    !projectDir ||
-    devCommand === undefined
+    !Array.isArray(command) ||
+    command.length === 0 ||
+    command.some((value) => typeof value !== "string" || !value)
   ) {
-    process.stderr.write("browser-harness dev worker: invalid arguments\n");
     return 2;
   }
 
   writeFileSync(statePidFile, `${process.pid}\n`);
   let child: ReturnType<typeof Bun.spawn>;
   try {
-    child = Bun.spawn(["bash", "-lc", devCommand], {
+    child = Bun.spawn(command as string[], {
       cwd: projectDir,
       env: process.env,
       stdin: "ignore",
@@ -448,7 +444,7 @@ async function runWorker(arguments_: string[]): Promise<number> {
     });
   } catch (error) {
     process.stderr.write(
-      `browser-harness dev worker: ${error instanceof Error ? error.message : String(error)}\n`,
+      `browser-harness tunnel worker: ${error instanceof Error ? error.message : String(error)}\n`,
     );
     return 127;
   }
