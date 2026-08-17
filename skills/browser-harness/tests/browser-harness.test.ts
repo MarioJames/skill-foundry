@@ -13,6 +13,8 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
+import { projectProfileName } from "../scripts/lib/common.ts";
+
 const skillDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const bhEntry = join(skillDir, "scripts", "bh.ts");
 const temporaryRoots = new Set<string>();
@@ -226,7 +228,7 @@ describe("CLI contracts", () => {
   test("version, usage, and error exit codes stay stable", () => {
     const version = runBh(["--version"]);
     expect(version.exitCode).toBe(0);
-    expect(version.stdout.toString()).toBe("browser-harness 0.4.0\n");
+    expect(version.stdout.toString()).toBe("browser-harness 0.5.0\n");
 
     const usage = runBh([]);
     expect(usage.exitCode).toBe(1);
@@ -332,6 +334,58 @@ describe("CLI contracts", () => {
       "--headed",
     ]);
   });
+
+  test("default profile follows the nearest project directory", () => {
+    const harness = createHarness();
+    const projectDir = join(harness.root, "workspaces", "Lobe", "Admin UI");
+    const nestedDir = join(projectDir, "src", "features");
+    mkdirSync(join(projectDir, ".git"), { recursive: true });
+    mkdirSync(nestedDir, { recursive: true });
+
+    const expected = join(harness.root, "profiles", "lobe-admin-ui");
+    const profile = runBh(["profile-dir"], {
+      cwd: nestedDir,
+      env: harness.env,
+    });
+    expect(profile.exitCode).toBe(0);
+    expect(profile.stdout.toString()).toBe(`${expected}\n`);
+
+    const login = runBh(["login", "https://example.test/login"], {
+      cwd: nestedDir,
+      env: harness.env,
+    });
+    expect(login.exitCode).toBe(0);
+    expect(calls(harness.callsPath)).toContainEqual([
+      "open",
+      "https://example.test/login",
+      "--profile",
+      expected,
+      "--headed",
+    ]);
+  });
+
+  test("explicit and environment profiles override the project default", () => {
+    const harness = createHarness();
+    const projectDir = join(harness.root, "workspaces", "lobe", "admin");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(join(projectDir, "package.json"), "{}");
+
+    const explicit = runBh(["profile-dir", "tenant-a"], {
+      cwd: projectDir,
+      env: harness.env,
+    });
+    expect(explicit.stdout.toString()).toBe(
+      `${join(harness.root, "profiles", "tenant-a")}\n`,
+    );
+
+    const configured = runBh(["profile-dir"], {
+      cwd: projectDir,
+      env: { ...harness.env, BH_DEFAULT_PROFILE: "shared-admin" },
+    });
+    expect(configured.stdout.toString()).toBe(
+      `${join(harness.root, "profiles", "shared-admin")}\n`,
+    );
+  });
 });
 
 describe("evidence collection", () => {
@@ -395,9 +449,15 @@ describe("evidence collection", () => {
     expect(result.exitCode).toBe(0);
     const summary = JSON.parse(result.stdout.toString()) as {
       target: string;
+      profile: string;
+      profile_dir: string;
       artifact_errors: string[];
     };
     expect(summary.target).toBe("https://example.test/app");
+    expect(summary.profile).toBe(projectProfileName(harness.root));
+    expect(summary.profile_dir).toBe(
+      join(harness.root, "profiles", summary.profile),
+    );
     expect(summary.artifact_errors).toEqual([]);
     expect(calls(harness.callsPath).some((args) => args[0] === "open")).toBe(false);
   });

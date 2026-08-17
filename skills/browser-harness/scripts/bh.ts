@@ -35,7 +35,7 @@ subcommands:
   cleanup [target]                          停止 tunnel + dev；传相同 target
   login <url> [--profile <name>]
   collect-evidence <url> [--profile <n>] [--har] [--reuse-page]
-  profile-dir [name]                        打印 profile 目录路径（供直接调 agent-browser）
+  profile-dir [name]                        打印项目默认或指定 profile 目录
   --version
 `);
 }

@@ -110,7 +110,7 @@ journey 的登录态由 testing-suite 自己管理（`--auth open` 保存 storag
 
 ```bash
 eval "$(bun "$BH_DIR/bh.ts" prepare .)"
-bun "$BH_DIR/bh.ts" login "$APP_URL/login"     # 必要时；默认 profile
+bun "$BH_DIR/bh.ts" login "$APP_URL/login"     # 必要时；默认使用当前项目 profile
 
 # agent 直接驱动 agent-browser；用 profile-dir 复用 bh 持久化的登录态
 PROFILE_DIR="$(bun "$BH_DIR/bh.ts" profile-dir)"
@@ -132,7 +132,7 @@ bun "$BH_DIR/bh.ts" cleanup
 
 ```bash
 eval "$(bun "$BH_DIR/bh.ts" prepare https://staging.example.com)"
-bun "$BH_DIR/bh.ts" login "$APP_URL/login"     # headed 弹窗，人工登一次
+bun "$BH_DIR/bh.ts" login "$APP_URL/login"     # headed 弹窗，人工登一次；按项目持久化
 bun "$BH_DIR/bh.ts" cleanup
 # 后续任何场景默认自动复用该登录态；多套登录态才用 --profile <name> 区分
 ```
@@ -204,13 +204,15 @@ agent-browser network request <requestId>                              # 看某�
 
 ### --profile 是可选扩展 flag
 
-默认情况下不用传 `--profile`：所有命令（`login` / `collect-evidence`，以及通过 `profile-dir` 拿到路径后直接调的 `agent-browser`）都用 browser-harness 自己的默认 profile，登录态因此默认就持久、跨调用自动复用，调用方不必每次去记/找之前用的路径。
+默认情况下不用传 `--profile`：`login` / `collect-evidence` 和无参 `profile-dir` 会从当前工作目录向上查找最近的 `.git` 或 `package.json` 作为项目根，并生成项目 profile。命名规则统一为 `<项目根父目录>-<项目根目录>`，转小写并把连续空格、标点归一成 `-`；例如在 `/workspaces/lobe/admin` 或其子目录运行时，默认 profile 为 `lobe-admin`，目录为 `~/.browser-harness/profiles/lobe-admin`。找不到项目标记时以当前工作目录作为项目根。
 
-`--profile <name>` 只在你需要**同时维护多套登录态**时才用（例如 `prod-monitor` 与 `staging`、不同租户/账号）。技能把名字解析成私有隐藏目录 `~/.browser-harness/profiles/<name>`（默认是 `default`）再传给 agent-browser，`login` 写入与 `collect-evidence` 读取指向同一目录。
+因此同一项目的子目录会自动复用同一份登录态。若命令的当前目录与被验收项目不同，先在项目目录执行，或显式传 `--profile`，不要依赖另一仓库的上下文 profile。
+
+`--profile <name>` 只在你需要覆盖项目默认值或**同时维护多套登录态**时使用（例如 `prod-monitor` 与 `staging`、不同租户/账号）。技能把名字解析成私有隐藏目录 `~/.browser-harness/profiles/<name>` 再传给 agent-browser，`login` 写入与 `collect-evidence` 读取指向同一目录。
 
 C 场景里 agent 直接调 `agent-browser` 时，用 `--profile "$(bun "$BH_DIR/bh.ts" profile-dir [name])"` 取到该目录路径即可复用同一份登录态，不必记忆技能内部布局。
 
-进阶：`BH_PROFILE_ROOT` 改存储根目录，`BH_DEFAULT_PROFILE` 改默认 profile 名；`--profile` 也可直接传一个路径（含 `/` 或以 `~` 开头）绕过技能目录。
+覆盖优先级为：显式 `--profile` / `profile-dir <name>` > `BH_DEFAULT_PROFILE` > 当前项目自动命名。`BH_PROFILE_ROOT` 可改存储根目录；`--profile` 也可直接传一个路径（含 `/` 或以 `~` 开头）绕过技能目录。
 
 ## Runtime Pitfalls
 

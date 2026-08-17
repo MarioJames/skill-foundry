@@ -1,12 +1,13 @@
 import {
   accessSync,
   constants,
+  existsSync,
   mkdirSync,
   realpathSync,
 } from "node:fs";
-import { delimiter, join } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 
-export const BH_VERSION = "0.4.0";
+export const BH_VERSION = "0.5.0";
 export const BH_MIN_AGENT_BROWSER_VERSION = "0.29.0";
 
 export class BhError extends Error {
@@ -50,12 +51,46 @@ export function profileRoot(): string {
   );
 }
 
-export function defaultProfile(): string {
-  return process.env.BH_DEFAULT_PROFILE || "default";
+function profileNameSegment(value: string): string {
+  return (
+    value
+      .normalize("NFKC")
+      .toLowerCase()
+      .replace(/[^\p{Letter}\p{Number}]+/gu, "-")
+      .replace(/^-+|-+$/g, "") || "project"
+  );
 }
 
-export function profileDir(name = ""): string {
-  const effectiveName = name || defaultProfile();
+export function profileProjectRoot(startDir = process.cwd()): string {
+  const original = physicalProjectPath(resolve(startDir));
+  let current = original;
+
+  while (true) {
+    if (
+      existsSync(join(current, ".git")) ||
+      existsSync(join(current, "package.json"))
+    ) {
+      return current;
+    }
+    const parent = dirname(current);
+    if (parent === current) return original;
+    current = parent;
+  }
+}
+
+export function projectProfileName(startDir = process.cwd()): string {
+  const projectRoot = profileProjectRoot(startDir);
+  const project = profileNameSegment(basename(projectRoot));
+  const parent = profileNameSegment(basename(dirname(projectRoot)));
+  return parent === project ? project : `${parent}-${project}`;
+}
+
+export function defaultProfile(startDir = process.cwd()): string {
+  return process.env.BH_DEFAULT_PROFILE || projectProfileName(startDir);
+}
+
+export function profileDir(name = "", startDir = process.cwd()): string {
+  const effectiveName = name || defaultProfile(startDir);
   if (effectiveName.includes("/") || effectiveName.startsWith("~")) {
     return effectiveName;
   }

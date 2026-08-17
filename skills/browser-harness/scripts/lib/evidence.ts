@@ -132,7 +132,8 @@ export async function collectEvidence(
 ): Promise<EvidenceSummary> {
   requireAgentBrowser();
 
-  const profilePath = profileDir(profile);
+  const effectiveProfile = profile || defaultProfile();
+  const profilePath = profileDir(effectiveProfile);
   const profileArguments = ["--profile", profilePath];
 
   if (har) {
@@ -146,9 +147,9 @@ export async function collectEvidence(
   }
 
   if (reusePage) {
-    log(`reuse current page for ${url} (profile=${profile || "<default>"})`);
+    log(`reuse current page for ${url} (profile=${effectiveProfile})`);
   } else {
-    log(`open ${url} (profile=${profile || "<default>"})`);
+    log(`open ${url} (profile=${effectiveProfile})`);
     const openExitCode = await runAgentBrowserToStderr([
       "open",
       url,
@@ -265,7 +266,7 @@ export async function collectEvidence(
 
   const summary: EvidenceSummary = {
     target: url,
-    profile: profile || defaultProfile(),
+    profile: effectiveProfile,
     profile_dir: profilePath,
     timestamp,
     evidence_dir: evidenceDirectory,
