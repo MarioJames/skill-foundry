@@ -20,13 +20,13 @@ Use Herdr when it shortens the task's critical path, not merely to increase pane
 2. Identify independent lanes before splitting. Start the slowest useful lanes first and keep doing useful work in the caller pane.
 3. Estimate whether `max(lane durations) + coordination overhead` beats serial execution. If it does not, stay in the caller channel and continue normally. Avoid delegating trivial work or splitting tightly dependent steps.
 4. Use sibling panes in the current tab only when the lane belongs to the caller's workspace/repository. When its target cwd is materially different, route it to the workspace that represents that directory and create a tab there; do not put it in the caller's workspace merely because that workspace is current.
-5. Classify every created pane before launch: `oneshot`, `service`, or `coding-agent`. This classification determines cleanup.
+5. Classify every created pane before launch: `oneshot`, `service`, or `coding-agent`. Record its returned pane/tab/workspace IDs, exact cleanup command, and lifecycle state before starting work. An unrecorded lane must not be launched.
 
 Inspect only the relevant current CLI group before using it, for example `herdr pane` or `herdr agent`. The installed CLI is authoritative. Do not call `herdr --skill` during normal operation; use it only when the user explicitly requests the full manual, or after a concrete CLI failure that the relevant group output cannot resolve.
 
 ## Route by directory
 
-After availability succeeds, prefer [`scripts/route-lane.ts`](scripts/route-lane.ts) for create-time classification, workspace probing, and resource creation:
+After availability succeeds, **MUST** use [`scripts/route-lane.ts`](scripts/route-lane.ts) for create-time classification, workspace probing, and resource creation. Direct `herdr pane split` / `tab create` / `workspace create` is allowed only when the script is unavailable or has returned a concrete actionable failure; the fallback must preserve the same anchor and cleanup invariants below.
 
 ```bash
 target_cwd=$PWD
@@ -38,6 +38,15 @@ skill_dir=/absolute/path/to/herdr
 Resolve the script relative to this `SKILL.md`, but capture the intended target cwd **before** any `cd` used to reach the skill directory. Prefer invoking the resolved absolute script path without changing directories. Never write `cd "$skill_dir" && scripts/route-lane.ts --cwd "$PWD"`: the target then becomes the skill directory and can create a workspace in the wrong place. `oneshot` and `service` default to `same-task`; `coding-agent` defaults to `independent`. Use `--dry-run` to inspect the decision without mutation. The script returns one JSON object containing `action`, matched and created IDs, and an exact `lane.cleanup_command` argv array. It creates only the routed pane/tab/workspace; start the command or agent separately using `result.pane_id`. When cleanup is due, execute that array exactly once and verify absence. Do not stringify, join, truncate, or `eval` it as shell text: execute it directly with Bun, for example `bun -e 'const p=JSON.parse(await Bun.stdin.text()); const r=Bun.spawnSync(p.lane.cleanup_command,{stdin:"inherit",stdout:"inherit",stderr:"inherit"}); process.exit(r.exitCode)' < "$route_json"`. Do not close the pane first and then try to close its parent tab/workspace.
 
 For two or more sibling lanes, route the first lane normally. If that first route creates a workspace or tab, anchor every later `same-task` sibling route with `--caller-pane <first-result.pane_id>`, not the original caller pane. Then require each later result to have the same `result.tab_id` as the first lane. Reusing the original caller after the target workspace exists selects `create-tab`, producing adjacent tabs rather than sibling panes.
+
+## Non-negotiable lifecycle gates
+
+- Resolve and record `primary_pane_id` exactly once before creating the first lane. Initialize a separate `split_anchor_pane_id` from it; never overwrite `primary_pane_id`.
+- The first same-tab lane may use `primary_pane_id`. Immediately set `split_anchor_pane_id` to the returned secondary pane. Every later sibling must use the current `split_anchor_pane_id` as its caller/parent, then advance the anchor to the newly returned pane. **DO NOT** split or route from `primary_pane_id` again while any task-created secondary pane exists.
+- Keep a lane ledger in working state with, at minimum: `type`, created IDs, result status, `cleanup_command`, and `cleanup_pending`. Before any new fan-out, phase transition, user-message handoff, or final response, inventory this ledger.
+- Treat collecting a `oneshot` result and cleaning it up as one operation: after recording its exit status and bounded evidence, execute its exact cleanup command in the same owning turn and prove absence with a surviving-resource list before starting unrelated work. **DO NOT** retain a completed or failed oneshot for possible reuse.
+- A cleanup failure is active work, not a warning to defer. Resolve or accurately report it before proceeding. Never silently hand off with `cleanup_pending` lanes.
+- `service` and `coding-agent` lanes may remain only while a named dependency or concrete follow-up exists. Re-evaluate and clean them at every user steer and phase transition, not only at final handoff.
 
 For a read-only directory lookup without type routing, use [`scripts/probe-workspace.ts`](scripts/probe-workspace.ts) with `--cwd <path>`. Both commands run directly through their Bun shebang, require `bun` and the installed `herdr` CLI, support paths containing spaces, and emit structured JSON errors with nonzero exit status. They use only Bun and Node built-ins; no package install is needed.
 
@@ -78,7 +87,7 @@ The router applies this fallback decision process internally; use it manually on
 - Close exactly the resource named by the router's `lane.cleanup_resource`, using `lane.cleanup_target_id` or the returned `lane.cleanup_command` argv array. If using the array, pass it directly to `Bun.spawnSync`; do not coerce it into a whitespace-delimited string or pick fixed array positions. A single-pane tab/workspace is removed automatically when its last pane closes, so closing a child and then its parents creates avoidable `tab_not_found` or `workspace_not_found` failures.
 - Prove cleanup with a non-faulting collection read: use `herdr workspace list` and confirm the closed workspace ID is absent, or inspect a still-existing parent before closing it. Do not query a deleted workspace/tab/pane merely to obtain `not_found` and call that success; the transcript must remain free of avoidable command errors.
 - Do not treat `unknown` agent state as completion; inspect state and recent output.
-- Close a task-created `oneshot` pane as soon as its exit status and bounded result have been collected, including after handled failures. Keep it only while concrete debugging evidence is still needed.
+- Close a task-created `oneshot` pane in the same owning turn that collects its exit status and bounded result, including after handled failures. Do not keep it for debugging after its evidence has been captured; create a new bounded lane if later work genuinely requires one.
 - Keep a `coding-agent` pane only while it has concrete follow-up or reuse value. At every phase or task transition, re-evaluate all retained task-created panes before starting new lanes. If a pane's findings are integrated and no pending follow-up depends on it, close it immediately without waiting for the user to ask.
 - Keep a `service` pane only while something depends on it; then stop the service and close the pane. Report every retained pane's purpose and identifier, plus the port for services.
 - At handoff, report each retained pane's identifier, purpose, and remaining value; explicitly say when no task-created panes remain.
