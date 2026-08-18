@@ -242,7 +242,7 @@ async function collect(arguments_: string[]): Promise<number> {
     options.url,
     options.profile,
     options.har,
-    "evidence",
+    undefined,
     options.reusePage,
   );
   return 0;

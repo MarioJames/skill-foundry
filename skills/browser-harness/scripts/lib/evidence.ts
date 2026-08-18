@@ -8,9 +8,11 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import { requireAgentBrowser } from "./agent-browser-runtime.ts";
 import {
+  defaultEvidenceDir,
   defaultProfile,
   fail,
   log,
+  profileProjectRoot,
   profileDir,
 } from "./common.ts";
 
@@ -102,6 +104,29 @@ function countJsonArray(path: string): number {
   }
 }
 
+function ensureProjectArtifactsIgnored(projectRoot: string): void {
+  const gitignorePath = join(projectRoot, ".gitignore");
+  const current = existsSync(gitignorePath)
+    ? readFileSync(gitignorePath, "utf8")
+    : "";
+  const alreadyIgnored = current.split(/\r?\n/).some((line) =>
+    [
+      ".browser-harness",
+      ".browser-harness/",
+      "/.browser-harness",
+      "/.browser-harness/",
+    ].includes(line.trim())
+  );
+  if (alreadyIgnored) return;
+
+  const separator = current.length > 0 && !current.endsWith("\n") ? "\n" : "";
+  writeFileSync(
+    gitignorePath,
+    `${current}${separator}/.browser-harness/\n`,
+  );
+  log(`已将 /.browser-harness/ 加入 ${gitignorePath}`);
+}
+
 export interface EvidenceSummary {
   target: string;
   profile: string;
@@ -127,7 +152,7 @@ export async function collectEvidence(
   url: string,
   profile = "",
   har = false,
-  outdirBase = "evidence",
+  outdirBase = defaultEvidenceDir(),
   reusePage = false,
 ): Promise<EvidenceSummary> {
   requireAgentBrowser();
@@ -163,6 +188,9 @@ export async function collectEvidence(
   const outdirAbsolute = isAbsolute(outdirBase)
     ? outdirBase
     : resolve(process.cwd(), outdirBase);
+  if (outdirAbsolute === defaultEvidenceDir()) {
+    ensureProjectArtifactsIgnored(profileProjectRoot());
+  }
   let timestamp = localTimestamp();
   if (existsSync(join(outdirAbsolute, timestamp))) {
     timestamp = `${timestamp}-${process.pid}`;

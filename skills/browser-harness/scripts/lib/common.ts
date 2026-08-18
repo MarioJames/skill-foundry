@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 
-export const BH_VERSION = "0.5.0";
+export const BH_VERSION = "0.5.1";
 export const BH_MIN_AGENT_BROWSER_VERSION = "0.29.0";
 
 export class BhError extends Error {
@@ -76,6 +76,14 @@ export function profileProjectRoot(startDir = process.cwd()): string {
     if (parent === current) return original;
     current = parent;
   }
+}
+
+export function projectArtifactsDir(startDir = process.cwd()): string {
+  return join(profileProjectRoot(startDir), ".browser-harness");
+}
+
+export function defaultEvidenceDir(startDir = process.cwd()): string {
+  return join(projectArtifactsDir(startDir), "evidence");
 }
 
 export function projectProfileName(startDir = process.cwd()): string {

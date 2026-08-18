@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   writeFileSync,
@@ -228,7 +229,7 @@ describe("CLI contracts", () => {
   test("version, usage, and error exit codes stay stable", () => {
     const version = runBh(["--version"]);
     expect(version.exitCode).toBe(0);
-    expect(version.stdout.toString()).toBe("browser-harness 0.5.0\n");
+    expect(version.stdout.toString()).toBe("browser-harness 0.5.1\n");
 
     const usage = runBh([]);
     expect(usage.exitCode).toBe(1);
@@ -405,8 +406,14 @@ describe("evidence collection", () => {
     };
     expect(summary.profile).toBe("qa");
     expect(summary.profile_dir).toBe(join(harness.root, "profiles", "qa"));
+    expect(summary.evidence_dir).toStartWith(
+      join(realpathSync(harness.root), ".browser-harness", "evidence"),
+    );
     expect(summary.counts).toEqual({ network_xhr: 2, network_errors: 1 });
     expect(summary.artifact_errors).toEqual([]);
+    expect(readFileSync(join(harness.root, ".gitignore"), "utf8")).toBe(
+      "/.browser-harness/\n",
+    );
     expect(JSON.parse(readFileSync(join(summary.evidence_dir, "console.json"), "utf8"))).toEqual([
       { type: "warn", text: "sample" },
     ]);
@@ -481,7 +488,10 @@ describe("evidence collection", () => {
       "[]",
     );
 
-    rmSync(join(harness.root, "evidence"), { recursive: true, force: true });
+    rmSync(join(harness.root, ".browser-harness"), {
+      recursive: true,
+      force: true,
+    });
     const failedOpen = runBh(
       ["collect-evidence", "https://example.test/unreachable"],
       {
@@ -491,7 +501,55 @@ describe("evidence collection", () => {
     );
     expect(failedOpen.exitCode).toBe(3);
     expect(failedOpen.stdout.toString()).toBe("");
-    expect(existsSync(join(harness.root, "evidence"))).toBe(false);
+    expect(existsSync(join(harness.root, ".browser-harness"))).toBe(false);
+  });
+
+  test("preserves .gitignore content and does not duplicate the artifact rule", () => {
+    const harness = createHarness();
+    const gitignorePath = join(harness.root, ".gitignore");
+    writeFileSync(gitignorePath, "dist");
+
+    const first = runBh(["collect-evidence", "https://example.test/app"], {
+      cwd: harness.root,
+      env: harness.env,
+    });
+    expect(first.exitCode).toBe(0);
+    expect(readFileSync(gitignorePath, "utf8")).toBe(
+      "dist\n/.browser-harness/\n",
+    );
+
+    const second = runBh(["collect-evidence", "https://example.test/app"], {
+      cwd: harness.root,
+      env: harness.env,
+    });
+    expect(second.exitCode).toBe(0);
+    expect(readFileSync(gitignorePath, "utf8")).toBe(
+      "dist\n/.browser-harness/\n",
+    );
+  });
+
+  test("stores evidence at the nearest project root when run from a subdirectory", () => {
+    const harness = createHarness();
+    const projectDir = join(harness.root, "project");
+    const nestedDir = join(projectDir, "src", "features");
+    mkdirSync(nestedDir, { recursive: true });
+    writeFileSync(join(projectDir, "package.json"), "{}");
+
+    const result = runBh(["collect-evidence", "https://example.test/app"], {
+      cwd: nestedDir,
+      env: harness.env,
+    });
+    expect(result.exitCode).toBe(0);
+    const summary = JSON.parse(result.stdout.toString()) as {
+      evidence_dir: string;
+    };
+    expect(summary.evidence_dir).toStartWith(
+      join(realpathSync(projectDir), ".browser-harness", "evidence"),
+    );
+    expect(readFileSync(join(projectDir, ".gitignore"), "utf8")).toBe(
+      "/.browser-harness/\n",
+    );
+    expect(existsSync(join(nestedDir, ".browser-harness"))).toBe(false);
   });
 });
 

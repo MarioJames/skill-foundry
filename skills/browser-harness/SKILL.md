@@ -94,7 +94,7 @@ bun "$BH_DIR/bh.ts" collect-evidence "$APP_URL" --profile prod-monitor
 bun "$BH_DIR/bh.ts" cleanup
 ```
 
-`bh collect-evidence` 把 stdout 输出的 `summary.json` 直接给 agent 当回执，落盘的 `evidence/<ts>/` 目录可按需深读。需要后续读取时，捕获 stdout 并从 JSON 的 `evidence_dir` 字段取得精确目录；不要用 `ls -dt evidence/* | head -1` 猜“最新目录”，并发采集、zsh glob 和目录尾斜杠都可能让它选错或无匹配退出。
+`bh collect-evidence` 把 stdout 输出的 `summary.json` 直接给 agent 当回执，落盘的 `<项目根>/.browser-harness/evidence/<ts>/` 目录可按需深读。CLI 会幂等地把 `/.browser-harness/` 写入项目 `.gitignore`，避免证据被误提交。需要后续读取时，捕获 stdout 并从 JSON 的 `evidence_dir` 字段取得精确目录；不要用目录通配符猜“最新目录”，并发采集、zsh glob 和目录尾斜杠都可能让它选错或无匹配退出。
 
 ### B. Journey 跑测（APP_URL 注入项目 testing-suite）
 
@@ -232,12 +232,12 @@ C 场景里 agent 直接调 `agent-browser` 时，用 `--profile "$(bun "$BH_DIR
 - `bh cleanup` 的状态文件按项目路径隔离：先停止公网 tunnel，再停止 dev server；若 prepare/share/publish 时用的不是 `.`，cleanup 需传同一 target。HTML 文件 target 会归一到所在目录，未启动相关进程时是可重复的 no-op。
 - 资源复核以 prepare 返回并持久化的精确 `DEV_SERVER_PID`、项目状态文件和本次 profile 为边界。不要用宽泛的 `pgrep -f 'headless|agent-browser'` 判定残留：`pgrep -f` 会匹配探针自身的 argv，产生假阳性并诱发误杀用户浏览器；必须核对精确 PID、父进程和本次 profile 路径，且只回收本任务创建的进程。
 - 执行 `agent-browser close` 后，不要再用 `agent-browser snapshot`、`open` 或其他浏览器命令探测“是否已关闭”：这些命令可能惰性启动新会话，反而制造资源残留。关闭后的只读确认应检查本轮已记录的精确浏览器/CDP PID 或端口是否消失；若误触发了浏览器命令，必须再次关闭本轮会话并重新做外部精确检查。
-- `bh collect-evidence` 的 `evidence/<ts>/` 默认落在当前目录；建议把 `evidence/` 加入项目 `.gitignore`，避免证据目录被误提交。
+- `bh collect-evidence` 默认把证据写入最近项目根的 `.browser-harness/evidence/<ts>/`，并幂等地把 `/.browser-harness/` 加入该项目的 `.gitignore`；不要把证据移回可见且未忽略的项目目录。
 - 本技能适配 agent-browser ≥ 0.29（`--json` 信封输出、`screenshot` 位置参数）；版本偏低时命令会输出 warn，建议 `agent-browser upgrade`。
 
 ## Evidence
 
-`bh collect-evidence` 输出 `evidence/<ts>/`（各 JSON 均已从 `--json` 信封解包为裸数组/对象）。默认先打开 URL；交互后采证应显式加 `--reuse-page`：
+`bh collect-evidence` 输出 `<项目根>/.browser-harness/evidence/<ts>/`（各 JSON 均已从 `--json` 信封解包为裸数组/对象）。默认先打开 URL；交互后采证应显式加 `--reuse-page`：
 
 | 文件 | 内容 |
 |---|---|
