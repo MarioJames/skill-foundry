@@ -1,0 +1,4 @@
+interface:
+  display_name: "Changelog Writing"
+  short_description: "Write customer or engineering release notes"
+  default_prompt: "Use $changelog-writing to draft release notes for the appropriate audience."

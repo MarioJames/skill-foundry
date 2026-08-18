@@ -49,6 +49,30 @@ The bundled Bun/TypeScript router can split the caller tab, create a tab in an e
 
 **Reach for it when** running inside Herdr (`HERDR_ENV=1`) and independent commands, services, checks, or coding-agent deliverables can overlap safely.
 
+### `trigger-build-workflow` — safe commit, push, and optional build dispatch
+
+Submits scoped Git changes and dispatches a release workflow only when the repository exposes a compatible `workflow_dispatch` contract. A bundled detector checks for channel, version, and changelog inputs; repositories without that contract automatically use a normal commit-and-push path without inventing release metadata.
+
+**Reach for it when** committing and pushing changes, triggering a build, or publishing a beta/production release across repositories with different CI capabilities.
+
+### `persistent-ssh-ops` — reusable remote-operation sessions
+
+Keeps one TTY-backed SSH session per host through multi-step maintenance, deployment, log, and incident workflows. It discovers SSH aliases from the effective login shell, falls back to OpenSSH `Host` aliases, preserves remote context, verifies changes, redacts secret-bearing output, and closes every task-owned session.
+
+**Reach for it when** remote work requires more than one command or interactive diagnostics.
+
+### `provision-xray-hy2-node` — mixed Xray and Hysteria 2 runbook
+
+Provisions or audits Xray VLESS Vision/REALITY on TCP/443 alongside Hysteria 2 on UDP/443, including DNS, DNS-01 certificates, layered firewalls, generic Mihomo clients, rollback, and external acceptance. All committed values are placeholders; generated credentials remain runtime-only.
+
+**Reach for it when** setting up, migrating, troubleshooting, or accepting a mixed Xray + HY2 server.
+
+### `changelog-writing` — audience-routed release notes
+
+Turns release evidence into either customer-facing outcomes or technical/internal notes, with a stable JSON contract for workflow consumers and a package-free Git source collector.
+
+**Reach for it when** drafting changelogs, GitHub Release bodies, beta notes, production updates, or engineering handoffs.
+
 ### `awesome-presentation` — content-first React slide decks
 
 Turns a presentation idea into a runnable React deck. The hard gate is content discovery first: grilling, outline approval, then scaffold / pages / build. Uses the open-source [awesome-presentation](https://github.com/MarioJames/awesome-presentation) scaffold (layouts, components, deck rules, offline single-file build).
@@ -77,6 +101,10 @@ bunx skills add MarioJames/skill-foundry --skill agents-orchestrator
 bunx skills add MarioJames/skill-foundry --skill asset-validation
 bunx skills add MarioJames/skill-foundry --skill browser-harness
 bunx skills add MarioJames/skill-foundry --skill herdr
+bunx skills add MarioJames/skill-foundry --skill trigger-build-workflow
+bunx skills add MarioJames/skill-foundry --skill persistent-ssh-ops
+bunx skills add MarioJames/skill-foundry --skill provision-xray-hy2-node
+bunx skills add MarioJames/skill-foundry --skill changelog-writing
 bunx skills add MarioJames/skill-foundry --skill awesome-presentation
 bunx skills add MarioJames/skill-foundry --skill workspace-knowledge-graph
 
@@ -116,7 +144,9 @@ git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
 mkdir -p ~/.codex/skills
 cp -R skills/agents-orchestrator skills/asset-validation skills/browser-harness \
-  skills/herdr skills/awesome-presentation skills/workspace-knowledge-graph ~/.codex/skills/
+  skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
+  skills/provision-xray-hy2-node skills/changelog-writing \
+  skills/awesome-presentation skills/workspace-knowledge-graph ~/.codex/skills/
 ```
 
 Claude-style runtimes:
@@ -126,7 +156,9 @@ git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
 mkdir -p ~/.claude/skills
 cp -R skills/agents-orchestrator skills/asset-validation skills/browser-harness \
-  skills/herdr skills/awesome-presentation skills/workspace-knowledge-graph ~/.claude/skills/
+  skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
+  skills/provision-xray-hy2-node skills/changelog-writing \
+  skills/awesome-presentation skills/workspace-knowledge-graph ~/.claude/skills/
 ```
 
 Verify the installation:
@@ -138,6 +170,12 @@ test -f ~/.codex/skills/agents-orchestrator/bun.lock
 test -x ~/.codex/skills/asset-validation/scripts/acc.ts
 test -x ~/.codex/skills/browser-harness/scripts/bh.ts
 test -x ~/.codex/skills/herdr/scripts/route-lane.ts
+test -x ~/.codex/skills/trigger-build-workflow/scripts/detect-build-workflow.ts
+test -x ~/.codex/skills/trigger-build-workflow/scripts/dispatch-build-workflow.ts
+test -f ~/.codex/skills/persistent-ssh-ops/SKILL.md
+test -x ~/.codex/skills/persistent-ssh-ops/scripts/scan-hosts.py
+test -f ~/.codex/skills/provision-xray-hy2-node/references/templates.md
+test -x ~/.codex/skills/changelog-writing/scripts/collect-commits.ts
 test -f ~/.codex/skills/awesome-presentation/SKILL.md
 test -x ~/.codex/skills/workspace-knowledge-graph/scripts/workspace_graph.ts
 ```
@@ -148,10 +186,14 @@ test -x ~/.codex/skills/workspace-knowledge-graph/scripts/workspace_graph.ts
 cd skill-foundry
 git pull
 rm -rf ~/.codex/skills/agents-orchestrator ~/.codex/skills/asset-validation \
-  ~/.codex/skills/browser-harness ~/.codex/skills/herdr ~/.codex/skills/awesome-presentation \
+  ~/.codex/skills/browser-harness ~/.codex/skills/herdr ~/.codex/skills/trigger-build-workflow \
+  ~/.codex/skills/persistent-ssh-ops ~/.codex/skills/provision-xray-hy2-node \
+  ~/.codex/skills/changelog-writing ~/.codex/skills/awesome-presentation \
   ~/.codex/skills/workspace-knowledge-graph
 cp -R skills/agents-orchestrator skills/asset-validation skills/browser-harness \
-  skills/herdr skills/awesome-presentation skills/workspace-knowledge-graph ~/.codex/skills/
+  skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
+  skills/provision-xray-hy2-node skills/changelog-writing \
+  skills/awesome-presentation skills/workspace-knowledge-graph ~/.codex/skills/
 ```
 
 ## Usage
@@ -206,6 +248,30 @@ Route independent work across Herdr panes and workspaces:
 Use herdr to run independent checks in parallel, route different cwd targets to their matching workspaces, and clean up oneshot panes after collecting results.
 ```
 
+Submit changes with workflow-aware fallback:
+
+```text
+Use trigger-build-workflow to commit and push these files; dispatch a build only if this repository supports the expected release inputs.
+```
+
+Operate a remote server through one persistent session:
+
+```text
+Use persistent-ssh-ops to inspect the service, apply the requested config change, verify it, and close the SSH session.
+```
+
+Provision a mixed proxy node:
+
+```text
+Use provision-xray-hy2-node to add Hysteria 2 beside the existing Xray listener and run external acceptance.
+```
+
+Draft release notes:
+
+```text
+Use changelog-writing to produce customer-facing production notes from the changes since v1.2.0.
+```
+
 Build a presentation:
 
 ```text
@@ -250,6 +316,24 @@ skill-foundry/
 │   │   ├── SKILL.md
 │   │   ├── agents/
 │   │   └── scripts/
+│   ├── trigger-build-workflow/
+│   │   ├── SKILL.md
+│   │   ├── agents/
+│   │   ├── scripts/
+│   │   └── test/
+│   ├── persistent-ssh-ops/
+│   │   ├── SKILL.md
+│   │   ├── agents/
+│   │   └── scripts/
+│   ├── provision-xray-hy2-node/
+│   │   ├── SKILL.md
+│   │   ├── agents/
+│   │   └── references/
+│   ├── changelog-writing/
+│   │   ├── SKILL.md
+│   │   ├── agents/
+│   │   ├── references/
+│   │   └── scripts/
 │   ├── awesome-presentation/
 │   │   ├── SKILL.md
 │   │   ├── agents/
@@ -271,6 +355,10 @@ Installable skill packages:
 - `skills/asset-validation/`
 - `skills/browser-harness/`
 - `skills/herdr/`
+- `skills/trigger-build-workflow/`
+- `skills/persistent-ssh-ops/`
+- `skills/provision-xray-hy2-node/`
+- `skills/changelog-writing/`
 - `skills/awesome-presentation/`
 - `skills/workspace-knowledge-graph/`
 
@@ -293,11 +381,15 @@ The pre-existing agents-orchestrator Runtime keeps its package-level checks:
 bun test skills/asset-validation/tests
 bun test skills/browser-harness/tests
 bun test skills/workspace-knowledge-graph/test
+bun test skills/trigger-build-workflow/test
 ```
 
 ```bash
 skills/herdr/scripts/route-lane.ts --help
 skills/herdr/scripts/probe-workspace.ts --help
+skills/trigger-build-workflow/scripts/detect-build-workflow.ts --help
+skills/trigger-build-workflow/scripts/dispatch-build-workflow.ts --help
+skills/changelog-writing/scripts/collect-commits.ts --help
 bun skills/asset-validation/scripts/acc.ts --help
 bun skills/browser-harness/scripts/bh.ts --version
 bun skills/workspace-knowledge-graph/scripts/workspace_graph.ts --help

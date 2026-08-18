@@ -1,0 +1,4 @@
+interface:
+  display_name: "Trigger Build Workflow"
+  short_description: "Commit, push, and dispatch compatible builds"
+  default_prompt: "Use $trigger-build-workflow to submit these changes and dispatch a build only when this repository has a compatible workflow."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Provision Xray + HY2 Node"
+  short_description: "Deploy and verify mixed Xray and HY2 nodes"
+  default_prompt: "Use $provision-xray-hy2-node to provision and verify an Xray Vision plus Hysteria 2 server without exposing credentials."
