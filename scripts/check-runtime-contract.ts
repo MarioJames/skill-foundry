@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -51,19 +51,17 @@ function checkRuntimeFiles(errors: string[]): number {
     if (!source.startsWith("#!/usr/bin/env bun\n")) {
       errors.push(`${repositoryPath}: executable entrypoint must use #!/usr/bin/env bun`);
     }
-    const mode = gitMode(path);
-    if (mode !== "100755") {
-      errors.push(`${repositoryPath}: Git mode must be 100755 (found ${mode ?? "untracked"})`);
+    const trackedMode = gitMode(path);
+    const executable = (statSync(path).mode & 0o111) !== 0;
+    if ((trackedMode !== null && trackedMode !== "100755") || (trackedMode === null && !executable)) {
+      errors.push(`${repositoryPath}: entrypoint mode must be executable (found ${trackedMode ?? "untracked non-executable"})`);
     }
-    const checked = Bun.spawnSync({
-      cmd: [process.execPath, "--check", path],
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    if (checked.exitCode !== 0) {
-      const detail = checked.stderr.toString().trim().split("\n").at(-1) ?? "syntax check failed";
-      errors.push(`${repositoryPath}: ${detail}`);
+    try {
+      const loader = extname(path) === ".tsx" ? "tsx" : "ts";
+      new Bun.Transpiler({ loader }).transformSync(source);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message.split("\n").at(-1) : String(error);
+      errors.push(`${repositoryPath}: ${detail || "syntax check failed"}`);
     }
   }
   return entrypoints;
@@ -84,6 +82,7 @@ function checkDocumentedCommands(errors: string[]): number {
       if (!fenced) continue;
       const trimmed = line.trim().replace(/^[$>]\s+/u, "");
       const firstToken = trimmed.split(/\s+/u)[0]?.replace(/^['"]|['"\\]$/gu, "") ?? "";
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(firstToken)) continue;
       if (!firstToken.includes("/scripts/") || !firstToken.includes(".ts")) continue;
       documentedEntrypoints += 1;
       errors.push(`${repositoryPath}:${index + 1}: invoke TypeScript entrypoints with explicit bun`);
@@ -105,5 +104,5 @@ console.log(JSON.stringify({
   ok: true,
   runtime: process.execPath,
   entrypoints,
-  direct_documented_entrypoints: directDocumentedEntrypoints,
+  mode_dependent_documented_entrypoints: directDocumentedEntrypoints,
 }, null, 2));

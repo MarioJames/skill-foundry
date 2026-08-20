@@ -20,7 +20,7 @@ const SKILL_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 function settingsPath(cwd: string): string { return join(cwd, WORKTREE_SETTINGS_PATH); }
 function sourceHookPath(name: string): string { return resolve(SKILL_DIR, "hooks", name); }
 function shellQuote(value: string): string { return `'${value.replaceAll("'", `'\\''`)}'`; }
-function runtimeHookCommand(name: string): string {
+export function runtimeHookCommand(name: string): string {
   return `${shellQuote(process.execPath)} "\${AGENTS_ORCHESTRATOR_HOME:-$HOME/.agents-orchestrator}/hooks/${name}"`;
 }
 
