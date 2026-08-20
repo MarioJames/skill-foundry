@@ -167,17 +167,17 @@ Verify the installation:
 test -f ~/.codex/skills/agents-orchestrator/SKILL.md
 test -f ~/.codex/skills/agents-orchestrator/scripts/bootstrap.ts
 test -f ~/.codex/skills/agents-orchestrator/bun.lock
-test -x ~/.codex/skills/asset-validation/scripts/acc.ts
-test -x ~/.codex/skills/browser-harness/scripts/bh.ts
-test -x ~/.codex/skills/herdr/scripts/route-lane.ts
-test -x ~/.codex/skills/trigger-build-workflow/scripts/detect-build-workflow.ts
-test -x ~/.codex/skills/trigger-build-workflow/scripts/dispatch-build-workflow.ts
+test -f ~/.codex/skills/asset-validation/scripts/acc.ts
+test -f ~/.codex/skills/browser-harness/scripts/bh.ts
+test -f ~/.codex/skills/herdr/scripts/route-lane.ts
+test -f ~/.codex/skills/trigger-build-workflow/scripts/detect-build-workflow.ts
+test -f ~/.codex/skills/trigger-build-workflow/scripts/dispatch-build-workflow.ts
 test -f ~/.codex/skills/persistent-ssh-ops/SKILL.md
-test -x ~/.codex/skills/persistent-ssh-ops/scripts/scan-hosts.py
+test -f ~/.codex/skills/persistent-ssh-ops/scripts/scan-hosts.ts
 test -f ~/.codex/skills/provision-xray-hy2-node/references/templates.md
-test -x ~/.codex/skills/changelog-writing/scripts/collect-commits.ts
+test -f ~/.codex/skills/changelog-writing/scripts/collect-commits.ts
 test -f ~/.codex/skills/awesome-presentation/SKILL.md
-test -x ~/.codex/skills/workspace-knowledge-graph/scripts/workspace_graph.ts
+test -f ~/.codex/skills/workspace-knowledge-graph/scripts/workspace_graph.ts
 ```
 
 ### Update Manual Installs
@@ -367,6 +367,7 @@ Installable skill packages:
 Useful local checks before publishing changes:
 
 ```bash
+bun scripts/check-runtime-contract.ts
 find skills -name SKILL.md -print
 find skills -path '*/node_modules' -prune -o -type f \
   \( -path '*/scripts/*' -o -path '*/hooks/*' \) ! -name '*.ts' -print
@@ -385,11 +386,12 @@ bun test skills/trigger-build-workflow/test
 ```
 
 ```bash
-skills/herdr/scripts/route-lane.ts --help
-skills/herdr/scripts/probe-workspace.ts --help
-skills/trigger-build-workflow/scripts/detect-build-workflow.ts --help
-skills/trigger-build-workflow/scripts/dispatch-build-workflow.ts --help
-skills/changelog-writing/scripts/collect-commits.ts --help
+bun skills/herdr/scripts/route-lane.ts --help
+bun skills/herdr/scripts/probe-workspace.ts --help
+bun skills/trigger-build-workflow/scripts/detect-build-workflow.ts --help
+bun skills/trigger-build-workflow/scripts/dispatch-build-workflow.ts --help
+bun skills/changelog-writing/scripts/collect-commits.ts --help
+bun skills/persistent-ssh-ops/scripts/scan-hosts.ts --help
 bun skills/asset-validation/scripts/acc.ts --help
 bun skills/browser-harness/scripts/bh.ts --version
 bun skills/workspace-knowledge-graph/scripts/workspace_graph.ts --help

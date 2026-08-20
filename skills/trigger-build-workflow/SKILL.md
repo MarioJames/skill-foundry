@@ -10,7 +10,7 @@ description: Commit local changes and push the current branch, optionally dispat
 Resolve this skill's directory from the loaded `SKILL.md`, then run the detector before drafting release metadata:
 
 ```bash
-<skill-dir>/scripts/detect-build-workflow.ts --repo <repo-path>
+bun <skill-dir>/scripts/detect-build-workflow.ts --repo <repo-path>
 ```
 
 Read its JSON `mode`:
@@ -21,7 +21,7 @@ Read its JSON `mode`:
 Use the bundled script for the mechanical path:
 
 ```bash
-<skill-dir>/scripts/dispatch-build-workflow.ts --repo <repo-path> [options]
+bun <skill-dir>/scripts/dispatch-build-workflow.ts --repo <repo-path> [options]
 ```
 
 ## Commit scope
@@ -62,7 +62,7 @@ For beta, use changelog-writing's technical/internal route. For production, use 
 Submit selected files; this works with or without a compatible workflow:
 
 ```bash
-<skill-dir>/scripts/dispatch-build-workflow.ts \
+bun <skill-dir>/scripts/dispatch-build-workflow.ts \
   --repo . \
   --message 'fix: handle empty configuration' \
   --path src/config.ts \
@@ -72,7 +72,7 @@ Submit selected files; this works with or without a compatible workflow:
 Beta build after the detector reports `dispatch`:
 
 ```bash
-<skill-dir>/scripts/dispatch-build-workflow.ts \
+bun <skill-dir>/scripts/dispatch-build-workflow.ts \
   --repo . \
   --changelog-json-file <temporary-changelog.json>
 ```
@@ -80,7 +80,7 @@ Beta build after the detector reports `dispatch`:
 Production release:
 
 ```bash
-<skill-dir>/scripts/dispatch-build-workflow.ts \
+bun <skill-dir>/scripts/dispatch-build-workflow.ts \
   --repo . \
   --version 1.2.3 \
   --changelog-json-file <temporary-changelog.json>

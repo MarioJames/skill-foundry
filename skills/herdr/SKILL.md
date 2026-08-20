@@ -16,7 +16,7 @@ Use Herdr when it shortens the task's critical path, not merely to increase pane
 
 ## Decide and split
 
-1. Run [`scripts/check-availability.ts`](scripts/check-availability.ts). If it returns `use_herdr: false`, stay in the caller channel and continue normally without Herdr routing. When the user explicitly required Herdr, briefly report the returned reason while still completing any work that does not require Herdr.
+1. Run `bun <skill-dir>/scripts/check-availability.ts`. If it returns `use_herdr: false`, stay in the caller channel and continue normally without Herdr routing. When the user explicitly required Herdr, briefly report the returned reason while still completing any work that does not require Herdr.
 2. Identify independent lanes before splitting. Start the slowest useful lanes first and keep doing useful work in the caller pane.
 3. Estimate whether `max(lane durations) + coordination overhead` beats serial execution. If it does not, stay in the caller channel and continue normally. Avoid delegating trivial work or splitting tightly dependent steps.
 4. Use sibling panes in the current tab only when the lane belongs to the caller's workspace/repository. When its target cwd is materially different, route it to the workspace that represents that directory and create a tab there; do not put it in the caller's workspace merely because that workspace is current.
@@ -31,8 +31,8 @@ After availability succeeds, **MUST** use [`scripts/route-lane.ts`](scripts/rout
 ```bash
 target_cwd=$PWD
 skill_dir=/absolute/path/to/herdr
-"$skill_dir/scripts/route-lane.ts" --type oneshot --scope same-task --cwd "$target_cwd" --caller-pane "$HERDR_PANE_ID"
-"$skill_dir/scripts/route-lane.ts" --type coding-agent --cwd /target/repo --label task-name --caller-pane "$HERDR_PANE_ID"
+bun "$skill_dir/scripts/route-lane.ts" --type oneshot --scope same-task --cwd "$target_cwd" --caller-pane "$HERDR_PANE_ID"
+bun "$skill_dir/scripts/route-lane.ts" --type coding-agent --cwd /target/repo --label task-name --caller-pane "$HERDR_PANE_ID"
 ```
 
 Resolve the script relative to this `SKILL.md`, but capture the intended target cwd **before** any `cd` used to reach the skill directory. Prefer invoking the resolved absolute script path without changing directories. Never write `cd "$skill_dir" && scripts/route-lane.ts --cwd "$PWD"`: the target then becomes the skill directory and can create a workspace in the wrong place. `oneshot` and `service` default to `same-task`; `coding-agent` defaults to `independent`. Use `--dry-run` to inspect the decision without mutation. The script returns one JSON object containing `action`, matched and created IDs, and an exact `lane.cleanup_command` argv array. It creates only the routed pane/tab/workspace; start the command or agent separately using `result.pane_id`. When cleanup is due, execute that array exactly once and verify absence. Do not stringify, join, truncate, or `eval` it as shell text: execute it directly with Bun, for example `bun -e 'const p=JSON.parse(await Bun.stdin.text()); const r=Bun.spawnSync(p.lane.cleanup_command,{stdin:"inherit",stdout:"inherit",stderr:"inherit"}); process.exit(r.exitCode)' < "$route_json"`. Do not close the pane first and then try to close its parent tab/workspace.
@@ -48,7 +48,7 @@ For two or more sibling lanes, route the first lane normally. If that first rout
 - A cleanup failure is active work, not a warning to defer. Resolve or accurately report it before proceeding. Never silently hand off with `cleanup_pending` lanes.
 - `service` and `coding-agent` lanes may remain only while a named dependency or concrete follow-up exists. Re-evaluate and clean them at every user steer and phase transition, not only at final handoff.
 
-For a read-only directory lookup without type routing, use [`scripts/probe-workspace.ts`](scripts/probe-workspace.ts) with `--cwd <path>`. Both commands run directly through their Bun shebang, require `bun` and the installed `herdr` CLI, support paths containing spaces, and emit structured JSON errors with nonzero exit status. They use only Bun and Node built-ins; no package install is needed.
+For a read-only directory lookup without type routing, run `bun <skill-dir>/scripts/probe-workspace.ts --cwd <path>`. Invoke both commands with explicit `bun` so installations that strip executable mode bits remain usable. They require Bun and the installed `herdr` CLI, support paths containing spaces, and emit structured JSON errors with nonzero exit status. They use only Bun and Node built-ins; no package install is needed.
 
 The router applies this fallback decision process internally; use it manually only when the script is unavailable:
 

@@ -19,7 +19,12 @@ const SKILL_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
 function settingsPath(cwd: string): string { return join(cwd, WORKTREE_SETTINGS_PATH); }
 function sourceHookPath(name: string): string { return resolve(SKILL_DIR, "hooks", name); }
+function shellQuote(value: string): string { return `'${value.replaceAll("'", `'\\''`)}'`; }
 function runtimeHookCommand(name: string): string {
+  return `${shellQuote(process.execPath)} "\${AGENTS_ORCHESTRATOR_HOME:-$HOME/.agents-orchestrator}/hooks/${name}"`;
+}
+
+function legacyBunRuntimeHookCommand(name: string): string {
   return `bun "\${AGENTS_ORCHESTRATOR_HOME:-$HOME/.agents-orchestrator}/hooks/${name}"`;
 }
 
@@ -101,7 +106,8 @@ function isOwned(hook: unknown): boolean {
   const item = hook as RuntimeRecord;
   if (item[OWNER_FIELD] === OWNER_VALUE) return true;
   if (HOOK_BINDINGS.some(([, name]) =>
-    item.command === runtimeHookCommand(name) || item.command === sourceHookPath(name))) return true;
+    item.command === runtimeHookCommand(name) || item.command === legacyBunRuntimeHookCommand(name)
+    || item.command === sourceHookPath(name))) return true;
   return LEGACY_HOOK_NAMES.some((name) =>
     item.command === legacyRuntimeHookCommand(name) || item.command === sourceHookPath(name));
 }

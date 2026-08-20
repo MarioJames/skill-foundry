@@ -14,7 +14,7 @@ Open one TTY-backed SSH session per target host and reuse it for the complete re
 Before selecting or resolving a target, run the bundled scanner:
 
 ```bash
-python3 <skill-directory>/scripts/scan-hosts.py
+bun <skill-directory>/scripts/scan-hosts.ts
 ```
 
 Resolve the script path relative to this `SKILL.md`, not the current project directory. The scanner starts the user's configured login shell in login and interactive mode, reads the aliases effective in that shell, filters direct `ssh`, `mosh`, and `autossh` commands, and returns JSON to the model. It requires no alias-file path or environment-variable configuration.

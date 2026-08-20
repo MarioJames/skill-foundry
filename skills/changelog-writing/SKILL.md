@@ -48,15 +48,15 @@ Keep customer summaries short enough for compact dialogs. Prefer outcome languag
 Resolve this skill's directory from the loaded `SKILL.md`, then run:
 
 ```bash
-<skill-dir>/scripts/collect-commits.ts --from <previous-tag> --to HEAD
+bun <skill-dir>/scripts/collect-commits.ts --from <previous-tag> --to HEAD
 ```
 
 Useful variants:
 
 ```bash
-<skill-dir>/scripts/collect-commits.ts --range v1.0.0..HEAD
-<skill-dir>/scripts/collect-commits.ts --auto-beta --to HEAD
-<skill-dir>/scripts/collect-commits.ts --auto-production --to HEAD
+bun <skill-dir>/scripts/collect-commits.ts --range v1.0.0..HEAD
+bun <skill-dir>/scripts/collect-commits.ts --auto-beta --to HEAD
+bun <skill-dir>/scripts/collect-commits.ts --auto-production --to HEAD
 ```
 
 Treat the output as source material. Do not paste raw commit lists into customer-facing copy.
