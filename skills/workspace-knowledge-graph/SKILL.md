@@ -33,6 +33,7 @@ description: 当用户要求为多仓工作区初始化或刷新知识图谱、�
 - **DO NOT** 用脚本规则替代 Research/Writer/Review 闭环的业务语义判断。
 - **DO NOT** 在没有依赖证据时捏造 peer 边；无证据仓库进 `standalone_repos`。证据路径 **MUST** 是可打开的工作区相对路径，**DO NOT** 使用 `...`。
 - `domains/*.md` / `shared/*.md` 归 agent 所有：脚本只读刷新文档表，**NEVER** 创建/覆盖/删除这些文件。
+- **MUST** 把 daily 每条写成 `- repo:<repo>` / `- workspace`；**DO NOT** 省略前导 `-` 写成 `repo:<repo>` / `workspace`。
 
 ## 命令
 

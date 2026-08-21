@@ -38,7 +38,7 @@
 ```
 
 - 一天一个文件;文件不存在就新建,标题为 `# <日期>`。
-- 每条单行,以对象标签开头:`repo:<repo>`(仓库名取 `.workspace/metadata.yaml` 的 `repo_order`)或 `workspace`(跨仓或工作区级)。
+- 每条单行，写成 `- repo:<repo>`（仓库名取 `.workspace/metadata.yaml` 的 `repo_order`）或 `- workspace`（跨仓或工作区级）。
 - 行内写清动作和状态/下一步;多仓会话按对象分行。
 - 先提炼、保持紧凑;写入后不压缩、不删除、不设保留窗口——旧文件即时间线索引,"上个月 xxx" 也应可查。
 

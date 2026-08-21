@@ -55,7 +55,7 @@ MEMORY.md
 - `AGENTS.md`：生成的根入口索引。内容为阅读顺序、任务路由、权威顺序、记忆消费门禁和多仓维护原则。只存每个工作区入口都必须消费的指引，不存具体仓库细节。不复制仓库矩阵；矩阵在 `.workspace/index.md`。独立仓库兜底路由只列出未被专属路由覆盖的独立仓库。自包含任务先命中 task route 并读取仓库 index；只有续接、偏好/纠正/确认取舍/用户操作、未决状态或称呼歧义场景才定位 `MEMORY.md` 的相关小节，不默认整文件读取。
 - `CLAUDE.md`：严格单行指针 `@AGENTS.md`。
 - `MEMORY.md`：按需消费的非权威长期记忆层。候选信息先提炼，再以“对后续工作有没有价值”为唯一写入条件；价值通过后，会持续影响工作空间或仓库后续行为的信息写在这里。文件只放实际条目，无条目时仅保留标题和空占位；写入与消费规则属于 `AGENTS.md`，不在这里复制。以 `workspace` / `repo:<repo>` 为父 scope，具体任务嵌套 `task:<task-key>`；允许类型、层级选择、紧凑格式、晋升/压缩和冲突处理见 [memory-protocol.md](memory-protocol.md)。当前用户指令和当前事实证据优先于历史记忆；记忆不能授权重复执行外部操作。
-- `.workspace/memory/daily/`：按天承载与某个日期、阶段、当前任务或短期接续相关的有价值信息。价值判断通过后，每条以 `repo:<repo>` 或 `workspace` 对象标签开头并保持单行；先提炼、全保留、不压缩，是时间指称查询的第一入口。置于 `.workspace/` 受管目录内避免误删。
+- `.workspace/memory/daily/`：按天承载与某个日期、阶段、当前任务或短期接续相关的有价值信息。价值判断通过后，每条写成 `- repo:<repo>` 或 `- workspace` 并保持单行；先提炼、全保留、不压缩，是时间指称查询的第一入口。置于 `.workspace/` 受管目录内避免误删。
 - `.workspace/metadata.yaml`：仅作为工作区级事实源。
 - `.workspace/relations/registry.yaml`：编译出的有证据关系边，加上 `standalone_repos` 边界说明。独立仓库不是关系边。
 - `.workspace/repos/<repo>/`：仓库级事实源。分节所有权与恢复规则见 [config-schema.md](config-schema.md)。
