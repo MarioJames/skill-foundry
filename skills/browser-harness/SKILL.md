@@ -7,7 +7,7 @@ description: Use when validating frontend changes in a browser via vercel-labs/a
 
 ## Overview
 
-本技能是前端验收的浏览器脚手架：自动按 target 形态决定要不要起 dev server，准备登录态，采集复合证据。逐步浏览器动作（点、填、等、看）由 agent 直接调 [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser) CLI 完成；本技能不替你写 Playwright 脚本，也不封装项目自己的测试命令（journey 等由项目 testing-suite 承担，本技能只负责把 `APP_URL` 准备好）。Cloudflare Quick Tunnel 的进程、探活、状态与清理由独立的 `cloudflare-quick-tunnel` 技能拥有，本技能只协调 dev server 与该伴生技能。
+本技能是前端验收的浏览器脚手架：自动按 target 形态决定要不要起 dev server，准备登录态，采集复合证据。逐步浏览器动作（点、填、等、看）由 agent 直接调 [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser) CLI 完成；本技能不替你写 Playwright 脚本，也不封装项目自己的测试命令（journey 等由项目 testing-suite 承担，本技能只负责把 `APP_URL` 准备好）。Cloudflare Quick Tunnel 的标准进程、根地址探活、状态与清理由独立的 `cloudflare-quick-tunnel` 技能拥有；项目专用环境、Host 适配、URL 映射和兼容输出全部由本技能负责。
 
 核心原则：在一轮验收里先用 `bh prepare` 取到稳定 `APP_URL`、必要时 `bh login` 准备登录态；然后视场景选择 `bh collect-evidence` 或直接调 `agent-browser` 原始 CLI。页面需求自测通过后先询问是否需要远程走查：不需要则 `bh cleanup`，需要则用 `bh share` 暴露当前服务并在走查结束后 cleanup。用户直接要求“启动并发布到公网”时，用 `bh publish` 一次完成启动与发布。
 
@@ -150,7 +150,7 @@ eval "$(bun "$BH_DIR/bh.ts" share "$TARGET")"
 printf '远程走查地址：%s\n' "$REMOTE_REVIEW_URL"
 ```
 
-`share` 从项目状态读取当前 `APP_URL`，委托 `cloudflare-quick-tunnel start` 创建并探活 tunnel，再把伴生技能输出映射为兼容的 `APP_URL`、`REMOTE_REVIEW_URL`、`CLOUDFLARED_PID`、`CLOUDFLARED_LOG` 安全赋值。启动后用公网 URL 做一次页面烟测；向用户交付 URL 时同时说明这是临时无认证入口，并报告 dev server / tunnel 的 PID、日志和保留原因。用户确认走查结束后执行：
+`share` 从项目状态读取当前 `APP_URL`：本技能提取 origin、设置项目需要的 `TUNNEL_HTTP_HOST_HEADER`，再委托 `cloudflare-quick-tunnel start` 创建并探活标准 tunnel；随后由本技能把 `APP_URL` 的 path/query/hash 拼接到伴生技能返回的根地址，并映射为兼容的 `APP_URL`、`REMOTE_REVIEW_URL`、`CLOUDFLARED_PID`、`CLOUDFLARED_LOG` 安全赋值。启动后用公网 URL 做一次页面烟测；向用户交付 URL 时同时说明这是临时无认证入口，并报告 dev server / tunnel 的 PID、日志和保留原因。用户确认走查结束后执行：
 
 ```bash
 bun "$BH_DIR/bh.ts" cleanup "$TARGET"
@@ -172,7 +172,11 @@ bun "$BH_DIR/bh.ts" collect-evidence "$REMOTE_REVIEW_URL" --profile remote-revie
 
 ### 与 cloudflare-quick-tunnel 的边界
 
-本技能保留 `share` / `publish` 作为前端流程入口，但不再包含 `cloudflared` 实现。匿名 [TryCloudflare Quick Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) 的固定参数、隔离配置、URL 探活、精确 PID、macOS launchd 托管和 stop/cleanup 均以 `cloudflare-quick-tunnel` 技能为事实源。
+本技能保留 `share` / `publish` 作为前端流程入口，但不再复制标准 `cloudflared` 生命周期实现。匿名 [TryCloudflare Quick Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) 的固定参数、隔离配置、根地址探活、精确 PID、macOS launchd 托管和 stop/cleanup 均以 `cloudflare-quick-tunnel` 技能为事实源；以下非标准或项目相关内容只存在于 browser-harness：
+
+- 从 `APP_URL` 计算 tunnel origin 与 `TUNNEL_HTTP_HOST_HEADER`。
+- 把 path/query/hash 拼接为最终 `REMOTE_REVIEW_URL`。
+- 管理 `BH_*` / `BASE_PATH` 等项目环境契约、技能定位兼容和旧输出变量映射。
 
 ## C 场景：交互式探索的最小教程
 
@@ -226,7 +230,7 @@ C 场景里 agent 直接调 `agent-browser` 时，用 `--profile "$(bun "$BH_DIR
 - `BH_DEV_COMMAND`、`BH_APP_HOST`、`BH_CURL_NO_PROXY` 是 browser-harness 自己的环境契约。单次调用优先使用上面的命令前缀；若先分行赋值，必须 `export BH_DEV_COMMAND=...` 后再运行 `bh prepare`。仅写 `BH_DEV_COMMAND=...` 再执行下一条命令不会进入子进程，技能会回退到 `package.json` 脚本。
 - `bh login` **MUST** 在能弹 headed 浏览器的环境跑（本机或带显示转发的 SSH）。CI 环境没显示，应直接复用预先建好的 profile。
 - `bh share` 只复用仍存活的 `bh prepare` 项目；没有持久化 APP_URL 或 dev PID 已退出时拒绝发布，不从日志猜端口。
-- 伴生技能把 origin Host 固定为本地 `APP_URL` 的 host，减少 Vite 等 dev server 因公网 Host 拒绝请求的情况；`APP_URL` 带 base path 时，输出的 `REMOTE_REVIEW_URL` 会保留该 path。
+- browser-harness 通过 `TUNNEL_HTTP_HOST_HEADER` 把 origin Host 固定为本地 `APP_URL` 的 host，减少 Vite 等 dev server 因公网 Host 拒绝请求的情况；并由自身把 `APP_URL` 的 path/query/hash 映射到 `REMOTE_REVIEW_URL`。
 - `bh cleanup` 按项目路径为伴生技能计算独立 state-dir：先委托它 cleanup 公网 tunnel，再停止 dev server；若 prepare/share/publish 时用的不是 `.`，cleanup 需传同一 target。HTML 文件 target 会归一到所在目录，未启动相关进程时是可重复的 no-op。
 - 资源复核以 prepare 返回并持久化的精确 `DEV_SERVER_PID`、项目状态文件和本次 profile 为边界。不要用宽泛的 `pgrep -f 'headless|agent-browser'` 判定残留：`pgrep -f` 会匹配探针自身的 argv，产生假阳性并诱发误杀用户浏览器；必须核对精确 PID、父进程和本次 profile 路径，且只回收本任务创建的进程。
 - 执行 `agent-browser close` 后，不要再用 `agent-browser snapshot`、`open` 或其他浏览器命令探测“是否已关闭”：这些命令可能惰性启动新会话，反而制造资源残留。关闭后的只读确认应检查本轮已记录的精确浏览器/CDP PID 或端口是否消失；若误触发了浏览器命令，必须再次关闭本轮会话并重新做外部精确检查。

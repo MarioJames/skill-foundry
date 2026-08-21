@@ -135,6 +135,7 @@ function installFakeCloudflare(harness: Harness): string {
 import { appendFileSync } from "node:fs";
 const args = Bun.argv.slice(2);
 appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify(args) + "\\n");
+appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify(["TUNNEL_HTTP_HOST_HEADER", process.env.TUNNEL_HTTP_HOST_HEADER || ""]) + "\\n");
 console.error("INF Your quick Tunnel has been created! Visit it at https://fixture-remote.trycloudflare.com");
 const stop = () => process.exit(0);
 process.on("SIGTERM", stop);
@@ -229,7 +230,7 @@ describe("CLI contracts", () => {
   test("version, usage, and error exit codes stay stable", () => {
     const version = runBh(["--version"]);
     expect(version.exitCode).toBe(0);
-    expect(version.stdout.toString()).toBe("browser-harness 0.6.0\n");
+    expect(version.stdout.toString()).toBe("browser-harness 0.6.1\n");
 
     const usage = runBh([]);
     expect(usage.exitCode).toBe(1);
@@ -680,17 +681,17 @@ process.on("SIGTERM", () => { server.stop(true); process.exit(0); });
       companionEntry,
       `import { appendFileSync, mkdirSync } from "node:fs";
 const args = Bun.argv.slice(2);
-appendFileSync(${JSON.stringify(companionCalls)}, JSON.stringify(args) + "\\n");
+const recorded = args[0] === "start"
+  ? [...args, "TUNNEL_HTTP_HOST_HEADER", process.env.TUNNEL_HTTP_HOST_HEADER || ""]
+  : args;
+appendFileSync(${JSON.stringify(companionCalls)}, JSON.stringify(recorded) + "\\n");
 const quote = (value) => "'" + String(value).replaceAll("'", "'\\\\''") + "'";
 if (args[0] === "start") {
   const origin = args[1];
   const stateDir = args[args.indexOf("--state-dir") + 1];
   mkdirSync(stateDir, { recursive: true });
-  const url = new URL(origin);
-  const publicUrl = new URL("https://delegated.trycloudflare.com");
-  publicUrl.pathname = url.pathname;
   console.log("ORIGIN_URL=" + quote(origin));
-  console.log("PUBLIC_URL=" + quote(publicUrl.toString()));
+  console.log("PUBLIC_URL='https://delegated.trycloudflare.com'");
   console.log("TUNNEL_PID='4242'");
   console.log("TUNNEL_LOG=" + quote(${JSON.stringify(join(harness.root, "delegated.log"))}));
   console.log("TUNNEL_STATE_DIR=" + quote(stateDir));
@@ -704,7 +705,7 @@ process.exit(2);
     const env: Record<string, string> = {
       ...harness.env,
       PATH: `${harness.binDir}${delimiter}/usr/bin:/bin`,
-      BASE_PATH: "/preview/",
+      BASE_PATH: "/preview/?mode=review#hero",
       BH_DEV_COMMAND: `${quoteForShell(process.execPath)} ${quoteForShell(serverPath)}`,
       BH_DEV_PID_WAIT_ATTEMPTS: "10",
       CLOUDFLARE_QUICK_TUNNEL_SKILL_DIR: companionDir,
@@ -725,7 +726,7 @@ process.exit(2);
       });
       expect(shared.exitCode).toBe(0);
       expect(assignment(shared.stdout.toString(), "REMOTE_REVIEW_URL")).toBe(
-        "https://delegated.trycloudflare.com/preview/",
+        "https://delegated.trycloudflare.com/preview/?mode=review#hero",
       );
       expect(assignment(shared.stdout.toString(), "CLOUDFLARED_PID")).toBe(
         "4242",
@@ -740,8 +741,15 @@ process.exit(2);
 
       const invocations = calls(companionCalls);
       expect(invocations).toHaveLength(2);
-      expect(invocations[0]?.slice(0, 2)).toEqual(["start", appUrl]);
+      expect(invocations[0]?.slice(0, 2)).toEqual([
+        "start",
+        new URL(appUrl).origin,
+      ]);
       expect(invocations[0]?.[2]).toBe("--state-dir");
+      expect(invocations[0]?.slice(4)).toEqual([
+        "TUNNEL_HTTP_HOST_HEADER",
+        new URL(appUrl).host,
+      ]);
       expect(invocations[1]).toEqual([
         "cleanup",
         "--state-dir",
@@ -817,15 +825,22 @@ process.on("SIGINT", () => { server.stop(true); process.exit(0); });
       expect(isAlive(firstDevPid)).toBe(true);
       expect(isAlive(firstTunnelPid)).toBe(true);
 
-      const invocation = JSON.parse(
-        readFileSync(cloudflaredCallsPath, "utf8").trim().split("\n")[0] || "[]",
+      const cloudflaredLines = readFileSync(cloudflaredCallsPath, "utf8")
+        .trim()
+        .split("\n");
+      const invocation = JSON.parse(cloudflaredLines[0] || "[]") as string[];
+      const hostHeaderEnvironment = JSON.parse(
+        cloudflaredLines[1] || "[]",
       ) as string[];
       expect(invocation).toContain("tunnel");
       expect(invocation).toContain("--config");
       expect(invocation).toContain("--url");
       expect(invocation).toContain(new URL(appUrl).origin);
-      expect(invocation).toContain("--http-host-header");
-      expect(invocation).toContain(new URL(appUrl).host);
+      expect(invocation).not.toContain("--http-host-header");
+      expect(hostHeaderEnvironment).toEqual([
+        "TUNNEL_HTTP_HOST_HEADER",
+        new URL(appUrl).host,
+      ]);
 
       const cleanedShared = runBh(["cleanup", projectDir], {
         cwd: harness.root,

@@ -37,13 +37,13 @@ It includes progressive task ladders, clean post-fix PASS gates, typed staging p
 
 ### `browser-harness` — browser acceptance scaffolding
 
-Frontend acceptance helper around [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser). Resolves target shape (URL / static HTML / project dir), starts a dev server when needed, prepares login state, injects a stable `APP_URL`, and collects screenshot + console + network evidence. Step-level browser actions stay on the agent-browser CLI; temporary public review delegates to the companion `cloudflare-quick-tunnel` skill.
+Frontend acceptance helper around [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser). Resolves target shape (URL / static HTML / project dir), starts a dev server when needed, prepares login state, injects a stable `APP_URL`, and collects screenshot + console + network evidence. Step-level browser actions stay on the agent-browser CLI; temporary public review delegates standard tunnel lifecycle to `cloudflare-quick-tunnel` while retaining project-specific Host, environment, and URL mapping here.
 
 **Reach for it when** doing smoke checks, journey prep with `APP_URL`, interactive browser exploration, or reusable headed login profiles.
 
 ### `cloudflare-quick-tunnel` — temporary public tunnel lifecycle
 
-Creates anonymous Cloudflare Quick Tunnels for local HTTP services and owns the full start / status / stop / cleanup lifecycle. Its Bun CLI uses an isolated empty config, preserves the origin path, verifies public reachability, tracks exact process state, and keeps cleanup scoped to one caller-provided state directory.
+Creates standard anonymous Cloudflare Quick Tunnels for local HTTP services and owns the full start / status / stop / cleanup lifecycle. Its Bun CLI uses an isolated empty config, returns a verified tunnel root URL, tracks exact process state, and keeps cleanup scoped to one caller-provided state directory; project URL mapping and custom environment belong to the caller.
 
 **Reach for it when** a local service needs a temporary public review URL; use it through `browser-harness` when the service is part of frontend acceptance.
 

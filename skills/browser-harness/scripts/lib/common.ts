@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 
-export const BH_VERSION = "0.6.0";
+export const BH_VERSION = "0.6.1";
 export const BH_MIN_AGENT_BROWSER_VERSION = "0.29.0";
 
 export class BhError extends Error {

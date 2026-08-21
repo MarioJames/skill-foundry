@@ -15,7 +15,7 @@ import {
 import { delimiter, dirname, join, parse, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const CQT_VERSION = "0.1.0";
+export const CQT_VERSION = "0.2.0";
 
 const LIFECYCLE_MODULE = fileURLToPath(import.meta.url);
 const PID_WAIT_ATTEMPTS = 30;
@@ -56,6 +56,7 @@ interface StatePaths {
   publicUrl: string;
   originUrl: string;
   logPath: string;
+  workerEnvironment: string;
   config: string;
   log: string;
 }
@@ -115,6 +116,7 @@ function statePaths(stateDir: string): StatePaths {
     publicUrl: join(stateDir, "public-url"),
     originUrl: join(stateDir, "origin-url"),
     logPath: join(stateDir, "log-path"),
+    workerEnvironment: join(stateDir, "worker-environment.json"),
     config: join(stateDir, "empty-config.yml"),
     log: join(stateDir, "tunnel.log"),
   };
@@ -276,22 +278,13 @@ function killDescendants(
   }
 }
 
-function cloudflaredEnvironment(): NodeJS.ProcessEnv {
-  const result = { ...process.env };
-  for (const key of Object.keys(result)) {
-    if (key.startsWith("TUNNEL_") || key.startsWith("CLOUDFLARED_")) {
-      delete result[key];
-    }
-  }
-  return result;
-}
-
 function removeRuntimeState(paths: StatePaths): void {
   for (const path of [
     paths.pid,
     paths.label,
     paths.publicUrl,
     paths.originUrl,
+    paths.workerEnvironment,
     paths.config,
   ]) {
     rmSync(path, { force: true });
@@ -378,7 +371,7 @@ export async function cleanupTunnel(stateDirValue: string): Promise<void> {
 }
 
 function resolveTunnelCommand(
-  origin: URL,
+  originUrl: string,
   paths: StatePaths,
 ): { command: string[]; curl: string } {
   const cloudflared = findExecutable("cloudflared");
@@ -398,9 +391,7 @@ function resolveTunnelCommand(
       paths.config,
       "--no-autoupdate",
       "--url",
-      origin.origin,
-      "--http-host-header",
-      origin.host,
+      originUrl,
     ],
   };
 }
@@ -410,6 +401,7 @@ function launchWithLaunchctl(
   paths: StatePaths,
   command: string[],
 ): void {
+  writePrivate(paths.workerEnvironment, JSON.stringify(process.env));
   const result = syncCommand([
     "launchctl",
     "submit",
@@ -425,6 +417,7 @@ function launchWithLaunchctl(
     "__worker",
     paths.pid,
     paths.dir,
+    paths.workerEnvironment,
     JSON.stringify(command),
   ]);
   if (result.exitCode !== 0) {
@@ -437,7 +430,7 @@ function launchDetached(paths: StatePaths, command: string[]): number {
   try {
     const child = Bun.spawn(command, {
       cwd: paths.dir,
-      env: cloudflaredEnvironment(),
+      env: process.env,
       stdin: "ignore",
       stdout: logDescriptor,
       stderr: logDescriptor,
@@ -457,14 +450,6 @@ function quickTunnelUrl(path: string): string {
       /https:\/\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.trycloudflare\.com/,
     )?.[0] || ""
   );
-}
-
-function appendOriginPath(publicBase: string, origin: URL): string {
-  const result = new URL(publicBase);
-  result.pathname = origin.pathname;
-  result.search = origin.search;
-  result.hash = origin.hash;
-  return result.toString();
 }
 
 function curlStatus(curl: string, url: string): string {
@@ -509,7 +494,7 @@ export async function startTunnel(
   ensureStateDir(paths.dir);
   writePrivate(paths.log, "");
   writePrivate(paths.logPath, `${paths.log}\n`);
-  const { command, curl } = resolveTunnelCommand(origin, paths);
+  const { command, curl } = resolveTunnelCommand(originValue, paths);
 
   log(`启动 Cloudflare Quick Tunnel，origin: ${origin.origin}`);
   log(`state: ${paths.dir}`);
@@ -550,7 +535,7 @@ export async function startTunnel(
         fail(2, "Cloudflare tunnel 在生成公网 URL 前退出");
       }
       const base = quickTunnelUrl(paths.log);
-      if (base) publicUrl = appendOriginPath(base, origin);
+      if (base) publicUrl = base;
       else await sleep(500);
     }
     if (!publicUrl) {
@@ -590,9 +575,32 @@ export async function startTunnel(
 }
 
 async function runWorker(arguments_: string[]): Promise<number> {
-  const [mode, statePidFile, stateDir, commandJson] = arguments_;
-  if (mode !== "__worker" || !statePidFile || !stateDir || !commandJson) {
+  const [mode, statePidFile, stateDir, environmentPath, commandJson] = arguments_;
+  if (
+    mode !== "__worker" ||
+    !statePidFile ||
+    !stateDir ||
+    !environmentPath ||
+    !commandJson
+  ) {
     process.stderr.write("cloudflare-quick-tunnel worker: invalid arguments\n");
+    return 2;
+  }
+
+  let environment: unknown;
+  try {
+    environment = JSON.parse(readText(environmentPath));
+  } catch {
+    return 2;
+  } finally {
+    rmSync(environmentPath, { force: true });
+  }
+  if (
+    typeof environment !== "object" ||
+    environment === null ||
+    Array.isArray(environment) ||
+    Object.values(environment).some((value) => typeof value !== "string")
+  ) {
     return 2;
   }
 
@@ -615,7 +623,7 @@ async function runWorker(arguments_: string[]): Promise<number> {
   try {
     child = Bun.spawn(command as string[], {
       cwd: stateDir,
-      env: cloudflaredEnvironment(),
+      env: environment as Record<string, string>,
       stdin: "ignore",
       stdout: "inherit",
       stderr: "inherit",

@@ -89,14 +89,17 @@ function parseAssignmentValue(line: string): [string, string] | null {
   return [name, quoted.slice(1, -1).replaceAll("'\\''", "'")];
 }
 
-function runCompanion(arguments_: string[]): Record<string, string> {
+function runCompanion(
+  arguments_: string[],
+  environment: Record<string, string> = {},
+): Record<string, string> {
   const entry = companionEntry();
   let result: ReturnType<typeof Bun.spawnSync>;
   try {
     result = Bun.spawnSync({
       cmd: [process.execPath, entry, ...arguments_],
       cwd: process.cwd(),
-      env: process.env,
+      env: { ...process.env, ...environment },
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -136,22 +139,41 @@ export function startQuickTunnel(
   projectDir: string,
   appUrl: string,
 ): QuickTunnelInfo {
-  const assignments = runCompanion([
-    "start",
-    appUrl,
-    "--state-dir",
-    quickTunnelStateDir(projectDir),
-  ]);
-  const publicUrl = assignments.PUBLIC_URL || "";
+  let parsedAppUrl: URL;
+  try {
+    parsedAppUrl = new URL(appUrl);
+  } catch {
+    fail(2, `APP_URL 不是有效 URL：${appUrl}`);
+  }
+  const assignments = runCompanion(
+    [
+      "start",
+      parsedAppUrl.origin,
+      "--state-dir",
+      quickTunnelStateDir(projectDir),
+    ],
+    { TUNNEL_HTTP_HOST_HEADER: parsedAppUrl.host },
+  );
+  const publicBaseUrl = assignments.PUBLIC_URL || "";
   const logPath = assignments.TUNNEL_LOG || "";
   const pid = Number(assignments.TUNNEL_PID || "");
   if (
-    !publicUrl ||
+    !publicBaseUrl ||
     !logPath ||
     !Number.isSafeInteger(pid) ||
     pid <= 0
   ) {
     fail(2, "cloudflare-quick-tunnel start 缺少 PUBLIC_URL/PID/LOG 输出");
+  }
+  let publicUrl: string;
+  try {
+    const mapped = new URL(publicBaseUrl);
+    mapped.pathname = parsedAppUrl.pathname;
+    mapped.search = parsedAppUrl.search;
+    mapped.hash = parsedAppUrl.hash;
+    publicUrl = mapped.toString();
+  } catch {
+    fail(2, `cloudflare-quick-tunnel PUBLIC_URL 不是有效 URL：${publicBaseUrl}`);
   }
   return { publicUrl, pid, logPath };
 }

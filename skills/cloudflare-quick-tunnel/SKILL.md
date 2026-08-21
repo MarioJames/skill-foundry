@@ -1,13 +1,13 @@
 ---
 name: cloudflare-quick-tunnel
-description: Create and manage temporary public URLs for local HTTP services through anonymous Cloudflare Quick Tunnels, including start, status, stop, cleanup, readiness checks, and lifecycle handoff to browser-harness. Use for temporary remote review or exposing a local service; do not use for production, authenticated access, named tunnels, or custom domains.
+description: Create and manage temporary public URLs for local HTTP services through the standard anonymous Cloudflare Quick Tunnel lifecycle, including start, readiness checks, status, stop, and cleanup. Use for temporary exposure of a local service; do not use for project-specific URL mapping, production, authenticated access, named tunnels, or custom domains.
 ---
 
 # Cloudflare Quick Tunnel
 
 ## Overview
 
-本技能只负责匿名 Cloudflare Quick Tunnel 的完整生命周期：启动并探活公网入口、查询精确状态、停止进程、清理本轮状态与日志。前端开发验收仍由 `browser-harness` 负责；它的 `share` / `publish` / `cleanup` 会调用本技能脚本，不在自身复制 tunnel 实现。
+本技能只负责标准匿名 Cloudflare Quick Tunnel 的完整生命周期：启动并探活公网入口、查询精确状态、停止进程、清理本轮状态与日志。它不解释项目环境变量，不拼接业务 path/query/hash，也不添加项目专用的 cloudflared 参数；这些内容由调用方负责。
 
 > 下文 `cqt ...` 均为 `bun "$CQT_DIR/cqt.ts" ...` 的速记。每次 shell 调用都重新解析 `CQT_DIR`；不要依赖上一批命令留下的局部变量。
 
@@ -15,7 +15,8 @@ description: Create and manage temporary public URLs for local HTTP services thr
 
 - 未经用户确认不得创建公网隧道；用户明确要求“发布、暴露到公网、生成远程走查地址”即视为确认。
 - `*.trycloudflare.com` 是无认证随机地址，不是访问控制；不得承载生产或敏感数据。
-- 只使用 PATH 中的 `cloudflared` 创建匿名 Quick Tunnel，并传入隔离的空配置；不接受 token、命名隧道、自定义域名、自定义 cloudflared 命令或 Cloudflare 环境变量覆盖。
+- 只使用 PATH 中的 `cloudflared` 创建匿名 Quick Tunnel，并传入隔离的空配置；不接受 token、命名隧道、自定义域名或自定义 cloudflared 命令。
+- 不生成、解释或改写项目环境变量；标准进程环境会原样传给 cloudflared，调用方对其提供的值负责。
 - 不自动安装或升级 Bun、cloudflared、curl。缺失时报告准确前置。
 - 生命周期命令必须复用同一个 `--state-dir`；不要用宽泛 `pgrep` 猜测或清理其他 tunnel。
 - 把 `start` 的 stdout 当可 `eval` 环境变量读取；不要从日志猜公网 URL 或 PID。
@@ -71,11 +72,11 @@ fi
 
 ```bash
 TASK_STATE_DIR="$(mktemp -d)/quick-tunnel"
-eval "$(bun "$CQT_DIR/cqt.ts" start "http://127.0.0.1:4173/preview/" --state-dir "$TASK_STATE_DIR")"
+eval "$(bun "$CQT_DIR/cqt.ts" start "http://127.0.0.1:4173" --state-dir "$TASK_STATE_DIR")"
 printf '公网地址：%s\nPID：%s\n日志：%s\n' "$PUBLIC_URL" "$TUNNEL_PID" "$TUNNEL_LOG"
 ```
 
-`start` 会先停止同一状态目录中仍存活的旧 tunnel，再启动新实例；origin 的 path、query、hash 会保留到 `PUBLIC_URL`。stdout 包含：
+`start` 会先停止同一状态目录中仍存活的旧 tunnel，再按收到的 origin 启动新实例。`PUBLIC_URL` 始终是 cloudflared 生成并探活后的 Quick Tunnel 根地址，不附加项目路径。stdout 包含：
 
 - `ORIGIN_URL`
 - `PUBLIC_URL`
@@ -99,18 +100,11 @@ bun "$CQT_DIR/cqt.ts" cleanup --state-dir "$TASK_STATE_DIR"
 
 `cleanup` 只删除脚本明确拥有的状态文件和日志，再尝试移除空状态目录；不会递归删除调用方放入的其他文件。
 
-## browser-harness 联动
-
-使用 `browser-harness` 做前端验收时，仍调用 `bh share` / `bh publish` / `bh cleanup`。browser-harness 会为项目计算独立状态目录并委托本脚本；不要再额外启动第二条 tunnel。
-
-- `bh share`：复用已由 `bh prepare` 启动的 dev server，然后调用 `cqt start`。
-- `bh publish`：启动 dev server，再调用 `cqt start`；tunnel 失败会回收 dev server。
-- `bh cleanup`：先调用 `cqt cleanup`，再停止 dev server。
-
 ## Runtime Notes
 
 - macOS 使用 `launchctl` 托管 worker，其他平台使用 detached 进程；两者都把精确 PID 写入状态目录。
-- Quick Tunnel 命令固定 origin Host，减少 Vite 等 dev server 因公网 Host 拒绝请求的问题。
+- macOS worker 只为保持跨平台一致性而原样恢复调用进程环境，不识别其中任何项目变量。
+- `start` 不设置 origin Host、不映射业务 URL，也不输出调用方专用变量。
 - `status` 只依据状态目录中的精确 PID；`stale` 表示 PID 状态存在但进程已退出。
 - `stop` 先发 `SIGTERM`，超时后仅对该 PID/独立进程组发 `SIGKILL`。
 
@@ -121,4 +115,4 @@ cd "$CLOUDFLARE_QUICK_TUNNEL_SKILL_DIR"
 bun test --max-concurrency 1
 ```
 
-集成测试用 stub `cloudflared` / `curl` 验证固定 Quick Tunnel 参数、URL 保留和 start → status → stop → cleanup 的真实进程与状态回收。
+集成测试用 stub `cloudflared` / `curl` 验证标准 Quick Tunnel 参数、根 URL 输出和 start → status → stop → cleanup 的真实进程与状态回收。

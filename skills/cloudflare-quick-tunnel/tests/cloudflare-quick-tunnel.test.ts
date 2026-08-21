@@ -132,7 +132,7 @@ describe("CLI contract", () => {
   test("reports version, usage, and invalid origins", () => {
     const version = runCqt(["--version"]);
     expect(version.exitCode).toBe(0);
-    expect(version.stdout.toString()).toBe("cloudflare-quick-tunnel 0.1.0\n");
+    expect(version.stdout.toString()).toBe("cloudflare-quick-tunnel 0.2.0\n");
 
     const usage = runCqt([]);
     expect(usage.exitCode).toBe(1);
@@ -160,7 +160,7 @@ describe("Quick Tunnel lifecycle", () => {
       }
       expect(assignment(started.stdout.toString(), "ORIGIN_URL")).toBe(origin);
       expect(assignment(started.stdout.toString(), "PUBLIC_URL")).toBe(
-        "https://fixture-remote.trycloudflare.com/preview/?mode=review#hero",
+        "https://fixture-remote.trycloudflare.com",
       );
       expect(assignment(started.stdout.toString(), "TUNNEL_STATE_DIR")).toBe(
         harness.stateDir,
@@ -180,9 +180,7 @@ describe("Quick Tunnel lifecycle", () => {
         join(harness.stateDir, "empty-config.yml"),
         "--no-autoupdate",
         "--url",
-        "http://127.0.0.1:4173",
-        "--http-host-header",
-        "127.0.0.1:4173",
+        origin,
       ]);
 
       const running = runCqt(["status", "--state-dir", harness.stateDir], {
