@@ -16,9 +16,9 @@ Use Herdr when it shortens the task's critical path, not merely to increase pane
 
 ## Decide and split
 
-1. Run `bun <skill-dir>/scripts/check-availability.ts`. If it returns `use_herdr: false`, stay in the caller channel and continue normally without Herdr routing. When the user explicitly required Herdr, briefly report the returned reason while still completing any work that does not require Herdr.
-2. Identify independent lanes before splitting. Start the slowest useful lanes first and keep doing useful work in the caller pane.
-3. Estimate whether `max(lane durations) + coordination overhead` beats serial execution. If it does not, stay in the caller channel and continue normally. Avoid delegating trivial work or splitting tightly dependent steps.
+1. Identify independent lanes before splitting. Start the slowest useful lanes first and keep doing useful work in the caller pane.
+2. Estimate whether `max(lane durations) + coordination overhead` beats serial execution. If it does not, stay in the caller channel and continue normally. Avoid delegating trivial work or splitting tightly dependent steps.
+3. Resolve the caller with `herdr pane current --current` and treat the CLI result as authoritative. **DO NOT** inspect `HERDR_ENV` or other `HERDR_*` variables to decide whether Herdr is usable: agent sandboxes may omit those variables while the CLI remains fully functional. If the CLI call fails, report the concrete error when Herdr was explicitly required and continue any work that does not require Herdr.
 4. Use sibling panes in the current tab only when the lane belongs to the caller's workspace/repository. When its target cwd is materially different, route it to the workspace that represents that directory and create a tab there; do not put it in the caller's workspace merely because that workspace is current.
 5. Classify every created pane before launch: `oneshot`, `service`, or `coding-agent`. Record its returned pane/tab/workspace IDs, exact cleanup command, and lifecycle state before starting work. An unrecorded lane must not be launched.
 
@@ -26,13 +26,14 @@ Inspect only the relevant current CLI group before using it, for example `herdr 
 
 ## Route by directory
 
-After availability succeeds, **MUST** use [`scripts/route-lane.ts`](scripts/route-lane.ts) for create-time classification, workspace probing, and resource creation. Direct `herdr pane split` / `tab create` / `workspace create` is allowed only when the script is unavailable or has returned a concrete actionable failure; the fallback must preserve the same anchor and cleanup invariants below.
+For lane creation, **MUST** use [`scripts/route-lane.ts`](scripts/route-lane.ts) for create-time classification, workspace probing, and resource creation. Direct `herdr pane split` / `tab create` / `workspace create` is allowed only when the script is unavailable or has returned a concrete actionable failure; the fallback must preserve the same anchor and cleanup invariants below.
 
 ```bash
 target_cwd=$PWD
 skill_dir=/absolute/path/to/herdr
-bun "$skill_dir/scripts/route-lane.ts" --type oneshot --scope same-task --cwd "$target_cwd" --caller-pane "$HERDR_PANE_ID"
-bun "$skill_dir/scripts/route-lane.ts" --type coding-agent --cwd /target/repo --label task-name --caller-pane "$HERDR_PANE_ID"
+primary_pane_id="$(herdr pane current --current | bun -e 'const r=JSON.parse(await Bun.stdin.text()); process.stdout.write(r.result.pane.pane_id)')"
+bun "$skill_dir/scripts/route-lane.ts" --type oneshot --scope same-task --cwd "$target_cwd" --caller-pane "$primary_pane_id"
+bun "$skill_dir/scripts/route-lane.ts" --type coding-agent --cwd /target/repo --label task-name --caller-pane "$primary_pane_id"
 ```
 
 Resolve the script relative to this `SKILL.md`, but capture the intended target cwd **before** any `cd` used to reach the skill directory. Prefer invoking the resolved absolute script path without changing directories. Never write `cd "$skill_dir" && scripts/route-lane.ts --cwd "$PWD"`: the target then becomes the skill directory and can create a workspace in the wrong place. `oneshot` and `service` default to `same-task`; `coding-agent` defaults to `independent`. Use `--dry-run` to inspect the decision without mutation. The script returns one JSON object containing `action`, matched and created IDs, and an exact `lane.cleanup_command` argv array. It creates only the routed pane/tab/workspace; start the command or agent separately using `result.pane_id`. When cleanup is due, execute that array exactly once and verify absence. Do not stringify, join, truncate, or `eval` it as shell text: execute it directly with Bun, for example `bun -e 'const p=JSON.parse(await Bun.stdin.text()); const r=Bun.spawnSync(p.lane.cleanup_command,{stdin:"inherit",stdout:"inherit",stderr:"inherit"}); process.exit(r.exitCode)' < "$route_json"`. Do not close the pane first and then try to close its parent tab/workspace.

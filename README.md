@@ -47,7 +47,7 @@ Frontend acceptance helper around [vercel-labs/agent-browser](https://github.com
 
 The bundled Bun/TypeScript router can split the caller tab, create a tab in an existing directory-matched workspace, or create a new workspace when no safe match exists. It preserves focus and rolls back newly created resources when verification fails.
 
-**Reach for it when** running inside Herdr (`HERDR_ENV=1`) and independent commands, services, checks, or coding-agent deliverables can overlap safely.
+**Reach for it when** independent commands, services, checks, or coding-agent deliverables can overlap safely and the Herdr CLI is available.
 
 ### `trigger-build-workflow` — safe commit, push, and optional build dispatch
 
@@ -115,9 +115,9 @@ bunx skills add MarioJames/skill-foundry --all -g
 
 Restart or reload the target agent runtime after installation so it can discover the skills.
 
-`herdr` requires Bun and an installed Herdr CLI. Its control interface is available only inside a
-Herdr session where `HERDR_ENV=1`; outside Herdr the skill does not attempt pane or workspace
-mutation.
+`herdr` requires Bun and an installed Herdr CLI. It does not use `HERDR_ENV` or other inherited
+environment variables as an availability gate; the actual CLI response is authoritative, including
+from agent sandboxes that do not inherit the parent Herdr environment.
 
 Bun 1.3 or newer is the runtime for every bundled executable script and hook. No bundled
 entrypoint is implemented in Python or Bash; external tools and user-provided commands retain
@@ -287,8 +287,7 @@ Use workspace-knowledge-graph to scan this workspace, build the knowledge graph,
 Each skill defines its own activation rules in `SKILL.md`. `agents-orchestrator` starts only after
 explicit authorization; an implicit high-signal match may produce one recommendation but cannot
 initialize a Run. Quoted names, file paths, links, and ordinary reviews do not activate it.
-`herdr` may activate implicitly only when `HERDR_ENV=1` and a concrete independent lane can shorten
-the critical path.
+`herdr` may activate implicitly when a concrete independent lane can shorten the critical path.
 
 ## Repository Layout
 

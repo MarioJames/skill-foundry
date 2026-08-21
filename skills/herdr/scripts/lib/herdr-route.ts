@@ -21,11 +21,6 @@ export interface WorkspaceProbe {
   };
 }
 
-export interface HerdrAvailability {
-  available: boolean;
-  reason: "available" | "not_in_herdr" | "missing_dependency";
-}
-
 export class CliError extends Error {
   constructor(
     readonly code: string,
@@ -79,22 +74,8 @@ export function parseFlags(
   return parsed;
 }
 
-export function checkHerdrAvailability(): HerdrAvailability {
-  if (process.env.HERDR_ENV !== "1") {
-    return { available: false, reason: "not_in_herdr" };
-  }
-  if (!Bun.which("herdr")) {
-    return { available: false, reason: "missing_dependency" };
-  }
-  return { available: true, reason: "available" };
-}
-
 export function requireHerdr(): void {
-  const availability = checkHerdrAvailability();
-  if (availability.reason === "not_in_herdr") {
-    throw new CliError("not_in_herdr", "HERDR_ENV=1 is required");
-  }
-  if (availability.reason === "missing_dependency") {
+  if (!Bun.which("herdr")) {
     throw new CliError("missing_dependency", "herdr is required", 127);
   }
 }
