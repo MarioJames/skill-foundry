@@ -20,9 +20,9 @@ import {
 } from "./lib/dev-server.ts";
 import { collectEvidence } from "./lib/evidence.ts";
 import {
-  startPublicTunnel,
-  stopPublicTunnel,
-} from "./lib/public-tunnel.ts";
+  cleanupQuickTunnel,
+  startQuickTunnel,
+} from "./lib/quick-tunnel-runtime.ts";
 import { resolveTarget } from "./lib/target-resolve.ts";
 
 function usage(): void {
@@ -160,11 +160,7 @@ function emitTunnelAssignments(tunnel: {
 async function share(arguments_: string[]): Promise<number> {
   const projectDir = resolveProjectTarget(arguments_[0], "share");
   const appUrl = readPreparedAppUrl(projectDir);
-  const tunnel = await startPublicTunnel(
-    process.env.BH_ITERATION || "default",
-    projectDir,
-    appUrl,
-  );
+  const tunnel = startQuickTunnel(projectDir, appUrl);
   process.stdout.write(`APP_URL=${shellQuote(appUrl)}\n`);
   emitTunnelAssignments(tunnel);
   return 0;
@@ -181,11 +177,7 @@ async function publish(arguments_: string[]): Promise<number> {
   );
 
   try {
-    const tunnel = await startPublicTunnel(
-      process.env.BH_ITERATION || "default",
-      projectDir,
-      server.appUrl,
-    );
+    const tunnel = startQuickTunnel(projectDir, server.appUrl);
     emitServerAssignments(server);
     emitTunnelAssignments(tunnel);
     return 0;
@@ -206,7 +198,7 @@ async function cleanup(arguments_: string[]): Promise<number> {
   } catch {
     fail(2, `cleanup 的 target 不存在或不受支持：${target}`);
   }
-  await stopPublicTunnel(absolute);
+  cleanupQuickTunnel(absolute);
   await stopDevServer(absolute);
   return 0;
 }

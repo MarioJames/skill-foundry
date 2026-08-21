@@ -229,7 +229,7 @@ describe("CLI contracts", () => {
   test("version, usage, and error exit codes stay stable", () => {
     const version = runBh(["--version"]);
     expect(version.exitCode).toBe(0);
-    expect(version.stdout.toString()).toBe("browser-harness 0.5.1\n");
+    expect(version.stdout.toString()).toBe("browser-harness 0.6.0\n");
 
     const usage = runBh([]);
     expect(usage.exitCode).toBe(1);
@@ -656,6 +656,105 @@ process.on("SIGINT", () => { server.stop(true); process.exit(0); });
 });
 
 describe("public tunnel lifecycle", () => {
+  test("share and cleanup delegate tunnel ownership to the companion skill", async () => {
+    const harness = createHarness();
+    const projectDir = join(harness.root, "delegated-project");
+    const serverPath = join(projectDir, "server.ts");
+    const companionDir = join(harness.root, "cloudflare-quick-tunnel");
+    const companionEntry = join(companionDir, "scripts", "cqt.ts");
+    const companionCalls = join(harness.root, "companion-calls.jsonl");
+    mkdirSync(projectDir, { recursive: true });
+    mkdirSync(dirname(companionEntry), { recursive: true });
+    writeFileSync(
+      join(projectDir, "package.json"),
+      JSON.stringify({ name: "fixture" }),
+    );
+    writeFileSync(
+      serverPath,
+      `const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+console.log(\`http://localhost:\${server.port}/preview/\`);
+process.on("SIGTERM", () => { server.stop(true); process.exit(0); });
+`,
+    );
+    writeFileSync(
+      companionEntry,
+      `import { appendFileSync, mkdirSync } from "node:fs";
+const args = Bun.argv.slice(2);
+appendFileSync(${JSON.stringify(companionCalls)}, JSON.stringify(args) + "\\n");
+const quote = (value) => "'" + String(value).replaceAll("'", "'\\\\''") + "'";
+if (args[0] === "start") {
+  const origin = args[1];
+  const stateDir = args[args.indexOf("--state-dir") + 1];
+  mkdirSync(stateDir, { recursive: true });
+  const url = new URL(origin);
+  const publicUrl = new URL("https://delegated.trycloudflare.com");
+  publicUrl.pathname = url.pathname;
+  console.log("ORIGIN_URL=" + quote(origin));
+  console.log("PUBLIC_URL=" + quote(publicUrl.toString()));
+  console.log("TUNNEL_PID='4242'");
+  console.log("TUNNEL_LOG=" + quote(${JSON.stringify(join(harness.root, "delegated.log"))}));
+  console.log("TUNNEL_STATE_DIR=" + quote(stateDir));
+  process.exit(0);
+}
+if (args[0] === "cleanup") process.exit(0);
+process.exit(2);
+`,
+    );
+
+    const env: Record<string, string> = {
+      ...harness.env,
+      PATH: `${harness.binDir}${delimiter}/usr/bin:/bin`,
+      BASE_PATH: "/preview/",
+      BH_DEV_COMMAND: `${quoteForShell(process.execPath)} ${quoteForShell(serverPath)}`,
+      BH_DEV_PID_WAIT_ATTEMPTS: "10",
+      CLOUDFLARE_QUICK_TUNNEL_SKILL_DIR: companionDir,
+    };
+    let devPid = 0;
+    try {
+      const prepared = runBh(["prepare", projectDir], {
+        cwd: harness.root,
+        env,
+      });
+      expect(prepared.exitCode).toBe(0);
+      const appUrl = assignment(prepared.stdout.toString(), "APP_URL");
+      devPid = Number(assignment(prepared.stdout.toString(), "DEV_SERVER_PID"));
+
+      const shared = runBh(["share", projectDir], {
+        cwd: harness.root,
+        env,
+      });
+      expect(shared.exitCode).toBe(0);
+      expect(assignment(shared.stdout.toString(), "REMOTE_REVIEW_URL")).toBe(
+        "https://delegated.trycloudflare.com/preview/",
+      );
+      expect(assignment(shared.stdout.toString(), "CLOUDFLARED_PID")).toBe(
+        "4242",
+      );
+
+      const cleaned = runBh(["cleanup", projectDir], {
+        cwd: harness.root,
+        env,
+      });
+      expect(cleaned.exitCode).toBe(0);
+      expect(await waitForExit(devPid)).toBe(true);
+
+      const invocations = calls(companionCalls);
+      expect(invocations).toHaveLength(2);
+      expect(invocations[0]?.slice(0, 2)).toEqual(["start", appUrl]);
+      expect(invocations[0]?.[2]).toBe("--state-dir");
+      expect(invocations[1]).toEqual([
+        "cleanup",
+        "--state-dir",
+        invocations[0]?.[3] || "",
+      ]);
+    } finally {
+      if (devPid > 0 && isAlive(devPid)) {
+        runBh(["cleanup", projectDir], { cwd: harness.root, env });
+        await waitForExit(devPid);
+      }
+    }
+  }, 30_000);
+
   test("share reuses prepare, publish starts both, and cleanup removes all state", async () => {
     const harness = createHarness();
     const cloudflaredCallsPath = installFakeCloudflare(harness);

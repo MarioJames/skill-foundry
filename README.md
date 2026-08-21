@@ -37,9 +37,15 @@ It includes progressive task ladders, clean post-fix PASS gates, typed staging p
 
 ### `browser-harness` — browser acceptance scaffolding
 
-Frontend acceptance helper around [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser). Resolves target shape (URL / static HTML / project dir), starts a dev server when needed, prepares login state, injects a stable `APP_URL`, and collects screenshot + console + network evidence. Step-level browser actions stay on the agent-browser CLI; this skill owns prepare / login / evidence / cleanup.
+Frontend acceptance helper around [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser). Resolves target shape (URL / static HTML / project dir), starts a dev server when needed, prepares login state, injects a stable `APP_URL`, and collects screenshot + console + network evidence. Step-level browser actions stay on the agent-browser CLI; temporary public review delegates to the companion `cloudflare-quick-tunnel` skill.
 
 **Reach for it when** doing smoke checks, journey prep with `APP_URL`, interactive browser exploration, or reusable headed login profiles.
+
+### `cloudflare-quick-tunnel` — temporary public tunnel lifecycle
+
+Creates anonymous Cloudflare Quick Tunnels for local HTTP services and owns the full start / status / stop / cleanup lifecycle. Its Bun CLI uses an isolated empty config, preserves the origin path, verifies public reachability, tracks exact process state, and keeps cleanup scoped to one caller-provided state directory.
+
+**Reach for it when** a local service needs a temporary public review URL; use it through `browser-harness` when the service is part of frontend acceptance.
 
 ### `herdr` — proactive multi-pane routing for Herdr
 
@@ -100,6 +106,7 @@ bunx skills add MarioJames/skill-foundry --all
 bunx skills add MarioJames/skill-foundry --skill agents-orchestrator
 bunx skills add MarioJames/skill-foundry --skill asset-validation
 bunx skills add MarioJames/skill-foundry --skill browser-harness
+bunx skills add MarioJames/skill-foundry --skill cloudflare-quick-tunnel
 bunx skills add MarioJames/skill-foundry --skill herdr
 bunx skills add MarioJames/skill-foundry --skill trigger-build-workflow
 bunx skills add MarioJames/skill-foundry --skill persistent-ssh-ops
@@ -144,6 +151,7 @@ git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
 mkdir -p ~/.codex/skills
 cp -R skills/agents-orchestrator skills/asset-validation skills/browser-harness \
+  skills/cloudflare-quick-tunnel \
   skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
   skills/awesome-presentation skills/workspace-knowledge-graph ~/.codex/skills/
@@ -156,6 +164,7 @@ git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
 mkdir -p ~/.claude/skills
 cp -R skills/agents-orchestrator skills/asset-validation skills/browser-harness \
+  skills/cloudflare-quick-tunnel \
   skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
   skills/awesome-presentation skills/workspace-knowledge-graph ~/.claude/skills/
@@ -169,6 +178,7 @@ test -f ~/.codex/skills/agents-orchestrator/scripts/bootstrap.ts
 test -f ~/.codex/skills/agents-orchestrator/bun.lock
 test -f ~/.codex/skills/asset-validation/scripts/acc.ts
 test -f ~/.codex/skills/browser-harness/scripts/bh.ts
+test -f ~/.codex/skills/cloudflare-quick-tunnel/scripts/cqt.ts
 test -f ~/.codex/skills/herdr/scripts/route-lane.ts
 test -f ~/.codex/skills/trigger-build-workflow/scripts/detect-build-workflow.ts
 test -f ~/.codex/skills/trigger-build-workflow/scripts/dispatch-build-workflow.ts
@@ -186,11 +196,13 @@ test -f ~/.codex/skills/workspace-knowledge-graph/scripts/workspace_graph.ts
 cd skill-foundry
 git pull
 rm -rf ~/.codex/skills/agents-orchestrator ~/.codex/skills/asset-validation \
-  ~/.codex/skills/browser-harness ~/.codex/skills/herdr ~/.codex/skills/trigger-build-workflow \
+  ~/.codex/skills/browser-harness ~/.codex/skills/cloudflare-quick-tunnel \
+  ~/.codex/skills/herdr ~/.codex/skills/trigger-build-workflow \
   ~/.codex/skills/persistent-ssh-ops ~/.codex/skills/provision-xray-hy2-node \
   ~/.codex/skills/changelog-writing ~/.codex/skills/awesome-presentation \
   ~/.codex/skills/workspace-knowledge-graph
 cp -R skills/agents-orchestrator skills/asset-validation skills/browser-harness \
+  skills/cloudflare-quick-tunnel \
   skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
   skills/awesome-presentation skills/workspace-knowledge-graph ~/.codex/skills/
@@ -240,6 +252,12 @@ Browser acceptance:
 
 ```text
 Use browser-harness to prepare the app, open it, and collect screenshot + console + network evidence.
+```
+
+Expose a local HTTP service temporarily:
+
+```text
+Use cloudflare-quick-tunnel to publish http://127.0.0.1:4173 for remote review, report its status, and clean it up when I finish.
 ```
 
 Route independent work across Herdr panes and workspaces:
@@ -311,6 +329,11 @@ skill-foundry/
 │   ├── browser-harness/
 │   │   ├── SKILL.md
 │   │   └── scripts/
+│   ├── cloudflare-quick-tunnel/
+│   │   ├── SKILL.md
+│   │   ├── agents/
+│   │   ├── scripts/
+│   │   └── tests/
 │   ├── herdr/
 │   │   ├── SKILL.md
 │   │   ├── agents/
@@ -353,6 +376,7 @@ Installable skill packages:
 - `skills/agents-orchestrator/`
 - `skills/asset-validation/`
 - `skills/browser-harness/`
+- `skills/cloudflare-quick-tunnel/`
 - `skills/herdr/`
 - `skills/trigger-build-workflow/`
 - `skills/persistent-ssh-ops/`
@@ -380,6 +404,7 @@ The pre-existing agents-orchestrator Runtime keeps its package-level checks:
 # Package-free migrated skills run their behavior tests directly with Bun.
 bun test skills/asset-validation/tests
 bun test skills/browser-harness/tests
+bun test skills/cloudflare-quick-tunnel/tests
 bun test skills/workspace-knowledge-graph/test
 bun test skills/trigger-build-workflow/test
 ```
@@ -393,6 +418,7 @@ bun skills/changelog-writing/scripts/collect-commits.ts --help
 bun skills/persistent-ssh-ops/scripts/scan-hosts.ts --help
 bun skills/asset-validation/scripts/acc.ts --help
 bun skills/browser-harness/scripts/bh.ts --version
+bun skills/cloudflare-quick-tunnel/scripts/cqt.ts --version
 bun skills/workspace-knowledge-graph/scripts/workspace_graph.ts --help
 ```
 

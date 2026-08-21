@@ -1,13 +1,13 @@
 ---
 name: browser-harness
-description: Use when validating frontend changes in a browser via vercel-labs/agent-browser, preparing dev server / login state per target shape (URL / *.html / project dir), collecting screenshot+console+network evidence, injecting APP_URL into project test commands, driving interactive exploration, offering a temporary Cloudflare remote-review URL after frontend acceptance, or starting a local web project and publishing/exposing it to the public internet.
+description: Use when validating frontend changes in a browser via vercel-labs/agent-browser, preparing dev server / login state per target shape (URL / *.html / project dir), collecting screenshot+console+network evidence, injecting APP_URL into project test commands, driving interactive exploration, or coordinating temporary remote review with the companion cloudflare-quick-tunnel skill.
 ---
 
 # Browser Harness
 
 ## Overview
 
-本技能是前端验收的浏览器脚手架：自动按 target 形态决定要不要起 dev server，准备登录态，采集复合证据。逐步浏览器动作（点、填、等、看）由 agent 直接调 [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser) CLI 完成；本技能不替你写 Playwright 脚本，也不封装项目自己的测试命令（journey 等由项目 testing-suite 承担，本技能只负责把 `APP_URL` 准备好）。
+本技能是前端验收的浏览器脚手架：自动按 target 形态决定要不要起 dev server，准备登录态，采集复合证据。逐步浏览器动作（点、填、等、看）由 agent 直接调 [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser) CLI 完成；本技能不替你写 Playwright 脚本，也不封装项目自己的测试命令（journey 等由项目 testing-suite 承担，本技能只负责把 `APP_URL` 准备好）。Cloudflare Quick Tunnel 的进程、探活、状态与清理由独立的 `cloudflare-quick-tunnel` 技能拥有，本技能只协调 dev server 与该伴生技能。
 
 核心原则：在一轮验收里先用 `bh prepare` 取到稳定 `APP_URL`、必要时 `bh login` 准备登录态；然后视场景选择 `bh collect-evidence` 或直接调 `agent-browser` 原始 CLI。页面需求自测通过后先询问是否需要远程走查：不需要则 `bh cleanup`，需要则用 `bh share` 暴露当前服务并在走查结束后 cleanup。用户直接要求“启动并发布到公网”时，用 `bh publish` 一次完成启动与发布。
 
@@ -31,6 +31,7 @@ description: Use when validating frontend changes in a browser via vercel-labs/a
 - 用户不需要远程走查时，**MUST** 立即执行 `bh cleanup`；用户需要或已明确要求发布到公网时，保留 dev server + Cloudflare tunnel，直到用户确认走查结束后再 cleanup。
 - **MUST** 让 `cleanup` 使用与 `prepare` / `share` / `publish` 相同的 target；HTML 文件会由 CLI 归一到所在目录。
 - **DO NOT** 未经用户确认主动创建公网隧道；“启动并发布/暴露到公网”本身视为明确确认。
+- 进入公网分支时 **MUST** 使用 `cloudflare-quick-tunnel` 伴生技能；`bh share` / `publish` / `cleanup` 已委托它管理同一条 tunnel，**DO NOT** 再手动创建第二条 tunnel。
 - **DO NOT** 把 `*.trycloudflare.com` 的随机性当访问控制；Quick Tunnel 是无认证的临时公网入口，不得用于生产或敏感数据。
 - **DO NOT** 把 `artifact_errors` 非空的 fallback 占位文件当有效证据。
 - **DO NOT** 在采集阶段一次性 dump 全部 network body；按需查指定 `requestId`。
@@ -38,7 +39,7 @@ description: Use when validating frontend changes in a browser via vercel-labs/a
 
 ## Project Setup
 
-依赖 Bun ≥ 1.3 与 vercel-labs/agent-browser CLI ≥ 0.29 已安装。`share` / `publish` 还需要 `cloudflared`，但非公网流程不得因此失败：
+依赖 Bun ≥ 1.3 与 vercel-labs/agent-browser CLI ≥ 0.29。`share` / `publish` 还需要安装 `cloudflare-quick-tunnel` 伴生技能；其脚本负责检查 `cloudflared` / `curl`，非公网流程不得因这些公网依赖缺失而失败：
 
 ```bash
 command -v bun >/dev/null || {
@@ -47,12 +48,6 @@ command -v bun >/dev/null || {
 }
 command -v agent-browser >/dev/null || {
   echo "请按 https://github.com/vercel-labs/agent-browser 安装 agent-browser，然后 'agent-browser install' 拉取 Chrome for Testing"
-  exit 2
-}
-
-# 仅在用户确认远程走查或明确要求公网发布后检查
-command -v cloudflared >/dev/null || {
-  echo "请先安装 cloudflared：https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/"
   exit 2
 }
 ```
@@ -68,6 +63,7 @@ if [ -z "$BH_DIR" ] && [ -n "${ACCEPTANCE_SANDBOX:-}" ]; then
   BH_DIR="$(find "$ACCEPTANCE_SANDBOX/.iso" -path '*/skills/browser-harness/scripts' -type d 2>/dev/null | head -1)"
 fi
 for candidate in \
+  "$HOME/.agents/skills/browser-harness/scripts" \
   "$HOME/.codex/skills/browser-harness/scripts" \
   "$HOME/.claude/skills/browser-harness/scripts" \
   "$HOME/.cc-switch/skills/browser-harness/scripts"
@@ -83,6 +79,8 @@ if [ -z "$BH_DIR" ] || [ ! -f "$BH_DIR/bh.ts" ]; then
   exit 1
 fi
 ```
+
+`bh share` / `publish` 默认从 browser-harness 的同级技能根查找 `cloudflare-quick-tunnel/scripts/cqt.ts`，也兼容上面的 HOME 安装根。只有两个技能不在同一技能根时，才把 `CLOUDFLARE_QUICK_TUNNEL_SKILL_DIR` 设为实际加载的伴生技能目录；不要指向复制出来的单个脚本。
 
 ## Standard Flow
 
@@ -152,7 +150,7 @@ eval "$(bun "$BH_DIR/bh.ts" share "$TARGET")"
 printf '远程走查地址：%s\n' "$REMOTE_REVIEW_URL"
 ```
 
-`share` 从项目状态读取当前 `APP_URL`，stdout 只输出可安全 `eval` 的 `APP_URL`、`REMOTE_REVIEW_URL`、`CLOUDFLARED_PID`、`CLOUDFLARED_LOG`。启动后用公网 URL 做一次页面烟测；向用户交付 URL 时同时说明这是临时无认证入口，并报告 dev server / tunnel 的 PID、日志和保留原因。用户确认走查结束后执行：
+`share` 从项目状态读取当前 `APP_URL`，委托 `cloudflare-quick-tunnel start` 创建并探活 tunnel，再把伴生技能输出映射为兼容的 `APP_URL`、`REMOTE_REVIEW_URL`、`CLOUDFLARED_PID`、`CLOUDFLARED_LOG` 安全赋值。启动后用公网 URL 做一次页面烟测；向用户交付 URL 时同时说明这是临时无认证入口，并报告 dev server / tunnel 的 PID、日志和保留原因。用户确认走查结束后执行：
 
 ```bash
 bun "$BH_DIR/bh.ts" cleanup "$TARGET"
@@ -168,13 +166,13 @@ eval "$(bun "$BH_DIR/bh.ts" publish "$TARGET")"
 bun "$BH_DIR/bh.ts" collect-evidence "$REMOTE_REVIEW_URL" --profile remote-review
 ```
 
-`publish` 一次完成 dev server 启动、Cloudflare tunnel 创建和公网探活，stdout 额外包含 `DEV_SERVER_PID` / `DEV_SERVER_LOG`。公网验收失败时不要把 URL 交付给用户；按 console/network 证据排查，无法修复则 cleanup。用户结束走查后仍用相同 target cleanup。
+`publish` 一次完成 dev server 启动，并委托 `cloudflare-quick-tunnel` 完成 tunnel 创建与公网探活；stdout 额外包含 `DEV_SERVER_PID` / `DEV_SERVER_LOG`。伴生技能失败时会回收 dev server。公网验收失败时不要把 URL 交付给用户；按 console/network 证据排查，无法修复则 cleanup。用户结束走查后仍用相同 target cleanup。
 
 `publish` 沿用 `prepare` 的端口发现协议：dev stdout/stderr 必须打印 `http://localhost:<port>` 或 `http://127.0.0.1:<port>`。自建极简 server 或自定义 `BH_DEV_COMMAND` 时显式打印实际监听 URL；不要从进程列表猜端口。
 
-### Quick Tunnel 固定行为
+### 与 cloudflare-quick-tunnel 的边界
 
-`share` / `publish` 只执行匿名 [TryCloudflare Quick Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/)：使用本机 PATH 中的 `cloudflared`，以隔离的空配置运行 `cloudflared tunnel --url <origin>`，并生成随机 `*.trycloudflare.com` 域名。不支持 token、命名隧道、自定义域名、自定义 cloudflared 命令或 Cloudflare 环境变量覆盖。
+本技能保留 `share` / `publish` 作为前端流程入口，但不再包含 `cloudflared` 实现。匿名 [TryCloudflare Quick Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) 的固定参数、隔离配置、URL 探活、精确 PID、macOS launchd 托管和 stop/cleanup 均以 `cloudflare-quick-tunnel` 技能为事实源。
 
 ## C 场景：交互式探索的最小教程
 
@@ -228,8 +226,8 @@ C 场景里 agent 直接调 `agent-browser` 时，用 `--profile "$(bun "$BH_DIR
 - `BH_DEV_COMMAND`、`BH_APP_HOST`、`BH_CURL_NO_PROXY` 是 browser-harness 自己的环境契约。单次调用优先使用上面的命令前缀；若先分行赋值，必须 `export BH_DEV_COMMAND=...` 后再运行 `bh prepare`。仅写 `BH_DEV_COMMAND=...` 再执行下一条命令不会进入子进程，技能会回退到 `package.json` 脚本。
 - `bh login` **MUST** 在能弹 headed 浏览器的环境跑（本机或带显示转发的 SSH）。CI 环境没显示，应直接复用预先建好的 profile。
 - `bh share` 只复用仍存活的 `bh prepare` 项目；没有持久化 APP_URL 或 dev PID 已退出时拒绝发布，不从日志猜端口。
-- 默认 Quick Tunnel 把 origin Host 固定为本地 `APP_URL` 的 host，减少 Vite 等 dev server 因公网 Host 拒绝请求的情况；`APP_URL` 带 base path 时，输出的 `REMOTE_REVIEW_URL` 会保留该 path。
-- `bh cleanup` 的状态文件按项目路径隔离：先停止公网 tunnel，再停止 dev server；若 prepare/share/publish 时用的不是 `.`，cleanup 需传同一 target。HTML 文件 target 会归一到所在目录，未启动相关进程时是可重复的 no-op。
+- 伴生技能把 origin Host 固定为本地 `APP_URL` 的 host，减少 Vite 等 dev server 因公网 Host 拒绝请求的情况；`APP_URL` 带 base path 时，输出的 `REMOTE_REVIEW_URL` 会保留该 path。
+- `bh cleanup` 按项目路径为伴生技能计算独立 state-dir：先委托它 cleanup 公网 tunnel，再停止 dev server；若 prepare/share/publish 时用的不是 `.`，cleanup 需传同一 target。HTML 文件 target 会归一到所在目录，未启动相关进程时是可重复的 no-op。
 - 资源复核以 prepare 返回并持久化的精确 `DEV_SERVER_PID`、项目状态文件和本次 profile 为边界。不要用宽泛的 `pgrep -f 'headless|agent-browser'` 判定残留：`pgrep -f` 会匹配探针自身的 argv，产生假阳性并诱发误杀用户浏览器；必须核对精确 PID、父进程和本次 profile 路径，且只回收本任务创建的进程。
 - 执行 `agent-browser close` 后，不要再用 `agent-browser snapshot`、`open` 或其他浏览器命令探测“是否已关闭”：这些命令可能惰性启动新会话，反而制造资源残留。关闭后的只读确认应检查本轮已记录的精确浏览器/CDP PID 或端口是否消失；若误触发了浏览器命令，必须再次关闭本轮会话并重新做外部精确检查。
 - `bh collect-evidence` 默认把证据写入最近项目根的 `.browser-harness/evidence/<ts>/`，并幂等地把 `/.browser-harness/` 加入该项目的 `.gitignore`；不要把证据移回可见且未忽略的项目目录。
@@ -253,7 +251,7 @@ stdout 也输出 `summary.json` 内容供 agent 直接读取。把 stdout 保存
 
 ## Tests
 
-技能自带 Bun TypeScript 集成测试：stub 化验证 agent-browser / cloudflared 契约，并启动真实本地 dev server 验证 prepare / share / publish / cleanup 的进程与状态文件清理：
+技能自带 Bun TypeScript 集成测试：stub 化验证 agent-browser 与伴生技能调用契约，并通过真实 `cloudflare-quick-tunnel` 脚本和本地 dev server 验证 prepare / share / publish / cleanup 的进程与状态清理：
 
 ```bash
 cd "$BROWSER_HARNESS_SKILL_DIR"

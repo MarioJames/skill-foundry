@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cloudflare Quick Tunnel"
+  short_description: "Manage temporary public URLs for local HTTP services"
+  default_prompt: "Use $cloudflare-quick-tunnel to expose this local HTTP service temporarily and manage the tunnel through cleanup."

@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 
-export const BH_VERSION = "0.5.1";
+export const BH_VERSION = "0.6.0";
 export const BH_MIN_AGENT_BROWSER_VERSION = "0.29.0";
 
 export class BhError extends Error {
@@ -144,18 +144,6 @@ export function labelFile(projectDir: string): string {
 
 export function appUrlFile(projectDir: string): string {
   return join(logDir(), `dev-${projectKey(projectDir)}.url`);
-}
-
-export function tunnelPidFile(projectDir: string): string {
-  return join(logDir(), `tunnel-${projectKey(projectDir)}.pid`);
-}
-
-export function tunnelLabelFile(projectDir: string): string {
-  return join(logDir(), `tunnel-${projectKey(projectDir)}.label`);
-}
-
-export function tunnelUrlFile(projectDir: string): string {
-  return join(logDir(), `tunnel-${projectKey(projectDir)}.url`);
 }
 
 export function findExecutable(
