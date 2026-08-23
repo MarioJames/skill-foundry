@@ -1,82 +1,52 @@
 ---
 name: workspace-knowledge-graph
-description: 当用户要求为多仓工作区初始化或刷新知识图谱、生成或维护 AGENTS.md / MEMORY.md / CLAUDE.md 根路由文档、维护 .workspace/ 声明与跨仓关系视图，或提到工作区知识图谱、多仓扫描、仓库关系梳理、任务路由文档时使用。
+description: 使用 OpenViking 定位、查询和维护跨设备共享的工作区知识图谱与工作区记忆。用户提到工作区知识图谱、多仓关系、项目归属、此前工作、workspace 记忆线上化或从本地 .workspace 初始化线上记忆时使用；普通代码搜索或通用 OpenViking 记忆问答不单独触发。
 ---
 
-# 工作区知识图谱
+# 线上工作区知识图谱
 
-使用本技能初始化或刷新根路由文档（`AGENTS.md`、`CLAUDE.md`、`MEMORY.md`）、`.workspace/`、`.workspace/relations/registry.yaml`，以及 `.workspace/repos/<repo>/` 下的仓库文档。
+本技能是 OpenViking 工作区知识的薄路由层。线上入口固定为：
 
-## 产物语言约定
-
-面向人的工作区产物默认使用中文，面向机器的令牌（文件名、配置键、命令等）保持原样；完整规则见 [references/output-contract.md](references/output-contract.md)。
-
-## 工作流
-
-1. `bootstrap`：创建根文档和 `.workspace/` 骨架。
-2. `scan`：扫描工作区根目录下的同级 git 仓库，把机械扫描快照持久化到 `.workspace/state/discovery.json`。研究阶段依赖这个真实文件，而不是 bootstrap 的占位文件。机械识别对 Bigfish / Maven / JS monorepo（pnpm / yarn / npm workspaces）类工作区最完整，其他技术栈会退化成通用清单文件与计数；解读与关系证据始终由研究闭环负责。扫描后先跑一次 `init`，渲染出各仓库 index 的机械骨架，让后续写作在固定分节上填空，而不是徒手造表。
-3. **研究-写作-评审闭环。** 有子代理可用时，不让研究员直接写最终事实源；先按仓库扇出 Research Agent 产出证据包，再由 Writer Agent 写入仓库 `index.md`、`domains/*.md`、`shared/*.md` 和关系候选，最后由 Review Agent 做只读语义评审并把缺口返给 Writer Agent 修补。见 [references/research-protocol.md](references/research-protocol.md) 和 [references/acceptance-standard.md](references/acceptance-standard.md)。首版只需推进到高密度可用入口，就绪门槛见 [references/progressive-maintenance.md](references/progressive-maintenance.md)。
-4. 把全局发现归并进 `.workspace/metadata.yaml`：`positioning`、覆盖所有仓库的任务路由、有证据支撑的 `relations`，以及 `standalone_repos`。
-5. `init`：基于扫描结果和持久事实源重新渲染派生文档。`domains/*.md` 和 `shared/*.md` 归 agent 所有；脚本只读取它们刷新文档表，绝不创建、覆盖或删除。
-6. `validate`：作为兜底校验，只阻断结构、链接、证据路径和明显缺失的业务域骨架；不要用脚本阈值替代 Research/Writer/Review 闭环里的业务语义判断。见 [references/output-contract.md](references/output-contract.md)。
-7. 迭代修改并重渲染，直到结构和语义评审都收敛。
-8. `validate` 通过且 Review Agent 没有未处理的 `must_fix` 后，图谱才算就绪。
-9. 按 [references/memory-protocol.md](references/memory-protocol.md) 维护 `MEMORY.md` 与 `.workspace/memory/daily/`:收尾时不直接转写事件,先提炼后续可复用信息,并只以“对后续工作有没有价值”判断是否写入;价值通过后再按作用范围和有效期选择 daily 或 `MEMORY.md`,没有价值不强写。能否从代码、git/PR/CI、任务系统或图谱事实源恢复不参与写入判断,只用于消费时核验。写入与消费规则由生成的 `AGENTS.md` 承载,`MEMORY.md` 和 daily 文件只放实际记录。刷新存量工作区时同时压缩旧记忆。记忆发生变化时在最终答复中只概括重点:daily 使用`记忆已新增/已更新`,记录到 `MEMORY.md` 时突出说明`工作空间全局记忆已新增/已更新`;两层同时变化时分别通知,不复述完整条目。
-10. 后续任务遵循 [references/progressive-maintenance.md](references/progressive-maintenance.md)：搜索、调试、测试、集成或用户补充任务语境时，修补最小且正确的事实源；用户首次提供的稳定对象称呼、项目归属和目录映射也要沉淀到路由/仓库/业务域事实源，然后重跑 `init` + `validate`。
-
-## **HARD CONSTRAINTS**（**MUST** / **DO NOT**）
-
-- **MUST** 用用户给定目录或调用时 `$PWD` 作为 `WORKSPACE_ROOT`；**DO NOT** 用 `git rev-parse --show-toplevel`、向上探测父目录、查找祖先 `.git` / `.workspace`、枚举工作区外同级目录、目录名推断或其它启发式发现/归一化/覆盖根目录。
-- **MUST** 在首次调用前把 `WORKSPACE_ROOT` 解析并保存为经过 `test -d` 的绝对物理路径，后续每个 shell 批次复用该值；shell 工具的 cwd 可能跨批次保留，**DO NOT** 在后续批次用当前 `$PWD` 再拼接 `fixture/...`，否则会得到重复路径。验收 fixture 从稳定的 `$ACCEPTANCE_SANDBOX` 根解析。探测性 `cd` 只能放在子 shell，或批次结束前恢复原 cwd。
-- **MUST** 在目标工作区根目录执行命令；**DO NOT** 在技能安装目录里执行并把该 `$PWD` 当成工作区。
-- **MUST** 手改 `.workspace/metadata.yaml` 为合法 JSON（扩展名是 `.yaml` 但语法是 JSON）。
-- **DO NOT** 用脚本规则替代 Research/Writer/Review 闭环的业务语义判断。
-- **DO NOT** 在没有依赖证据时捏造 peer 边；无证据仓库进 `standalone_repos`。证据路径 **MUST** 是可打开的工作区相对路径，**DO NOT** 使用 `...`。
-- `domains/*.md` / `shared/*.md` 归 agent 所有：脚本只读刷新文档表，**NEVER** 创建/覆盖/删除这些文件。
-- **MUST** 把 daily 每条写成 `- repo:<repo>` / `- workspace`；**DO NOT** 省略前导 `-` 写成 `repo:<repo>` / `workspace`。
-
-## 命令
-
-工作区根目录只接受直接输入：
-
-- 用户给了目录，就用该目录作为 `WORKSPACE_ROOT`。
-- 否则使用调用时的当前工作目录：`WORKSPACE_ROOT="$PWD"`。
-- **DO NOT** 通过 `git rev-parse --show-toplevel`、向上探测父目录、查找祖先 `.git` / `.workspace`、枚举 `WORKSPACE_ROOT` 之外的同级目录、目录名推断或任何其他启发式来发现、归一化或覆盖根目录。
-- 只有用户明确要求换目标目录时才更改 `WORKSPACE_ROOT`。
-- 首次确定目标后立即转成绝对物理路径并 `test -d`；不要在后续命令批次重新用 `$PWD/<相对路径>` 计算。若处于验收沙箱，始终从 `$ACCEPTANCE_SANDBOX/<fixture-path>` 解析，而不是从可能已改变的 `$PWD` 解析。
-
-命令在目标工作区根目录下执行。使用本技能目录的绝对路径；**DO NOT** 在技能目录里执行并把那个 `$PWD` 当成工作区。
-
-```bash
-SKILL_DIR="$HOME/.cc-switch/skills/workspace-knowledge-graph"  # 以实际加载本 SKILL.md 的目录为准；安装位置不同时先替换。
-WORKSPACE_ROOT="$PWD"
-WORKSPACE_ROOT="$(cd "$WORKSPACE_ROOT" && pwd -P)"
-test -d "$WORKSPACE_ROOT"
-bun "$SKILL_DIR/scripts/workspace_graph.ts" bootstrap --workspace "$WORKSPACE_ROOT"
-bun "$SKILL_DIR/scripts/workspace_graph.ts" scan --workspace "$WORKSPACE_ROOT"
-bun "$SKILL_DIR/scripts/workspace_graph.ts" init --workspace "$WORKSPACE_ROOT"
-bun "$SKILL_DIR/scripts/workspace_graph.ts" validate --workspace "$WORKSPACE_ROOT"
+```text
+viking://user/resources/workspaces/index.md
+viking://user/resources/workspaces/<workspace>/
 ```
 
-这些入口都接受显式 `--workspace`，无需持久 `cd`。若只是检查目录内容，使用 `(cd "$WORKSPACE_ROOT" && ...)` 子 shell，避免污染下一批命令。
+不要在技能中重建本地扫描、渲染或数据库客户端；通过运行时已注册的 OpenViking `find` / `search` / `read` / `glob` / `grep` / `edit` / `write` 工具工作。`viking://user/...` 是当前用户别名，不硬编码实际 user id。
 
-脚本要求 Bun `>=1.3.0`，运行时只使用 Bun / Node 内置能力，无需安装第三方依赖。
+## 查询
 
-`.workspace/metadata.yaml` 已存在时，`init` 会把扫描结果与本地声明合并后重新渲染派生文档。agent 撰写的内容按 [references/config-schema.md](references/config-schema.md) 中的所有权规则保留。遗留声明（顶层 `repos` / `memory_seed`、仓库级 `meta.yaml`）不做自动迁移：`init` 会拒绝执行并提示手动迁移。
+1. 优先从用户明确给出的工作区名或路径确定 `<workspace>`；不确定时读取线上 `index.md`，或在 `viking://user/resources/workspaces` 下按仓库名、模块名和任务关键词搜索。不要靠本地目录名猜归属。
+2. 已知工作区时，先用 `find(target_uri=工作区 URI)` 做小范围召回；结果不足再用 `search(mode="list", target_uri=工作区 URI)`。`search(mode="context")` 不支持 `target_uri`，只在确实需要跨工作区记忆时使用。
+3. 只选择 1–3 个最相关的精确文件 URI，并用 `read` 读原文后再行动。摘要只用于筛选，不作为事实证据。
+4. 时间指称优先定位 `memory/daily/YYYY-MM-DD.md`；续接、纠正、确认取舍或用户外部操作优先查 `memory/MEMORY.md`；仓库入口和业务边界查 `graph/repos/`；跨仓关系查 `graph/relations/`；工作区路由查 `graph/metadata.yaml` 或 `graph/index.md`。
+5. 同名仓库可能属于不同工作区。所有检索都要保留 workspace scope，不能把 `enterprise/admin`、`lobe/admin` 等同名仓库的事实合并。
 
-## 关键约定
+## 使用边界
 
-- `.workspace/metadata.yaml` 虽然扩展名是 `.yaml`，但**使用 JSON 语法**，以保证工具零依赖。手改 **MUST** 是合法 JSON。
-- 完整的所有权与字段契约见 [references/config-schema.md](references/config-schema.md)，包括仓库 index 分节恢复和操作行归一化。研究阶段的字段规则见 [references/research-protocol.md](references/research-protocol.md)。
-- 跨仓关系保持仓库级粒度，且 **MUST** 有证据支撑。仅凭类别相似不构成 peer 边。没有依赖证据的仓库放进 `standalone_repos`。证据路径 **MUST** 是可打开的工作区相对路径，**DO NOT** 使用 `...`。粒度红线见 [references/config-schema.md](references/config-schema.md) 的 relations。
-- 仓库内深度内容放在 `domains/` 和 `shared/`。**DO NOT** 用每仓一个笼统总述掩盖多个会影响路由、归属或维护判断的独立能力；长尾按需补充小而稳定、有证据的事实。
-- 根文件分工见 [references/output-contract.md](references/output-contract.md)：`AGENTS.md` 是生成产物，持久事实写入 `.workspace/metadata.yaml` 与 `.workspace/repos/**` 后由 `init` 刷新；`MEMORY.md` 是按需消费的非权威接续上下文，不是工作日志；`CLAUDE.md` 严格等于 `@AGENTS.md`。
+- 权威顺序：当前用户指令与当前代码、配置、外部实时状态、Git/PR/CI > 线上图谱事实 > 线上工作区记忆。OpenViking 内容用于定位和续接，不证明当前实现或外部状态。
+- 路由到具体仓库后，仍须读取该仓库自己的 `AGENTS.md` 和命中的项目技能；线上图谱不覆盖仓库级执行规范。
+- 只读问答、审查或定位不产生线上写入。用户请求初始化、同步、记忆或图谱维护时，才执行外部写入。
+- 不把凭证、token、账号、个人隐私、`.env`、原始会话日志、临时 ID 或未提炼的流水账写入工作区资源。
+- 不用 `remember` 镜像工作区文件。自动记忆层继续承载用户级实体、事件和偏好；可审计的工作区图谱与工作区记忆写在 `resources/workspaces/`。
 
-## 参考文档
+## 维护
 
-- `references/research-protocol.md`
-- `references/config-schema.md`
-- `references/output-contract.md`
-- `references/acceptance-standard.md`
-- `references/progressive-maintenance.md`
-- `references/memory-protocol.md`
+稳定事实发生变化时，先 `read` 当前线上文件，再用 `edit` 做唯一匹配的最小修改并设置 `wait=true`；新增文件用 `write(mode="create", wait=true)`。只有已核对完整旧内容或执行明确初始化时才用 `write(mode="replace")`，避免多设备盲覆盖。
+
+更新后至少完成：
+
+- `read` 精确 URI 验证正文；
+- 用工作区限定的 `find` 或 `search(mode="list")` 验证新事实可召回；
+- 说明写入的 workspace、URI 和仍需以当前代码复核的易漂移信息。
+
+线上目录与文件职责见 [references/online-layout.md](references/online-layout.md)。只有用户要求从本地工作区初始化或重新同步时，才读取 [references/bootstrap-from-local.md](references/bootstrap-from-local.md)。
+
+## 故障与陷阱
+
+- `search(mode="context")` 不能带 `target_uri`；限定工作区用 `find` 或 list 模式。
+- 工具返回的规范 URI 可能展开为 `viking://user/<id>/...`；调用时继续使用当前用户别名，不把该 id 写进技能或本地配置。
+- 新写入的语义索引可能异步刷新；需要当场验收时使用 `wait=true`，不要用重复写入轮询。
+- 目录级 `.abstract.md` / `.overview.md` 是 OpenViking 派生索引，不是事实源；若出现语言异常或乱码，先 `read` 精确原文确认正文，再只修复派生文件并重建向量，避免用错误摘要覆盖正常内容。
+- 本地 `.workspace/state/discovery.json`、孤儿 `repos/` 目录和生成入口不是迁移真源；初始化必须按 `metadata.yaml.workspace.repo_order` 过滤。
+- OpenViking 不可用时，明确说明线上记忆暂不可达；不要假设本地仍有 `.workspace` 或根 `MEMORY.md`，不得重新生成本地图谱、恢复本地双写或声称掌握跨设备最新状态。
