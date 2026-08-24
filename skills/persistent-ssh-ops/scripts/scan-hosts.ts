@@ -1,12 +1,24 @@
 #!/usr/bin/env bun
-/** Discover SSH-related aliases from the user's effective login shell. */
+/** Discover registered server profiles and SSH aliases from the effective login shell. */
 
 import { existsSync, statSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { basename, join } from "node:path";
 
 const SAFE_ALIAS = /^[A-Za-z_][A-Za-z0-9_.-]*$/u;
+const SAFE_PROFILE = /^[a-z][a-z0-9_]*$/u;
 const SSH_COMMAND = /^\s*(?:(?:builtin|command|exec)\s+)?(?<transport>autossh|mosh|ssh)(?:\s|$)/u;
+
+export interface DiscoveryRecord {
+  kind: "alias" | "profile";
+  name: string;
+  value: string;
+}
+
+export interface ServerProfile {
+  name: string;
+  uri: string;
+}
 
 export interface HostAlias {
   alias: string;
@@ -41,8 +53,13 @@ export function captureCommand(shellName: string, begin: string, end: string): s
     return `
 printf '%s\\0' ${quotedBegin}
 for alias_name in \${(ok)aliases}; do
-  printf '%s\\0%s\\0' "$alias_name" "$aliases[$alias_name]"
+  printf 'alias\\0%s\\0%s\\0' "$alias_name" "$aliases[$alias_name]"
 done
+if (( \${+functions[server_ssh]} )) && [[ "\${(t)SERVER_PROFILES}" == *association* ]]; then
+  for profile_name in \${(ok)SERVER_PROFILES}; do
+    printf 'profile\\0%s\\0%s\\0' "$profile_name" "$SERVER_PROFILES[$profile_name]"
+  done
+fi
 printf '%s\\0' ${quotedEnd}
 `;
   }
@@ -51,7 +68,7 @@ printf '%s\\0' ${quotedEnd}
     return `
 printf '%s\\0' ${quotedBegin}
 while IFS= read -r alias_name; do
-  printf '%s\\0%s\\0' "$alias_name" "\${BASH_ALIASES[$alias_name]}"
+  printf 'alias\\0%s\\0%s\\0' "$alias_name" "\${BASH_ALIASES[$alias_name]}"
 done < <(printf '%s\\n' "\${!BASH_ALIASES[@]}" | LC_ALL=C sort)
 printf '%s\\0' ${quotedEnd}
 `;
@@ -60,7 +77,7 @@ printf '%s\\0' ${quotedEnd}
   throw new Error(`unsupported login shell: ${shellName}`);
 }
 
-export function parseAliasStream(stdout: Uint8Array, begin: string, end: string): Array<[string, string]> {
+export function parseDiscoveryStream(stdout: Uint8Array, begin: string, end: string): DiscoveryRecord[] {
   const bytes = Buffer.from(stdout);
   const beginMarker = Buffer.from(`${begin}\0`);
   const endMarker = Buffer.from(`${end}\0`);
@@ -72,18 +89,20 @@ export function parseAliasStream(stdout: Uint8Array, begin: string, end: string)
 
   const fields = bytes.subarray(start + beginMarker.length, stop).toString("utf8").split("\0");
   if (fields.at(-1) === "") fields.pop();
-  if (fields.length % 2 !== 0) {
-    throw new Error("the login shell returned an invalid alias stream");
+  if (fields.length % 3 !== 0) {
+    throw new Error("the login shell returned an invalid discovery stream");
   }
 
-  const aliases: Array<[string, string]> = [];
-  for (let index = 0; index < fields.length; index += 2) {
-    aliases.push([fields[index]!, fields[index + 1]!]);
+  const records: DiscoveryRecord[] = [];
+  for (let index = 0; index < fields.length; index += 3) {
+    const kind = fields[index];
+    if (kind !== "alias" && kind !== "profile") continue;
+    records.push({ kind, name: fields[index + 1]!, value: fields[index + 2]! });
   }
-  return aliases;
+  return records;
 }
 
-export function effectiveAliases(shell: string): Array<[string, string]> {
+export function effectiveDiscovery(shell: string): DiscoveryRecord[] {
   const nonce = crypto.randomUUID().replaceAll("-", "");
   const begin = `__PERSISTENT_SSH_OPS_BEGIN_${nonce}__`;
   const end = `__PERSISTENT_SSH_OPS_END_${nonce}__`;
@@ -94,12 +113,13 @@ export function effectiveAliases(shell: string): Array<[string, string]> {
     stdout: "pipe",
     stderr: "pipe",
   });
-  return parseAliasStream(result.stdout, begin, end);
+  return parseDiscoveryStream(result.stdout, begin, end);
 }
 
-export function filterHostAliases(aliases: Array<[string, string]>): HostAlias[] {
+export function filterHostAliases(records: DiscoveryRecord[]): HostAlias[] {
   const discovered: HostAlias[] = [];
-  for (const [alias, command] of aliases) {
+  for (const { kind, name: alias, value: command } of records) {
+    if (kind !== "alias") continue;
     const match = SSH_COMMAND.exec(command);
     const transport = match?.groups?.transport;
     if (!SAFE_ALIAS.test(alias) || !transport) continue;
@@ -108,9 +128,32 @@ export function filterHostAliases(aliases: Array<[string, string]>): HostAlias[]
   return discovered.sort((left, right) => left.alias.localeCompare(right.alias, "en"));
 }
 
+function isSafeSshUri(value: string): boolean {
+  try {
+    const uri = new URL(value);
+    return uri.protocol === "ssh:"
+      && uri.username.length > 0
+      && uri.password.length === 0
+      && uri.hostname.length > 0
+      && uri.search.length === 0
+      && uri.hash.length === 0;
+  } catch {
+    return false;
+  }
+}
+
+export function filterServerProfiles(records: DiscoveryRecord[]): ServerProfile[] {
+  const discovered: ServerProfile[] = [];
+  for (const { kind, name, value: uri } of records) {
+    if (kind !== "profile" || !SAFE_PROFILE.test(name) || !isSafeSshUri(uri)) continue;
+    discovered.push({ name, uri });
+  }
+  return discovered.sort((left, right) => left.name.localeCompare(right.name, "en"));
+}
+
 function printHelp(): void {
   console.log("Usage: bun scan-hosts.ts");
-  console.log("Discover ssh, mosh, and autossh aliases from the configured login shell.");
+  console.log("Discover server_ssh profiles and legacy SSH aliases from the configured login shell.");
 }
 
 export function main(args: string[] = Bun.argv.slice(2)): number {
@@ -125,10 +168,12 @@ export function main(args: string[] = Bun.argv.slice(2)): number {
 
   try {
     const shell = loginShell();
+    const discovery = effectiveDiscovery(shell);
     const output = {
-      schema_version: 1,
+      schema_version: 2,
       shell,
-      host_aliases: filterHostAliases(effectiveAliases(shell)),
+      server_profiles: filterServerProfiles(discovery),
+      host_aliases: filterHostAliases(discovery),
     };
     console.log(JSON.stringify(output, null, 2));
     return 0;

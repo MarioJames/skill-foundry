@@ -63,7 +63,7 @@ Submits scoped Git changes and dispatches a release workflow only when the repos
 
 ### `persistent-ssh-ops` — reusable remote-operation sessions
 
-Keeps one TTY-backed SSH session per host through multi-step maintenance, deployment, log, and incident workflows. It discovers SSH aliases from the effective login shell, falls back to OpenSSH `Host` aliases, preserves remote context, verifies changes, redacts secret-bearing output, and closes every task-owned session.
+Keeps one TTY-backed SSH session per host through multi-step maintenance, deployment, log, and incident workflows. It ships a complete `server_define`/`server_ssh` zsh runtime and initializer, discovers registered profiles before legacy shell aliases, falls back to OpenSSH `Host` aliases, preserves remote context, verifies changes, redacts secret-bearing output, and closes every task-owned session.
 
 **Reach for it when** remote work requires more than one command or interactive diagnostics.
 
@@ -346,7 +346,9 @@ skill-foundry/
 │   ├── persistent-ssh-ops/
 │   │   ├── SKILL.md
 │   │   ├── agents/
-│   │   └── scripts/
+│   │   ├── assets/
+│   │   ├── scripts/
+│   │   └── test/
 │   ├── provision-xray-hy2-node/
 │   │   ├── SKILL.md
 │   │   ├── agents/
@@ -407,6 +409,7 @@ bun test skills/browser-harness/tests
 bun test skills/cloudflare-quick-tunnel/tests
 bun test skills/workspace-knowledge-graph/test
 bun test skills/trigger-build-workflow/test
+bun test skills/persistent-ssh-ops/test
 ```
 
 ```bash
@@ -415,6 +418,7 @@ bun skills/herdr/scripts/probe-workspace.ts --help
 bun skills/trigger-build-workflow/scripts/detect-build-workflow.ts --help
 bun skills/trigger-build-workflow/scripts/dispatch-build-workflow.ts --help
 bun skills/changelog-writing/scripts/collect-commits.ts --help
+bun skills/persistent-ssh-ops/scripts/init-server-config.ts --help
 bun skills/persistent-ssh-ops/scripts/scan-hosts.ts --help
 bun skills/asset-validation/scripts/acc.ts --help
 bun skills/browser-harness/scripts/bh.ts --version

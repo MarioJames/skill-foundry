@@ -1,4 +1,4 @@
 interface:
   display_name: "Persistent SSH Ops"
-  short_description: "Reuse secure TTY SSH sessions for server work"
+  short_description: "Initialize SSH profiles and reuse secure TTY sessions"
   default_prompt: "Use $persistent-ssh-ops to operate this remote server through one reusable SSH session."
