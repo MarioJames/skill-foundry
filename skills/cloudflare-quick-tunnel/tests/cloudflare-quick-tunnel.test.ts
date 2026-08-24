@@ -12,6 +12,8 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
+import { waitForPublicReady } from "../scripts/lib/lifecycle";
+
 const skillDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const cqtEntry = join(skillDir, "scripts", "cqt.ts");
 const temporaryRoots = new Set<string>();
@@ -132,7 +134,7 @@ describe("CLI contract", () => {
   test("reports version, usage, and invalid origins", () => {
     const version = runCqt(["--version"]);
     expect(version.exitCode).toBe(0);
-    expect(version.stdout.toString()).toBe("cloudflare-quick-tunnel 0.2.0\n");
+    expect(version.stdout.toString()).toBe("cloudflare-quick-tunnel 0.3.0\n");
 
     const usage = runCqt([]);
     expect(usage.exitCode).toBe(1);
@@ -141,6 +143,58 @@ describe("CLI contract", () => {
     const invalid = runCqt(["start", "file:///tmp/page.html"]);
     expect(invalid.exitCode).toBe(2);
     expect(invalid.stderr.toString()).toContain("有效 HTTP(S) URL");
+  });
+});
+
+describe("public readiness", () => {
+  test("keeps transport errors and Cloudflare 5xx in the pending state", async () => {
+    let now = 0;
+    const probes = [
+      { exitCode: 35, httpCode: "000" },
+      { exitCode: 0, httpCode: "530" },
+      { exitCode: 0, httpCode: "200" },
+    ];
+    const pending: string[] = [];
+
+    const result = await waitForPublicReady({
+      now: () => now,
+      onPending: ({ probe }) => pending.push(`${probe.exitCode}:${probe.httpCode}`),
+      probe: () => probes.shift() || { exitCode: 0, httpCode: "200" },
+      retryIntervalMs: 1_000,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      },
+      timeoutMs: 10_000,
+    });
+
+    expect(result).toEqual({
+      attempts: 3,
+      elapsedMs: 2_000,
+      probe: { exitCode: 0, httpCode: "200" },
+      status: "ready",
+    });
+    expect(pending).toEqual(["35:000", "0:530"]);
+  });
+
+  test("times out by elapsed time instead of a fast-failure attempt count", async () => {
+    let now = 0;
+
+    const result = await waitForPublicReady({
+      now: () => now,
+      probe: () => ({ exitCode: 0, httpCode: "530" }),
+      retryIntervalMs: 1_000,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      },
+      timeoutMs: 2_500,
+    });
+
+    expect(result).toEqual({
+      attempts: 4,
+      elapsedMs: 2_500,
+      probe: { exitCode: 0, httpCode: "530" },
+      status: "timeout",
+    });
   });
 });
 

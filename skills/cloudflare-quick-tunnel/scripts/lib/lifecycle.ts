@@ -15,12 +15,13 @@ import {
 import { delimiter, dirname, join, parse, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const CQT_VERSION = "0.2.0";
+export const CQT_VERSION = "0.3.0";
 
 const LIFECYCLE_MODULE = fileURLToPath(import.meta.url);
 const PID_WAIT_ATTEMPTS = 30;
 const URL_WAIT_ATTEMPTS = 30;
-const READY_WAIT_ATTEMPTS = 30;
+const READY_WAIT_TIMEOUT_MS = 180_000;
+const READY_RETRY_INTERVAL_MS = 2_000;
 
 export class CqtError extends Error {
   readonly exitCode: number;
@@ -47,6 +48,35 @@ export interface TunnelStatus {
   publicUrl: string;
   logPath: string;
   stateDir: string;
+}
+
+export interface PublicProbeResult {
+  exitCode: number;
+  httpCode: string;
+}
+
+interface PublicReadyPendingState {
+  attempt: number;
+  elapsedMs: number;
+  probe: PublicProbeResult;
+  remainingMs: number;
+}
+
+interface WaitForPublicReadyOptions {
+  beforeProbe?: () => void;
+  now?: () => number;
+  onPending?: (state: PublicReadyPendingState) => void;
+  probe: () => PublicProbeResult;
+  retryIntervalMs: number;
+  sleep?: (milliseconds: number) => Promise<void>;
+  timeoutMs: number;
+}
+
+export interface PublicReadyWaitResult {
+  attempts: number;
+  elapsedMs: number;
+  probe: PublicProbeResult;
+  status: "ready" | "timeout";
 }
 
 interface StatePaths {
@@ -198,6 +228,40 @@ function isProcessAlive(pid: number): boolean {
 
 function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+}
+
+function isReadyProbe(probe: PublicProbeResult): boolean {
+  if (probe.httpCode === "000") return false;
+  const httpCode = Number(probe.httpCode);
+  return Number.isInteger(httpCode) && httpCode >= 100 && httpCode < 500;
+}
+
+export async function waitForPublicReady(
+  options: WaitForPublicReadyOptions,
+): Promise<PublicReadyWaitResult> {
+  const now = options.now || Date.now;
+  const wait = options.sleep || sleep;
+  const startedAt = now();
+  let attempts = 0;
+
+  while (true) {
+    options.beforeProbe?.();
+    const probe = options.probe();
+    attempts += 1;
+    const elapsedMs = Math.max(0, now() - startedAt);
+
+    if (isReadyProbe(probe)) {
+      return { attempts, elapsedMs, probe, status: "ready" };
+    }
+
+    const remainingMs = Math.max(0, options.timeoutMs - elapsedMs);
+    options.onPending?.({ attempt: attempts, elapsedMs, probe, remainingMs });
+    if (remainingMs === 0) {
+      return { attempts, elapsedMs, probe, status: "timeout" };
+    }
+
+    await wait(Math.min(options.retryIntervalMs, remainingMs));
+  }
 }
 
 function syncCommand(
@@ -452,7 +516,7 @@ function quickTunnelUrl(path: string): string {
   );
 }
 
-function curlStatus(curl: string, url: string): string {
+function curlProbe(curl: string, url: string): PublicProbeResult {
   const result = syncCommand(
     [
       curl,
@@ -469,7 +533,15 @@ function curlStatus(curl: string, url: string): string {
     { stdout: "pipe" },
   );
   const value = result.stdout.trim();
-  return /^\d{3}$/.test(value) ? value : "000";
+  return {
+    exitCode: result.exitCode,
+    httpCode: /^\d{3}$/.test(value) ? value : "000",
+  };
+}
+
+function probeSummary(probe: PublicProbeResult): string {
+  if (probe.httpCode === "000") return `transport error（curl exit ${probe.exitCode}）`;
+  return `HTTP ${probe.httpCode}`;
 }
 
 function parseOrigin(value: string): URL {
@@ -543,24 +615,46 @@ export async function startTunnel(
       fail(2, "等待 Quick Tunnel 公网 URL 超时");
     }
 
-    let readyCode = "000";
-    for (let attempt = 0; attempt < READY_WAIT_ATTEMPTS; attempt += 1) {
-      if (!isProcessAlive(tunnelPid)) {
-        tailLog(paths.log);
-        fail(2, "Cloudflare tunnel 在公网探活前退出");
-      }
-      readyCode = curlStatus(curl, publicUrl);
-      if (readyCode !== "000" && Number(readyCode) < 500) break;
-      await sleep(1_000);
-    }
-    if (readyCode === "000" || Number(readyCode) >= 500) {
+    let lastLoggedAt = Number.NEGATIVE_INFINITY;
+    let lastLoggedSummary = "";
+    const readiness = await waitForPublicReady({
+      beforeProbe: () => {
+        if (!isProcessAlive(tunnelPid)) {
+          tailLog(paths.log);
+          fail(2, "Cloudflare tunnel 在公网探活前退出");
+        }
+      },
+      onPending: ({ attempt, elapsedMs, probe, remainingMs }) => {
+        const summary = probeSummary(probe);
+        if (
+          attempt === 1 ||
+          summary !== lastLoggedSummary ||
+          elapsedMs - lastLoggedAt >= 10_000
+        ) {
+          log(
+            `公网入口尚未就绪（${summary}，已等待 ${Math.ceil(elapsedMs / 1_000)} 秒，剩余至多 ${Math.ceil(remainingMs / 1_000)} 秒），继续探活`,
+          );
+          lastLoggedAt = elapsedMs;
+          lastLoggedSummary = summary;
+        }
+      },
+      probe: () => curlProbe(curl, publicUrl),
+      retryIntervalMs: READY_RETRY_INTERVAL_MS,
+      timeoutMs: READY_WAIT_TIMEOUT_MS,
+    });
+    if (readiness.status === "timeout") {
       tailLog(paths.log);
-      fail(3, `Quick Tunnel 公网 URL ${publicUrl} 不可达`);
+      fail(
+        3,
+        `Quick Tunnel 公网入口在 ${Math.ceil(READY_WAIT_TIMEOUT_MS / 1_000)} 秒内仍未就绪（最后一次：${probeSummary(readiness.probe)}）`,
+      );
     }
 
     writePrivate(paths.originUrl, `${originValue}\n`);
     writePrivate(paths.publicUrl, `${publicUrl}\n`);
-    log(`remote ready: ${publicUrl} (http ${readyCode})`);
+    log(
+      `remote ready: ${publicUrl} (http ${readiness.probe.httpCode}, attempts ${readiness.attempts}, ${Math.ceil(readiness.elapsedMs / 1_000)}s)`,
+    );
     return {
       originUrl: originValue,
       publicUrl,

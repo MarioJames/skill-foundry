@@ -84,6 +84,8 @@ printf '公网地址：%s\nPID：%s\n日志：%s\n' "$PUBLIC_URL" "$TUNNEL_PID" 
 - `TUNNEL_LOG`
 - `TUNNEL_STATE_DIR`
 
+公网入口生成后仍可能短暂返回 Cloudflare 5xx，透明代理也可能把这个阶段表现为 TLS/传输错误。`start` 会把 HTTP 5xx 与 `curl 000` 视为“尚未就绪”，在固定 180 秒墙钟窗口内持续探活并周期性报告最后状态；快速失败不会提前耗尽等待窗口。只有实际获得 HTTP 100–499 才会输出上述变量。超时后会报告最后一次 HTTP/传输状态并精确停止本轮 tunnel，不会交付中间 URL。
+
 只读检查不创建进程：
 
 ```bash
