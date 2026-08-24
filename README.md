@@ -342,13 +342,13 @@ skill-foundry/
 │   │   ├── SKILL.md
 │   │   ├── agents/
 │   │   ├── scripts/
-│   │   └── test/
+│   │   └── tests/
 │   ├── persistent-ssh-ops/
 │   │   ├── SKILL.md
 │   │   ├── agents/
 │   │   ├── assets/
 │   │   ├── scripts/
-│   │   └── test/
+│   │   └── tests/
 │   ├── provision-xray-hy2-node/
 │   │   ├── SKILL.md
 │   │   ├── agents/

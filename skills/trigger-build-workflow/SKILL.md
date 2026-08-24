@@ -66,7 +66,7 @@ bun <skill-dir>/scripts/dispatch-build-workflow.ts \
   --repo . \
   --message 'fix: handle empty configuration' \
   --path src/config.ts \
-  --path test/config.test.ts
+  --path tests/config.test.ts
 ```
 
 Beta build after the detector reports `dispatch`:

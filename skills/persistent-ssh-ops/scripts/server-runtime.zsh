@@ -27,7 +27,7 @@ server_define() {
     return 2
   fi
 
-  local name="${1:l}"
+  local name="$1"
   local user="$2"
   local host="$3"
   local port="$4"
@@ -37,17 +37,31 @@ server_define() {
     echo "Server name must start with a lowercase letter and contain only lowercase letters, digits, or underscores: $name" >&2
     return 2
   fi
-  if [[ -z "$user" || -z "$host" ]]; then
-    echo "Server user and IP/host must not be empty: $name" >&2
+  if [[ ! "$user" =~ '^[A-Za-z0-9_][A-Za-z0-9_.-]*$' ]]; then
+    echo "Server user contains unsupported characters: $name" >&2
     return 2
   fi
-  if [[ ! "$port" =~ '^[0-9]+$' ]] || (( port < 1 || port > 65535 )); then
+  if [[ "$host" == -* || ! "$host" =~ '^([A-Za-z0-9][A-Za-z0-9.-]*|\[[0-9A-Fa-f:]+\]|[0-9A-Fa-f:]*:[0-9A-Fa-f:]+)$' ]]; then
+    echo "Server IP/host contains unsupported characters: $name" >&2
+    return 2
+  fi
+  if [[ ! "$port" =~ '^[0-9]{1,5}$' ]]; then
     echo "Server port must be between 1 and 65535: $port" >&2
     return 2
   fi
+  local -i port_number=$(( 10#$port ))
+  if (( port_number < 1 || port_number > 65535 )); then
+    echo "Server port must be between 1 and 65535: $port" >&2
+    return 2
+  fi
+  port="$port_number"
 
   local prefix="${(U)name}"
-  local uri="ssh://${user}@${host}:${port}"
+  local uri_host="$host"
+  if [[ "$host" == *:* && "$host" != \[*\] ]]; then
+    uri_host="[$host]"
+  fi
+  local uri="ssh://${user}@${uri_host}:${port}"
   typeset -gx "${prefix}_IP=$host"
   typeset -gx "${prefix}_USER=$user"
   typeset -gx "${prefix}_PORT=$port"
