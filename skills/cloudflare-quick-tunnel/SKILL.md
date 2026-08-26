@@ -1,13 +1,13 @@
 ---
 name: cloudflare-quick-tunnel
-description: Create and manage temporary public URLs for local HTTP services through the standard anonymous Cloudflare Quick Tunnel lifecycle, including start, readiness checks, status, stop, and cleanup. Use for temporary exposure of a local service; do not use for project-specific URL mapping, production, authenticated access, named tunnels, or custom domains.
+description: Create and manage temporary public URLs for local HTTP services through the standard anonymous Cloudflare Quick Tunnel lifecycle, including start, status, stop, and cleanup. Use for temporary exposure of a local service; do not use for project-specific URL mapping, production, authenticated access, named tunnels, or custom domains.
 ---
 
 # Cloudflare Quick Tunnel
 
 ## Overview
 
-本技能只负责标准匿名 Cloudflare Quick Tunnel 的完整生命周期：启动并探活公网入口、查询精确状态、停止进程、清理本轮状态与日志。它不解释项目环境变量，不拼接业务 path/query/hash，也不添加项目专用的 cloudflared 参数；这些内容由调用方负责。
+本技能只负责标准匿名 Cloudflare Quick Tunnel 的完整生命周期：启动并返回公网入口、查询精确状态、停止进程、清理本轮状态与日志。它不解释项目环境变量，不拼接业务 path/query/hash，也不添加项目专用的 cloudflared 参数；这些内容由调用方负责。
 
 > 下文 `cqt ...` 均为 `bun "$CQT_DIR/cqt.ts" ...` 的速记。每次 shell 调用都重新解析 `CQT_DIR`；不要依赖上一批命令留下的局部变量。
 
@@ -17,14 +17,14 @@ description: Create and manage temporary public URLs for local HTTP services thr
 - `*.trycloudflare.com` 是无认证随机地址，不是访问控制；不得承载生产或敏感数据。
 - 只使用 PATH 中的 `cloudflared` 创建匿名 Quick Tunnel，并传入隔离的空配置；不接受 token、命名隧道、自定义域名或自定义 cloudflared 命令。
 - 不生成、解释或改写项目环境变量；标准进程环境会原样传给 cloudflared，调用方对其提供的值负责。
-- 不自动安装或升级 Bun、cloudflared、curl。缺失时报告准确前置。
+- 不自动安装或升级 Bun、cloudflared。缺失时报告准确前置。
 - 生命周期命令必须复用同一个 `--state-dir`；不要用宽泛 `pgrep` 猜测或清理其他 tunnel。
 - 把 `start` 的 stdout 当可 `eval` 环境变量读取；不要从日志猜公网 URL 或 PID。
-- 交付公网 URL 前必须以脚本完成的公网探活为准。`start` 失败时不得交付日志中尚未验证的 URL。
+- `start` 解析到 cloudflared 生成的公网 URL 后必须立即输出，不做 HTTP、TLS 或页面探活，不等待远端就绪。
 
 ## Setup
 
-依赖 Bun ≥ 1.3、`cloudflared` 与 `curl`：
+依赖 Bun ≥ 1.3 与 `cloudflared`：
 
 ```bash
 command -v bun >/dev/null || {
@@ -33,10 +33,6 @@ command -v bun >/dev/null || {
 }
 command -v cloudflared >/dev/null || {
   echo "请先安装 cloudflared：https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/"
-  exit 2
-}
-command -v curl >/dev/null || {
-  echo "请先安装 curl"
   exit 2
 }
 ```
@@ -76,7 +72,7 @@ eval "$(bun "$CQT_DIR/cqt.ts" start "http://127.0.0.1:4173" --state-dir "$TASK_S
 printf '公网地址：%s\nPID：%s\n日志：%s\n' "$PUBLIC_URL" "$TUNNEL_PID" "$TUNNEL_LOG"
 ```
 
-`start` 会先停止同一状态目录中仍存活的旧 tunnel，再按收到的 origin 启动新实例。`PUBLIC_URL` 始终是 cloudflared 生成并探活后的 Quick Tunnel 根地址，不附加项目路径。stdout 包含：
+`start` 会先停止同一状态目录中仍存活的旧 tunnel，再按收到的 origin 启动新实例。`PUBLIC_URL` 始终是 cloudflared 生成的 Quick Tunnel 根地址，不附加项目路径。stdout 包含：
 
 - `ORIGIN_URL`
 - `PUBLIC_URL`
@@ -84,7 +80,7 @@ printf '公网地址：%s\nPID：%s\n日志：%s\n' "$PUBLIC_URL" "$TUNNEL_PID" 
 - `TUNNEL_LOG`
 - `TUNNEL_STATE_DIR`
 
-公网入口生成后仍可能短暂返回 Cloudflare 5xx，透明代理也可能把这个阶段表现为 TLS/传输错误。`start` 会把 HTTP 5xx 与 `curl 000` 视为“尚未就绪”，在固定 180 秒墙钟窗口内持续探活并周期性报告最后状态；快速失败不会提前耗尽等待窗口。只有实际获得 HTTP 100–499 才会输出上述变量。超时后会报告最后一次 HTTP/传输状态并精确停止本轮 tunnel，不会交付中间 URL。
+`start` 只等待 cloudflared 在日志中生成 `*.trycloudflare.com` 地址，解析成功后立即写入状态并输出上述变量。它不会请求公网 URL，也不会把 HTTP/TLS 可达性作为启动条件。地址刚生成时可能短暂返回 Cloudflare 5xx 或出现 TLS/传输错误；仍应直接交付给用户打开，不要因此阻塞、重试或停止本轮 tunnel。
 
 只读检查不创建进程：
 
@@ -117,4 +113,4 @@ cd "$CLOUDFLARE_QUICK_TUNNEL_SKILL_DIR"
 bun test --max-concurrency 1
 ```
 
-集成测试用 stub `cloudflared` / `curl` 验证标准 Quick Tunnel 参数、根 URL 输出和 start → status → stop → cleanup 的真实进程与状态回收。
+集成测试用 stub `cloudflared` 与 `curl` 调用哨兵验证标准 Quick Tunnel 参数、根 URL 立即输出、不会探活，以及 start → status → stop → cleanup 的真实进程与状态回收。

@@ -17,7 +17,7 @@ function usage(): void {
   process.stderr.write(`usage: cqt <subcommand> [args]
 
 subcommands:
-  start <origin-url> [--state-dir <dir>]  启动、探活并输出公网 URL
+  start <origin-url> [--state-dir <dir>]  启动并输出公网 URL
   status [--state-dir <dir>]              查询精确 PID 与状态
   stop [--state-dir <dir>]                停止 tunnel，保留日志
   cleanup [--state-dir <dir>]             停止并清理本技能状态/日志

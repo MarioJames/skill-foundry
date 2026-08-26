@@ -43,7 +43,7 @@ Frontend acceptance helper around [vercel-labs/agent-browser](https://github.com
 
 ### `cloudflare-quick-tunnel` — temporary public tunnel lifecycle
 
-Creates standard anonymous Cloudflare Quick Tunnels for local HTTP services and owns the full start / status / stop / cleanup lifecycle. Its Bun CLI uses an isolated empty config, returns a verified tunnel root URL, tracks exact process state, and keeps cleanup scoped to one caller-provided state directory; project URL mapping and custom environment belong to the caller.
+Creates standard anonymous Cloudflare Quick Tunnels for local HTTP services and owns the full start / status / stop / cleanup lifecycle. Its Bun CLI uses an isolated empty config, returns the generated tunnel root URL immediately without probing it, tracks exact process state, and keeps cleanup scoped to one caller-provided state directory; project URL mapping and custom environment belong to the caller.
 
 **Reach for it when** a local service needs a temporary public review URL; use it through `browser-harness` when the service is part of frontend acceptance.
 

@@ -7,7 +7,7 @@ description: Use when validating frontend changes in a browser via vercel-labs/a
 
 ## Overview
 
-本技能是前端验收的浏览器脚手架：自动按 target 形态决定要不要起 dev server，准备登录态，采集复合证据。逐步浏览器动作（点、填、等、看）由 agent 直接调 [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser) CLI 完成；本技能不替你写 Playwright 脚本，也不封装项目自己的测试命令（journey 等由项目 testing-suite 承担，本技能只负责把 `APP_URL` 准备好）。Cloudflare Quick Tunnel 的标准进程、根地址探活、状态与清理由独立的 `cloudflare-quick-tunnel` 技能拥有；项目专用环境、Host 适配、URL 映射和兼容输出全部由本技能负责。
+本技能是前端验收的浏览器脚手架：自动按 target 形态决定要不要起 dev server，准备登录态，采集复合证据。逐步浏览器动作（点、填、等、看）由 agent 直接调 [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser) CLI 完成；本技能不替你写 Playwright 脚本，也不封装项目自己的测试命令（journey 等由项目 testing-suite 承担，本技能只负责把 `APP_URL` 准备好）。Cloudflare Quick Tunnel 的标准进程、根地址生成、状态与清理由独立的 `cloudflare-quick-tunnel` 技能拥有；项目专用环境、Host 适配、URL 映射和兼容输出全部由本技能负责。
 
 核心原则：在一轮验收里先用 `bh prepare` 取到稳定 `APP_URL`、必要时 `bh login` 准备登录态；然后视场景选择 `bh collect-evidence` 或直接调 `agent-browser` 原始 CLI。页面需求自测通过后先询问是否需要远程走查：不需要则 `bh cleanup`，需要则用 `bh share` 暴露当前服务并在走查结束后 cleanup。用户直接要求“启动并发布到公网”时，用 `bh publish` 一次完成启动与发布。
 
@@ -39,7 +39,7 @@ description: Use when validating frontend changes in a browser via vercel-labs/a
 
 ## Project Setup
 
-依赖 Bun ≥ 1.3 与 vercel-labs/agent-browser CLI ≥ 0.29。`share` / `publish` 还需要安装 `cloudflare-quick-tunnel` 伴生技能；其脚本负责检查 `cloudflared` / `curl`，非公网流程不得因这些公网依赖缺失而失败：
+依赖 Bun ≥ 1.3 与 vercel-labs/agent-browser CLI ≥ 0.29。`share` / `publish` 还需要安装 `cloudflare-quick-tunnel` 伴生技能；其脚本负责检查 `cloudflared`，非公网流程不得因这些公网依赖缺失而失败：
 
 ```bash
 command -v bun >/dev/null || {
@@ -150,7 +150,7 @@ eval "$(bun "$BH_DIR/bh.ts" share "$TARGET")"
 printf '远程走查地址：%s\n' "$REMOTE_REVIEW_URL"
 ```
 
-`share` 从项目状态读取当前 `APP_URL`：本技能提取 origin、设置项目需要的 `TUNNEL_HTTP_HOST_HEADER`，再委托 `cloudflare-quick-tunnel start` 创建并探活标准 tunnel；随后由本技能把 `APP_URL` 的 path/query/hash 拼接到伴生技能返回的根地址，并映射为兼容的 `APP_URL`、`REMOTE_REVIEW_URL`、`CLOUDFLARED_PID`、`CLOUDFLARED_LOG` 安全赋值。启动后用公网 URL 做一次页面烟测；向用户交付 URL 时同时说明这是临时无认证入口，并报告 dev server / tunnel 的 PID、日志和保留原因。用户确认走查结束后执行：
+`share` 从项目状态读取当前 `APP_URL`：本技能提取 origin、设置项目需要的 `TUNNEL_HTTP_HOST_HEADER`，再委托 `cloudflare-quick-tunnel start` 创建标准 tunnel；随后由本技能把 `APP_URL` 的 path/query/hash 拼接到伴生技能返回的根地址，并映射为兼容的 `APP_URL`、`REMOTE_REVIEW_URL`、`CLOUDFLARED_PID`、`CLOUDFLARED_LOG` 安全赋值。拿到地址后立即向用户交付，不做公网 URL 探活；同时说明这是临时无认证入口，并报告 dev server / tunnel 的 PID、日志和保留原因。用户确认走查结束后执行：
 
 ```bash
 bun "$BH_DIR/bh.ts" cleanup "$TARGET"
@@ -163,16 +163,16 @@ bun "$BH_DIR/bh.ts" cleanup "$TARGET"
 ```bash
 TARGET=/absolute/path/to/project
 eval "$(bun "$BH_DIR/bh.ts" publish "$TARGET")"
-bun "$BH_DIR/bh.ts" collect-evidence "$REMOTE_REVIEW_URL" --profile remote-review
+printf '远程走查地址：%s\n' "$REMOTE_REVIEW_URL"
 ```
 
-`publish` 一次完成 dev server 启动，并委托 `cloudflare-quick-tunnel` 完成 tunnel 创建与公网探活；stdout 额外包含 `DEV_SERVER_PID` / `DEV_SERVER_LOG`。伴生技能失败时会回收 dev server。公网验收失败时不要把 URL 交付给用户；按 console/network 证据排查，无法修复则 cleanup。用户结束走查后仍用相同 target cleanup。
+`publish` 一次完成 dev server 启动，并委托 `cloudflare-quick-tunnel` 完成 tunnel 创建；stdout 额外包含 `DEV_SERVER_PID` / `DEV_SERVER_LOG`。伴生技能在生成地址前失败时会回收 dev server。公网地址生成后立即交付，不做 HTTP、TLS 或页面探活。用户结束走查后仍用相同 target cleanup。
 
 `publish` 沿用 `prepare` 的端口发现协议：dev stdout/stderr 必须打印 `http://localhost:<port>` 或 `http://127.0.0.1:<port>`。自建极简 server 或自定义 `BH_DEV_COMMAND` 时显式打印实际监听 URL；不要从进程列表猜端口。
 
 ### 与 cloudflare-quick-tunnel 的边界
 
-本技能保留 `share` / `publish` 作为前端流程入口，但不再复制标准 `cloudflared` 生命周期实现。匿名 [TryCloudflare Quick Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) 的固定参数、隔离配置、根地址探活、精确 PID、macOS launchd 托管和 stop/cleanup 均以 `cloudflare-quick-tunnel` 技能为事实源；以下非标准或项目相关内容只存在于 browser-harness：
+本技能保留 `share` / `publish` 作为前端流程入口，但不再复制标准 `cloudflared` 生命周期实现。匿名 [TryCloudflare Quick Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) 的固定参数、隔离配置、根地址生成、精确 PID、macOS launchd 托管和 stop/cleanup 均以 `cloudflare-quick-tunnel` 技能为事实源；以下非标准或项目相关内容只存在于 browser-harness：
 
 - 从 `APP_URL` 计算 tunnel origin 与 `TUNNEL_HTTP_HOST_HEADER`。
 - 把 path/query/hash 拼接为最终 `REMOTE_REVIEW_URL`。
