@@ -252,14 +252,3 @@ C 场景里 agent 直接调 `agent-browser` 时，用 `--profile "$(bun "$BH_DIR
 | `summary.json` | 各文件相对路径 + 关键计数 + `artifact_errors`（采集失败的项） |
 
 stdout 也输出 `summary.json` 内容供 agent 直接读取。把 stdout 保存为变量或任务私有文件，并解析其中的绝对 `evidence_dir`；不要扫描通配符来反推本次目录。`artifact_errors` 非空说明对应文件是 fallback 占位，**DO NOT** 当有效证据引用。`open` 失败时整个命令以 exit 3 退出且不产出证据目录。需要某条请求 body 时用 `agent-browser network request <requestId>` 单独深挖，**DO NOT** 在采集阶段一次性 dump。
-
-## Tests
-
-技能自带 Bun TypeScript 集成测试：stub 化验证 agent-browser 与伴生技能调用契约，并通过真实 `cloudflare-quick-tunnel` 脚本和本地 dev server 验证 prepare / share / publish / cleanup 的进程与状态清理：
-
-```bash
-cd "$BROWSER_HARNESS_SKILL_DIR"
-bun test --max-concurrency 1
-```
-
-`bh login` 的 headed 人工登录与真实 agent-browser 页面采集仍需带显示环境复测；stub 测试不会替代浏览器真机证据。
