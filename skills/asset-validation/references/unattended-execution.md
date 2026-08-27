@@ -40,9 +40,9 @@ acc bootstrap --name <asset_name> --type <type> --source <source_path> --goal "<
 
 In unattended mode, **NEVER** return control after asset understanding, classification, tool preflight, review-and-fix, strategy drafting, or any phase summary. A progress summary is allowed only immediately before the next `acc` command or observe-loop action in the same turn.
 
-If an unattended round returns FAIL/CONDITIONAL and the next action stays inside the asset-under-test or strategy/task design, record the failure, finalize that round, then immediately start the fix/rerun round. `acc finalize` performs round cleanup by default. **DO NOT** ask "should I continue" unless the fix would touch assets outside the asset-under-test, reset history, or expand destructive scope.
+If an unattended round returns FAIL/CONDITIONAL and the next action stays inside the asset-under-test or strategy/task design, record the failure, finalize that round, then immediately start the fix/rerun round. `acc finalize` performs round cleanup by default. For a boundary-only additive fix, apply the scoped revalidation rule in `references/convergence-and-task-design.md`: preserve mapped, unaffected PASS evidence and re-run only affected tasks. **DO NOT** ask "should I continue" unless the fix would touch assets outside the asset-under-test, reset history, or expand destructive scope.
 
-The unattended run is complete only after a fresh post-fix round produces a clean PASS and `acc finalize` reports cleanup, or after the same blocker repeats for at least three consecutive attempts and is recorded as blocked. A repaired defect is not enough; the next round must prove that the asset can pass from a clean start without observer intervention.
+The unattended run is complete only after post-fix evidence produces a clean PASS and `acc finalize` reports cleanup, or after the same blocker repeats for at least three consecutive attempts and is recorded as blocked. A repaired defect is not enough: every affected task must pass from a fresh start without observer intervention. Unaffected passed tasks may be retained only through the documented boundary-only evidence-reuse exception.
 
 A budget-exhausted acceptance is a terminal Blocked state, not a retry candidate. Set `--budget-max-rounds` during `acc accept update` to bound unattended runs; `acc start` rejects new rounds with `{"blocked": "budget-exhausted"}` once the limit is reached.
 
@@ -105,4 +105,4 @@ Independent history verification uses `acc history --asset <asset-name-or-id>`; 
 
 After every successful phase-mutating command (`bootstrap`, `asset add`, `accept new`, `accept update`, `profile run-task`, `start`, `launch`, `feed-task`, `capture`, `record`, `finalize`, and debug-only `cleanup`), the next action must be the next concrete tool call in this spine, not a standalone prose summary.
 
-If finalizing a round leaves any acceptance criterion unmet, any accepted cleanup missing, or any manually fixed behavior unproven, the next concrete action is a repair plus a new `acc start` for the same acceptance. **DO NOT** summarize as "done" from a failed or conditional round.
+If finalizing a round leaves any acceptance criterion unmet, any accepted cleanup missing, or any manually fixed behavior unproven, the next concrete action is a repair plus a new `acc start` for the same acceptance. Re-run affected tasks; do not repeat mapped, unaffected PASS tasks after a qualifying boundary-only fix. **DO NOT** summarize as "done" from a failed or conditional round.

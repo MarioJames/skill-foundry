@@ -59,7 +59,7 @@ Use [references/unattended-execution.md](references/unattended-execution.md) bef
 4. `acc accept update`: strategy, acceptance prompt, criteria, task prompts, ladder, fixture. Flat task JSON: `{"t1": "body to send"}`.
 5. Pick scheduling mode with reason: **stop-loss / collect-first / hybrid**.
 6. Launch observe loop only after prompt, criteria, tasks, fixture, cleanup plan, and ladder coverage are explicit.
-7. After each round: finalize/clean, fix defects, re-run from `acc start` until fresh clean PASS or blocked.
+7. After each round: finalize/clean, fix defects, then re-run from `acc start` until clean PASS or blocked. For a boundary-only additive fix, follow the scoped revalidation rule in the convergence reference: keep unaffected PASS evidence and re-run only the failed/new boundary tasks. Never repeat a passed task solely because the asset hash changed.
 8. Before feeding tasks, confirm each is a black-box stimulus; observer scores from transcripts, commands, files, processes, cleanup.
 
 ## Observe Loop

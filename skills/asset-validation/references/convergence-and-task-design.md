@@ -4,10 +4,24 @@
 
 The full pipeline is not complete after the first observed round. Continue the observe -> record -> fix -> re-run loop until one of these terminal states is true:
 
-- **Clean PASS:** a fresh round, started after the latest asset or strategy fix, satisfies the acceptance criteria in one uninterrupted run; `acc finalize` reports cleanup, and independent checks show no relevant sandbox, tmux, plugin staging, or asset-owned background residue. Freshness is recorded mechanically: each round stores the asset source hash at start, and `acc history --asset <asset-name-or-id>` marks a round `stale` when the asset changed after it ran; a stale PASS never satisfies this contract.
+- **Clean PASS:** post-fix evidence satisfies the acceptance criteria, `acc finalize` reports cleanup, and independent checks show no relevant sandbox, tmux, plugin staging, or asset-owned background residue. By default, the evidence comes from fresh rounds started after the latest asset or strategy fix. A boundary-only additive fix may instead use the scoped revalidation exception below.
 - **Blocked:** the same blocker (same `finding --key`) repeats after at least three consecutive attempts, the acceptance exceeds its `--budget-max-rounds` limit, or the next fix would require user approval because it changes destructive scope, touches assets outside the asset-under-test, or needs unavailable credentials/quota.
 
-A FAIL, CONDITIONAL, partial PASS, manual hot-fix, or "this should be fixed now" is an intermediate result. Record and finalize that round, fix the asset-under-test or acceptance design, then start a new fresh round. Do not return a final verdict until a post-fix round passes cleanly or the run is explicitly blocked.
+A FAIL, CONDITIONAL, partial PASS, manual hot-fix, or "this should be fixed now" is an intermediate result. Record and finalize that round, fix the asset-under-test or acceptance design, then start a new round for the affected tasks. Do not return a final verdict until the post-fix evidence passes cleanly or the run is explicitly blocked.
+
+## Scoped Revalidation After Boundary Fixes
+
+Do not repeat already passed scenarios when a mid-run fix is only an additive boundary enhancement. This exception applies only when the observer can map the diff to the newly failed or missing edge and show that the passed tasks do not exercise or depend on the changed behavior. Typical examples are a narrow negative-trigger exclusion, an explicit guard for one newly observed failure input, or cleanup handling for one previously uncovered residue path.
+
+The exception does not apply when the fix changes shared workflow instructions, positive trigger routing, scripts or control flow used by passed tasks, state or data schemas, fixtures, acceptance criteria, or task meaning. If the impact is uncertain, treat the relevant passed tasks as affected and re-run them; do not default to re-running unrelated tasks.
+
+For a qualifying boundary-only fix:
+
+1. Record an impact note naming the changed boundary, the affected task keys, and the passed task keys being retained with their PASS round ids.
+2. Start a fresh round and run only the failed/new boundary tasks plus any task that actually depends on the changed path.
+3. If the source hash makes retained PASS rounds mechanically stale, finalize with `--allow-partial "boundary-only evidence reuse: <task keys and PASS round ids>; unaffected because <impact argument>"`. This is an evidence-reuse exception, not permission to leave an untested capability or known failure unresolved.
+
+Each round stores the asset source hash at start, and `acc history --asset <asset-name-or-id>` marks a round `stale` when the asset changes after it ran. A stale PASS does not count by default; it counts only through the explicit boundary-only evidence-reuse record above. The modified boundary itself must always PASS in a fresh post-fix round.
 
 ## Verdict Ownership
 
@@ -25,7 +39,7 @@ Acceptance tasks must be derived from the asset type and capability profile. Dec
 - **Failure / recovery:** realistic blocked, failed, partial, or timeout path when the asset has recovery or cleanup logic.
 - **Negative / boundary:** neighboring tasks and decoy phrases that should not trigger.
 
-Each rung must have explicit observer-owned evidence and cleanup checks. If a rung fails and is fixed, re-run that rung from a fresh round, then continue upward. A smoke PASS may justify continuing; it is not a final PASS for a complex asset. The meaning of "small", "medium", and "complex" must be reasonable for the asset category: a browser-validation skill might scale from one static page to a project with dev server and cleanup; an orchestration skill might scale from one delegated task to a multi-module product delivery; a rule asset might scale from one ambiguous instruction to a realistic conflicting-constraints workflow.
+Each rung must have explicit observer-owned evidence and cleanup checks. If a rung fails and is fixed, re-run that rung from a fresh round, then continue upward. Retain earlier PASS evidence only under the scoped boundary-fix rule above. A smoke PASS may justify continuing; it is not a final PASS for a complex asset. The meaning of "small", "medium", and "complex" must be reasonable for the asset category: a browser-validation skill might scale from one static page to a project with dev server and cleanup; an orchestration skill might scale from one delegated task to a multi-module product delivery; a rule asset might scale from one ambiguous instruction to a realistic conflicting-constraints workflow.
 
 For staged skills, split the smoke evidence when the selected host uses explicit slash activation: one natural-language probe measures host selection, while an explicit staged slash invocation proves the skill and its scripts actually execute. Do not accept a hand-computed natural-language answer as functional evidence, and do not repeat an identical host-selection bypass until the budget is exhausted after explicit activation is available.
 
