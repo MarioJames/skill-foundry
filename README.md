@@ -17,16 +17,6 @@
 
 ## The Skills
 
-### `agents-orchestrator` — Agents orchestration patterns and routing
-
-`agents-orchestrator` is an aggregation and routing layer for reusable Agents orchestration patterns, not one specific tree topology. It selects and composes parallel Swarm, develop-review-improve, verification-fix, RAVF (Review-Argue-Vote-Fix), and read-only multi-session review. One TypeScript/Bun Runtime gives every recipe append-only Attempt/Launch history, durable SQLite facts, idempotent Effects, bounded loops, and recovery that must use `recover` (never silently fall back to `init`). Tasks and dependencies may form a tree or graph internally; that representation is an execution detail rather than the definition of Orchestrator.
-
-Explicit requests start the selected recipe. During ordinary work the skill may recommend — but never auto-start — a recipe only when it sees a concrete signal: multiple substantial independent workstreams, repeated failing unit/browser validation, or a high-risk change that warrants independent adjudication. Complexity alone, ordinary reviews, paths, links, and quoted examples are outside that boundary.
-
-Codex ACP is the default Backend/profile; Claude CLI remains available through explicit `--backend claude_cli`. ACP stores real Agent-issued Session IDs, fences detached Workers and Launches, negotiates advertised model/permission options, and can load Agent-owned history without persisting dialogue locally. A dependency-free bootstrap installs the exact locked SDK plus Codex and Claude Code ACP Agents into `$HOME/.agents-orchestrator/dependencies`; Claude is prepared but never selected automatically, and the repository contains no dependency directory or generated Runtime bundle.
-
-**Reach for it when** work benefits from explicit Agents coordination, durable convergence loops, independent adjudication, or safe resume.
-
 ### `asset-validation` — evidence-backed acceptance for agent assets
 
 Most skills, plugins, rules, and agents are never actually exercised — they are eyeballed, shipped, and trusted. `asset-validation` closes that gap. It runs the asset-under-test as a **real interactive CLI** (in tmux, never a stand-in subagent), feeds real tasks, observes what happened, independently re-verifies, captures evidence, and cleans up the sandbox.
@@ -103,7 +93,6 @@ replace `bunx` when Bun is unavailable):
 bunx skills add MarioJames/skill-foundry --all
 
 # One skill
-bunx skills add MarioJames/skill-foundry --skill agents-orchestrator
 bunx skills add MarioJames/skill-foundry --skill asset-validation
 bunx skills add MarioJames/skill-foundry --skill browser-harness
 bunx skills add MarioJames/skill-foundry --skill cloudflare-quick-tunnel
@@ -130,16 +119,6 @@ Bun 1.3 or newer is the runtime for every bundled executable script and hook. No
 entrypoint is implemented in Python or Bash; external tools and user-provided commands retain
 their own runtime requirements.
 
-The first Runtime launch requires Bun and network access. It installs the exact `bun.lock` graph
-into `$HOME/.agents-orchestrator/dependencies` (override with
-`$AGENTS_ORCHESTRATOR_DEPENDENCY_HOME`) and reuses that verified content-addressed cache on later
-commands. Bun is not installed automatically. Codex remains the default execution profile; Claude
-ACP is installed into the same managed tree but is not selected or executed automatically. Gemini
-is installed only when explicitly selected. The repository and installed Skill do not contain or
-generate `node_modules`.
-
-Use `--backend claude_cli` only when explicitly choosing the legacy Claude CLI Backend.
-
 ### Manual Fallback
 
 If your runtime does not support `skills add`, clone the repository and copy the skill directories directly.
@@ -150,7 +129,7 @@ Codex:
 git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
 mkdir -p ~/.codex/skills
-cp -R skills/agents-orchestrator skills/asset-validation skills/browser-harness \
+cp -R skills/asset-validation skills/browser-harness \
   skills/cloudflare-quick-tunnel \
   skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
@@ -163,7 +142,7 @@ Claude-style runtimes:
 git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
 mkdir -p ~/.claude/skills
-cp -R skills/agents-orchestrator skills/asset-validation skills/browser-harness \
+cp -R skills/asset-validation skills/browser-harness \
   skills/cloudflare-quick-tunnel \
   skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
@@ -173,9 +152,6 @@ cp -R skills/agents-orchestrator skills/asset-validation skills/browser-harness 
 Verify the installation:
 
 ```bash
-test -f ~/.codex/skills/agents-orchestrator/SKILL.md
-test -f ~/.codex/skills/agents-orchestrator/scripts/bootstrap.ts
-test -f ~/.codex/skills/agents-orchestrator/bun.lock
 test -f ~/.codex/skills/asset-validation/scripts/acc.ts
 test -f ~/.codex/skills/browser-harness/scripts/bh.ts
 test -f ~/.codex/skills/cloudflare-quick-tunnel/scripts/cqt.ts
@@ -195,13 +171,13 @@ test -f ~/.codex/skills/workspace-knowledge-graph/scripts/workspace_graph.ts
 ```bash
 cd skill-foundry
 git pull
-rm -rf ~/.codex/skills/agents-orchestrator ~/.codex/skills/asset-validation \
+rm -rf ~/.codex/skills/asset-validation \
   ~/.codex/skills/browser-harness ~/.codex/skills/cloudflare-quick-tunnel \
   ~/.codex/skills/herdr ~/.codex/skills/trigger-build-workflow \
   ~/.codex/skills/persistent-ssh-ops ~/.codex/skills/provision-xray-hy2-node \
   ~/.codex/skills/changelog-writing ~/.codex/skills/awesome-presentation \
   ~/.codex/skills/workspace-knowledge-graph
-cp -R skills/agents-orchestrator skills/asset-validation skills/browser-harness \
+cp -R skills/asset-validation skills/browser-harness \
   skills/cloudflare-quick-tunnel \
   skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
@@ -211,36 +187,6 @@ cp -R skills/agents-orchestrator skills/asset-validation skills/browser-harness 
 ## Usage
 
 After installation, invoke the installed skills through normal agent requests.
-
-Orchestrate substantial parallel work:
-
-```text
-Use agents-orchestrator in swarm mode to coordinate implementation, validation, and final review.
-```
-
-Route a generic bounded loop from the current work state:
-
-```text
-Use agents-orchestrator in loop mode, at most 3 iterations, and stop when the acceptance tests pass.
-```
-
-Converge failing unit and browser validation:
-
-```text
-Use agents-orchestrator in verification-fix mode. Re-run tests, diagnose failures independently, fix them, and repeat until a clean pass.
-```
-
-Run ROI-aware review convergence:
-
-```text
-Use agents-orchestrator in RAVF mode: in each Review round, five Reviewers may contribute up to 25 original findings; a fixed five-Agent Argue pool challenges that round's complete Review; a fixed five-Agent low-cost Vote pool votes on every original issue; then the main Agent integrates original, revised, and rejected decisions before one coordinated fix. Any new post-fix findings enter another complete Argue → Vote → Fix round until a fresh Review is clean or a declared guard is reached.
-```
-
-Review a plan through independent consensus:
-
-```text
-Use agents-orchestrator for a multi-Agent plan review with 3 independent reviewers and a consensus result.
-```
 
 Validate an asset:
 
@@ -302,10 +248,8 @@ Bootstrap or refresh a multi-repo knowledge graph:
 Use workspace-knowledge-graph to scan this workspace, build the knowledge graph, and refresh AGENTS.md.
 ```
 
-Each skill defines its own activation rules in `SKILL.md`. `agents-orchestrator` starts only after
-explicit authorization; an implicit high-signal match may produce one recommendation but cannot
-initialize a Run. Quoted names, file paths, links, and ordinary reviews do not activate it.
-`herdr` may activate implicitly when a concrete independent lane can shorten the critical path.
+Each skill defines its own activation rules in `SKILL.md`. `herdr` may activate implicitly when a
+concrete independent lane can shorten the critical path.
 
 ## Repository Layout
 
@@ -314,13 +258,6 @@ skill-foundry/
 ├── assets/
 │   └── logo.svg
 ├── skills/
-│   ├── agents-orchestrator/
-│   │   ├── SKILL.md
-│   │   ├── agents/
-│   │   ├── assets/
-│   │   ├── hooks/
-│   │   ├── references/
-│   │   └── scripts/
 │   ├── asset-validation/
 │   │   ├── SKILL.md
 │   │   ├── assets/
@@ -367,15 +304,12 @@ skill-foundry/
 │   │   ├── agents/
 │   │   ├── references/
 │   │   └── scripts/
-│   └── docs/
-│       └── specs/
 ├── LICENSE
 └── README.md
 ```
 
 Installable skill packages:
 
-- `skills/agents-orchestrator/`
 - `skills/asset-validation/`
 - `skills/browser-harness/`
 - `skills/cloudflare-quick-tunnel/`
@@ -398,12 +332,9 @@ find skills -path '*/node_modules' -prune -o -type f \
   \( -path '*/scripts/*' -o -path '*/hooks/*' \) ! -name '*.ts' -print
 ```
 
-The pre-existing agents-orchestrator Runtime keeps its package-level checks:
+Package-free migrated skills run their behavior tests directly with Bun:
 
 ```bash
-(cd skills/agents-orchestrator && bun run typecheck && bun run test)
-
-# Package-free migrated skills run their behavior tests directly with Bun.
 bun test skills/asset-validation/tests
 bun test skills/browser-harness/tests
 bun test skills/cloudflare-quick-tunnel/tests

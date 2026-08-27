@@ -4,8 +4,6 @@ export const SECRET_KEYS = [
   "OPENAI_API_KEY",
   "AUTH_TOKEN",
   "API_KEY",
-  "AGENTS_ORCHESTRATOR_ACTOR_TOKEN",
-  "AGENTS_ORCHESTRATOR_TOKEN",
   "actor_token",
   "actorToken",
 ] as const;

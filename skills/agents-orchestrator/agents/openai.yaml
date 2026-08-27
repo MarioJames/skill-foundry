@@ -1,7 +1,0 @@
-interface:
-  display_name: "Agents Orchestrator"
-  short_description: "Route durable multi-Agent orchestration patterns"
-  default_prompt: "Use $agents-orchestrator to select and run the best bounded orchestration recipe for this task."
-
-policy:
-  allow_implicit_invocation: true
