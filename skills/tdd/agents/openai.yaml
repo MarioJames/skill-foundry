@@ -1,0 +1,4 @@
+interface:
+  display_name: "TDD"
+  short_description: "Decide whether TDD applies and how to write a valid test"
+  default_prompt: "Use $tdd before writing or changing any production code or tests."

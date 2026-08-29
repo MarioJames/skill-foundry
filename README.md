@@ -83,6 +83,12 @@ Human-facing workspace artifacts default to Chinese; machine tokens (paths, keys
 
 **Reach for it when** bootstrapping or refreshing a multi-repo knowledge graph, task routing, or relation map.
 
+### `tdd` — when to test, and what counts as a test
+
+A thin coding-time gate: default is fast path. Write a test only when the assertion can still fail on a wrong implementation after the files already exist. Pins business rules, mappings, permissions, and bug reproductions; skips scaffolding, copy, layout, and tautological green tests.
+
+**Reach for it when** implementing or changing production code or tests. The skill description is meant to fire on every development change; the body then decides TDD vs skip.
+
 ## Install
 
 Install with the [`skills`](https://github.com/vercel-labs/skills) CLI (`pnpm dlx` or `npx` can
@@ -103,6 +109,7 @@ bunx skills add MarioJames/skill-foundry --skill provision-xray-hy2-node
 bunx skills add MarioJames/skill-foundry --skill changelog-writing
 bunx skills add MarioJames/skill-foundry --skill awesome-presentation
 bunx skills add MarioJames/skill-foundry --skill workspace-knowledge-graph
+bunx skills add MarioJames/skill-foundry --skill tdd
 
 # Target a specific agent, or install globally
 bunx skills add MarioJames/skill-foundry --all -a claude-code   # or: -a codex
@@ -133,7 +140,7 @@ cp -R skills/asset-validation skills/browser-harness \
   skills/cloudflare-quick-tunnel \
   skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
-  skills/awesome-presentation skills/workspace-knowledge-graph ~/.codex/skills/
+  skills/awesome-presentation skills/workspace-knowledge-graph skills/tdd ~/.codex/skills/
 ```
 
 Claude-style runtimes:
@@ -146,7 +153,7 @@ cp -R skills/asset-validation skills/browser-harness \
   skills/cloudflare-quick-tunnel \
   skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
-  skills/awesome-presentation skills/workspace-knowledge-graph ~/.claude/skills/
+  skills/awesome-presentation skills/workspace-knowledge-graph skills/tdd ~/.claude/skills/
 ```
 
 Verify the installation:
@@ -164,6 +171,7 @@ test -f ~/.codex/skills/provision-xray-hy2-node/references/templates.md
 test -f ~/.codex/skills/changelog-writing/scripts/collect-commits.ts
 test -f ~/.codex/skills/awesome-presentation/SKILL.md
 test -f ~/.codex/skills/workspace-knowledge-graph/scripts/workspace_graph.ts
+test -f ~/.codex/skills/tdd/SKILL.md
 ```
 
 ### Update Manual Installs
@@ -176,12 +184,12 @@ rm -rf ~/.codex/skills/asset-validation \
   ~/.codex/skills/herdr ~/.codex/skills/trigger-build-workflow \
   ~/.codex/skills/persistent-ssh-ops ~/.codex/skills/provision-xray-hy2-node \
   ~/.codex/skills/changelog-writing ~/.codex/skills/awesome-presentation \
-  ~/.codex/skills/workspace-knowledge-graph
+  ~/.codex/skills/workspace-knowledge-graph ~/.codex/skills/tdd
 cp -R skills/asset-validation skills/browser-harness \
   skills/cloudflare-quick-tunnel \
   skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
-  skills/awesome-presentation skills/workspace-knowledge-graph ~/.codex/skills/
+  skills/awesome-presentation skills/workspace-knowledge-graph skills/tdd ~/.codex/skills/
 ```
 
 ## Usage
@@ -248,8 +256,15 @@ Bootstrap or refresh a multi-repo knowledge graph:
 Use workspace-knowledge-graph to scan this workspace, build the knowledge graph, and refresh AGENTS.md.
 ```
 
+Decide whether a change needs a real test:
+
+```text
+Use tdd before implementing this feature or adding a unit test.
+```
+
 Each skill defines its own activation rules in `SKILL.md`. `herdr` may activate implicitly when a
-concrete independent lane can shorten the critical path.
+concrete independent lane can shorten the critical path. `tdd` is meant to activate on every
+production-code or test change; the skill body then chooses TDD vs skip.
 
 ## Repository Layout
 
@@ -304,6 +319,9 @@ skill-foundry/
 │   │   ├── agents/
 │   │   ├── references/
 │   │   └── scripts/
+│   ├── tdd/
+│   │   ├── SKILL.md
+│   │   └── agents/
 ├── LICENSE
 └── README.md
 ```
@@ -320,6 +338,7 @@ Installable skill packages:
 - `skills/changelog-writing/`
 - `skills/awesome-presentation/`
 - `skills/workspace-knowledge-graph/`
+- `skills/tdd/`
 
 ## Verify
 
