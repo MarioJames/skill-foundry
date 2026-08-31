@@ -1,0 +1,4 @@
+interface:
+  display_name: 'repo-knowledge-graph'
+  short_description: '按 Git 项目读取全局关系、项目记忆与单仓知识'
+  default_prompt: '使用 $repo-knowledge-graph 根据当前 Git remote 定位项目，并读取对应的线上关系、项目记忆与单仓知识。'

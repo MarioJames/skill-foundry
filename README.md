@@ -75,13 +75,11 @@ Turns a presentation idea into a runnable React deck. The hard gate is content d
 
 **Reach for it when** building a tech talk, training deck, product narrative, or management report — even from a vague one-liner.
 
-### `workspace-knowledge-graph` — multi-repo workspace routing and relations
+### `repo-knowledge-graph` — repository knowledge and cross-project relations
 
-Multi-repo workspaces accumulate tribal knowledge about ownership, connections, and agent entry points. This skill maintains a graph: `AGENTS.md` / `CLAUDE.md` / `MEMORY.md` root routes, `.workspace/` declarations, per-repo index docs, and evidence-backed cross-repo relations. Scan → research / write / review → `init` / `validate`.
+Uses the current Git remote to locate one repository's online graph, domains, entities, and shared knowledge. Project identities, peer-specific paths, and cross-project edges live in one global relation source; cross-project decisions and continuation live in one global memory source.
 
-Human-facing workspace artifacts default to Chinese; machine tokens (paths, keys, commands) stay as-is.
-
-**Reach for it when** bootstrapping or refreshing a multi-repo knowledge graph, task routing, or relation map.
+**Reach for it when** retrieving or maintaining repository knowledge, resolving project identity and paths, following cross-repository dependencies, or continuing earlier project work.
 
 ### `tdd` — when to test, and what counts as a test
 
@@ -108,7 +106,7 @@ bunx skills add MarioJames/skill-foundry --skill persistent-ssh-ops
 bunx skills add MarioJames/skill-foundry --skill provision-xray-hy2-node
 bunx skills add MarioJames/skill-foundry --skill changelog-writing
 bunx skills add MarioJames/skill-foundry --skill awesome-presentation
-bunx skills add MarioJames/skill-foundry --skill workspace-knowledge-graph
+bunx skills add MarioJames/skill-foundry --skill repo-knowledge-graph
 bunx skills add MarioJames/skill-foundry --skill tdd
 
 # Target a specific agent, or install globally
@@ -140,7 +138,7 @@ cp -R skills/asset-validation skills/browser-harness \
   skills/cloudflare-quick-tunnel \
   skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
-  skills/awesome-presentation skills/workspace-knowledge-graph skills/tdd ~/.codex/skills/
+  skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.codex/skills/
 ```
 
 Claude-style runtimes:
@@ -153,7 +151,7 @@ cp -R skills/asset-validation skills/browser-harness \
   skills/cloudflare-quick-tunnel \
   skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
-  skills/awesome-presentation skills/workspace-knowledge-graph skills/tdd ~/.claude/skills/
+  skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.claude/skills/
 ```
 
 Verify the installation:
@@ -170,7 +168,7 @@ test -f ~/.codex/skills/persistent-ssh-ops/scripts/scan-hosts.ts
 test -f ~/.codex/skills/provision-xray-hy2-node/references/templates.md
 test -f ~/.codex/skills/changelog-writing/scripts/collect-commits.ts
 test -f ~/.codex/skills/awesome-presentation/SKILL.md
-test -f ~/.codex/skills/workspace-knowledge-graph/scripts/workspace_graph.ts
+test -f ~/.codex/skills/repo-knowledge-graph/SKILL.md
 test -f ~/.codex/skills/tdd/SKILL.md
 ```
 
@@ -184,12 +182,12 @@ rm -rf ~/.codex/skills/asset-validation \
   ~/.codex/skills/herdr ~/.codex/skills/trigger-build-workflow \
   ~/.codex/skills/persistent-ssh-ops ~/.codex/skills/provision-xray-hy2-node \
   ~/.codex/skills/changelog-writing ~/.codex/skills/awesome-presentation \
-  ~/.codex/skills/workspace-knowledge-graph ~/.codex/skills/tdd
+  ~/.codex/skills/repo-knowledge-graph ~/.codex/skills/tdd
 cp -R skills/asset-validation skills/browser-harness \
   skills/cloudflare-quick-tunnel \
   skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
-  skills/awesome-presentation skills/workspace-knowledge-graph skills/tdd ~/.codex/skills/
+  skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.codex/skills/
 ```
 
 ## Usage
@@ -250,10 +248,10 @@ Build a presentation:
 Use awesome-presentation to grill the talk outline, then scaffold the React deck after I approve the Deck Spec.
 ```
 
-Bootstrap or refresh a multi-repo knowledge graph:
+Retrieve repository knowledge and cross-project context:
 
 ```text
-Use workspace-knowledge-graph to scan this workspace, build the knowledge graph, and refresh AGENTS.md.
+Use repo-knowledge-graph to identify this repository from its Git remote and load its online knowledge and relations.
 ```
 
 Decide whether a change needs a real test:
@@ -314,11 +312,10 @@ skill-foundry/
 │   │   ├── SKILL.md
 │   │   ├── agents/
 │   │   └── references/
-│   ├── workspace-knowledge-graph/
+│   ├── repo-knowledge-graph/
 │   │   ├── SKILL.md
 │   │   ├── agents/
-│   │   ├── references/
-│   │   └── scripts/
+│   │   └── references/
 │   ├── tdd/
 │   │   ├── SKILL.md
 │   │   └── agents/
@@ -337,7 +334,7 @@ Installable skill packages:
 - `skills/provision-xray-hy2-node/`
 - `skills/changelog-writing/`
 - `skills/awesome-presentation/`
-- `skills/workspace-knowledge-graph/`
+- `skills/repo-knowledge-graph/`
 - `skills/tdd/`
 
 ## Verify
@@ -357,7 +354,6 @@ Package-free migrated skills run their behavior tests directly with Bun:
 bun test skills/asset-validation/tests
 bun test skills/browser-harness/tests
 bun test skills/cloudflare-quick-tunnel/tests
-bun test skills/workspace-knowledge-graph/test
 bun test skills/trigger-build-workflow/test
 bun test skills/persistent-ssh-ops/test
 ```
@@ -373,7 +369,6 @@ bun skills/persistent-ssh-ops/scripts/scan-hosts.ts --help
 bun skills/asset-validation/scripts/acc.ts --help
 bun skills/browser-harness/scripts/bh.ts --version
 bun skills/cloudflare-quick-tunnel/scripts/cqt.ts --version
-bun skills/workspace-knowledge-graph/scripts/workspace_graph.ts --help
 ```
 
 ```bash

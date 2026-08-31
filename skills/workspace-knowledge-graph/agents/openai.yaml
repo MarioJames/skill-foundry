@@ -1,4 +1,0 @@
-interface:
-  display_name: 'workspace-knowledge-graph'
-  short_description: '通过 OpenViking 查询和维护跨设备工作区知识与记忆'
-  default_prompt: '使用 $workspace-knowledge-graph 从 OpenViking 定位当前任务所属工作区，并读取最相关的线上图谱与工作区记忆。'
