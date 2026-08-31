@@ -1,6 +1,6 @@
 ---
 name: herdr
-description: "Use Herdr whenever parallel execution can materially shorten a task: two or more independent repository, module, file-ownership, research, check, or test lanes; a command, build, test, service, or monitor can run while useful work continues; an additive independent request arrives during active work; or a coding agent can own an independent deliverable. This includes simple shell commands when their wait time overlaps useful work—ordinary shell backgrounding is not a reason to skip Herdr. Also use when the user explicitly asks to operate Herdr panes, tabs, or workspaces. Do not use for replacement requests, one short command, tightly serial work, overlapping mutable state, or coordination overhead that outweighs the benefit."
+description: "Use Herdr whenever parallel execution can materially shorten a task: two or more independent repository, module, file-ownership, research, check, or test lanes; a command, build, test, service, or monitor can run while useful work continues; an additive independent request arrives during active work; or a coding agent can own an independent deliverable. This includes simple shell commands when their wait time overlaps useful work—ordinary shell backgrounding is not a reason to skip Herdr. Also use when the user explicitly asks to operate Herdr panes, tabs, or workspaces, or when active agents need pane discovery, ownership negotiation, or bidirectional coordination for concurrent edits. Do not use for replacement requests, one short command, tightly serial work, or coordination overhead that outweighs the benefit; do not create overlapping mutable-state lanes merely to add concurrency."
 ---
 
 # Herdr
@@ -12,7 +12,16 @@ Use Herdr when it shortens the task's critical path, not merely to increase pane
 - **Fan out and join:** split independent repositories, exclusively owned modules/files, research alternatives, or checks/tests. Let the root lane integrate results and verify the combined outcome.
 - **Overlap waiting:** run a long build, test, server, or monitor in its own pane while useful work continues elsewhere.
 - **Accept an additive task mid-run:** when a new user message adds an independent request instead of replacing the active one, keep the active lane moving and start a coding-agent pane with a self-contained cwd, scope, constraints, ownership, and deliverable.
-- **Stay serial:** do not split a replacement request, dependency chain, overlapping edits, shared mutable state, or work whose resource contention/merge cost cancels the saving. If “replace or add” is materially ambiguous, clarify before spawning.
+- **Stay serial:** do not start a new lane for a replacement request, dependency chain, overlapping edits, shared mutable state, or work whose resource contention/merge cost cancels the saving. If active agents already overlap or the shared edit cannot be avoided, use Herdr to negotiate ownership before continuing instead of adding another lane. If “replace or add” is materially ambiguous, clarify before spawning.
+
+## Coordinate concurrent agents
+
+When repository evidence shows concurrent changes, or a planned edit cannot avoid a file or symbol another agent may own:
+
+1. Locate only relevant candidates with `herdr workspace list`, `herdr pane list --workspace <workspace_id>`, and `herdr agent list`. Match on verified `cwd` / `foreground_cwd`, workspace, and task evidence rather than labels or UI position; narrow further with bounded `herdr agent get <pane_id>` and `herdr agent read <pane_id> --source recent-unwrapped --lines <N>` calls. Do not inspect unrelated workspaces.
+2. Contact each recognized candidate with `herdr agent prompt <pane_id> <message>`. Include the sender's pane ID, the exact files and symbols or hunks involved, current work state, proposed ownership split, excluded write scope, dependency or handoff point, and a request for one explicit acknowledgment or counterproposal. Ask the recipient to reply to the sender with `herdr agent prompt <sender-pane-id> <reply>` so coordination is bidirectional.
+3. Do not treat successful delivery as agreement. Wait for the reply, reconcile counterproposals, and record the accepted write scope and handoff in the lane ledger. If the target cannot acknowledge, keep the overlapping write paused or move to non-overlapping work. If no safe split exists, nominate one agent as the sole writer/integrator for the shared file while the others provide findings or patches without modifying it.
+4. Never overwrite, revert, relocate, stage, or commit another agent's uncommitted work to resolve a collision. Pause the overlapping write until ownership is explicit; then independently verify the integrated diff after all participating agents hand off.
 
 ## Decide and split
 
@@ -44,7 +53,7 @@ For two or more sibling lanes, route the first lane normally. If that first rout
 
 - Resolve and record `primary_pane_id` exactly once before creating the first lane. Initialize a separate `split_anchor_pane_id` from it; never overwrite `primary_pane_id`.
 - The first same-tab lane may use `primary_pane_id`. Immediately set `split_anchor_pane_id` to the returned secondary pane. Every later sibling must use the current `split_anchor_pane_id` as its caller/parent, then advance the anchor to the newly returned pane. **DO NOT** split or route from `primary_pane_id` again while any task-created secondary pane exists.
-- Keep a lane ledger in working state with, at minimum: `type`, created IDs, result status, `cleanup_command`, and `cleanup_pending`. Before any new fan-out, phase transition, user-message handoff, or final response, inventory this ledger.
+- Keep a lane ledger in working state with, at minimum: `type`, created IDs, result status, `cleanup_command`, and `cleanup_pending`; for coding-agent lanes, also record the agreed write scope, excluded scope, coordination peers, and handoff. Before any new fan-out, phase transition, user-message handoff, or final response, inventory this ledger.
 - Treat collecting a `oneshot` result and cleaning it up as one operation: after recording its exit status and bounded evidence, execute its exact cleanup command in the same owning turn and prove absence with a surviving-resource list before starting unrelated work. **DO NOT** retain a completed or failed oneshot for possible reuse.
 - A cleanup failure is active work, not a warning to defer. Resolve or accurately report it before proceeding. Never silently hand off with `cleanup_pending` lanes.
 - `service` and `coding-agent` lanes may remain only while a named dependency or concrete follow-up exists. Re-evaluate and clean them at every user steer and phase transition, not only at final handoff.
