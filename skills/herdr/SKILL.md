@@ -1,6 +1,6 @@
 ---
 name: herdr
-description: "Use Herdr as the task router and Agent runtime orchestrator when an active Agent receives another request, when parallel execution can materially shorten a task, or when the user asks to operate Herdr panes, tabs, workspaces, or Agents. It decides whether incoming work belongs in the current Agent, should replace the active task, fits an existing Agent lane, or needs a new independent lane; then manages pane placement, ownership, handoff, joins, and cleanup. Do not create a lane for status questions, small derived work, tightly serial dependencies, or overlapping mutable state whose coordination cost outweighs the saving."
+description: "Use Herdr when an Agent already has active work and receives another task that may be derived, additive, replacement, or intended for an existing lane; when parallel repository, module, check, service, or coding-agent work can shorten the critical path; when active Agents need ownership negotiation; or when the user explicitly asks to operate Herdr panes, tabs, workspaces, or Agents. Do not use for an isolated short command, a status-only message, tightly serial work, or overlapping mutable state whose coordination cost outweighs any saving."
 ---
 
 # Herdr
