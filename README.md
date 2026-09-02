@@ -37,9 +37,9 @@ Creates standard anonymous Cloudflare Quick Tunnels for local HTTP services and 
 
 **Reach for it when** a local service needs a temporary public review URL; use it through `browser-harness` when the service is part of frontend acceptance.
 
-### `herdr` — task routing and Agent runtime orchestration
+### `herdr` — developer-attached task routing
 
-`herdr` first routes each incoming request: derived work stays in the current Agent, replacements supersede stale work, and additive independent work can reuse or create an Agent lane. It then classifies each created lane as `oneshot`, `service`, or `coding-agent`, manages ownership and handoff, and joins the result back into the owning Agent.
+`herdr` adds routing to an Agent that remains a developer: the owning Agent keeps and executes a concrete primary work slice, while derived work stays local, replacements supersede stale work, and additive independent work can reuse or create an Agent lane. It then classifies each created lane as `oneshot`, `service`, or `coding-agent`, manages ownership and handoff, and joins the result back into the owning Agent. It does not turn the owning Agent into a pure orchestrator unless the user explicitly requests that role.
 
 After the task decision, the bundled Bun/TypeScript resource router can split the caller tab, create a tab in an existing directory-matched workspace, or create a new workspace when no safe match exists. It matches target directories using cwd and Git roots, preserves focus, returns an explicit cleanup contract, and rolls back newly created resources when verification fails.
 
@@ -215,7 +215,7 @@ Use cloudflare-quick-tunnel to publish http://127.0.0.1:4173 for remote review, 
 Route a new request across the current Agent and Herdr runtime:
 
 ```text
-Use herdr to decide whether this new request belongs in my current task or needs another Agent; if independent, route it to the right workspace and clean up the lane after handoff.
+Use herdr to keep my current development slice in this Agent and decide whether the new request belongs here or needs another Agent; if independent, route it to the right workspace and clean up the lane after handoff.
 ```
 
 Submit changes with workflow-aware fallback:

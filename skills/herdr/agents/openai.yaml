@@ -1,7 +1,7 @@
 interface:
   display_name: "Herdr"
-  short_description: "Route tasks across the current Agent and Herdr lanes"
-  default_prompt: "Use $herdr to decide whether this request stays in the current Agent or needs an independent Herdr lane, then manage its ownership and lifecycle."
+  short_description: "Add task routing to an active development Agent"
+  default_prompt: "Use $herdr to route independent additions while keeping the current Agent on its own concrete development slice."
 
 policy:
   allow_implicit_invocation: true
