@@ -1,17 +1,32 @@
 ---
 name: herdr
-description: "Use Herdr whenever parallel execution can materially shorten a task: two or more independent repository, module, file-ownership, research, check, or test lanes; a command, build, test, service, or monitor can run while useful work continues; an additive independent request arrives during active work; or a coding agent can own an independent deliverable. This includes simple shell commands when their wait time overlaps useful work—ordinary shell backgrounding is not a reason to skip Herdr. Also use when the user explicitly asks to operate Herdr panes, tabs, or workspaces, or when active agents need pane discovery, ownership negotiation, or bidirectional coordination for concurrent edits. Do not use for replacement requests, one short command, tightly serial work, or coordination overhead that outweighs the benefit; do not create overlapping mutable-state lanes merely to add concurrency."
+description: "Use Herdr as the task router and Agent runtime orchestrator when an active Agent receives another request, when parallel execution can materially shorten a task, or when the user asks to operate Herdr panes, tabs, workspaces, or Agents. It decides whether incoming work belongs in the current Agent, should replace the active task, fits an existing Agent lane, or needs a new independent lane; then manages pane placement, ownership, handoff, joins, and cleanup. Do not create a lane for status questions, small derived work, tightly serial dependencies, or overlapping mutable state whose coordination cost outweighs the saving."
 ---
 
 # Herdr
 
-Use Herdr when it shortens the task's critical path, not merely to increase pane count.
+Use Herdr as the owning Agent's task router and runtime orchestrator. Treat every user steer during active work as a routing input, not as an automatic context switch or a reason to spawn.
+
+## Route incoming work first
+
+Before changing the active plan or creating a lane, inventory the current task, concrete deliverable, write ownership, dependencies, and lane ledger. Then classify the incoming message:
+
+1. **Status, clarification, or constraint:** answer it or fold the constraint into the active task. Keep current work moving; do not create a lane.
+2. **Replacement:** when the user clearly supersedes or cancels the active task, stop or safely settle stale work, clean up task-created resources that no longer have value, and continue in the current Agent. Do not preserve stale work by spawning the replacement elsewhere.
+3. **Derived or mergeable task:** keep it in the current Agent when it contributes to the same deliverable, depends on current findings, shares the same write scope or mutable state, needs one atomic integration, or is too small to repay dispatch and merge overhead.
+4. **Additive independent task:** route it to an Agent lane only when it has a self-contained deliverable and acceptance boundary, can receive exclusive write ownership, can run without waiting for the active task, and parallel execution is expected to shorten the critical path. If a live coding-agent lane already owns the right scope and can absorb the work safely, prompt that Agent instead of creating another lane; otherwise create a new lane.
+
+Topic difference alone does not make a task independent, and repository sameness alone does not make it derived. Judge by deliverable, dependencies, mutable ownership, and integration cost. If replacement versus addition is materially ambiguous and would change what continues running, ask one concise question before routing; otherwise make the narrowest reasonable assumption and proceed.
+
+When the Router selects an Agent lane, give it a self-contained task contract: target cwd, requested outcome, relevant context, owned and excluded files or symbols, dependencies, acceptance checks, handoff format, and cleanup/commit ownership. The current Agent remains the integrator, continues its own useful work, joins the delegated result, and verifies the combined outcome.
+
+This is the semantic **Task Router**. [`scripts/route-lane.ts`](scripts/route-lane.ts) is the downstream **resource router**: call it only after the Task Router has selected a new lane. It decides where that lane lives; it does not decide whether the incoming task deserves another Agent.
 
 ## Recognize useful concurrency
 
 - **Fan out and join:** split independent repositories, exclusively owned modules/files, research alternatives, or checks/tests. Let the root lane integrate results and verify the combined outcome.
 - **Overlap waiting:** run a long build, test, server, or monitor in its own pane while useful work continues elsewhere.
-- **Accept an additive task mid-run:** when a new user message adds an independent request instead of replacing the active one, keep the active lane moving and start a coding-agent pane with a self-contained cwd, scope, constraints, ownership, and deliverable.
+- **Accept an additive task mid-run:** apply the Task Router above; keep the active lane moving and route only a genuinely independent request to a coding-agent pane.
 - **Stay serial:** do not start a new lane for a replacement request, dependency chain, overlapping edits, shared mutable state, or work whose resource contention/merge cost cancels the saving. If active agents already overlap or the shared edit cannot be avoided, use Herdr to negotiate ownership before continuing instead of adding another lane. If “replace or add” is materially ambiguous, clarify before spawning.
 
 ## Coordinate concurrent agents
