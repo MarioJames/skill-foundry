@@ -19,7 +19,7 @@
 
 ### `asset-validation` — evidence-backed acceptance for agent assets
 
-Most skills, plugins, rules, and agents are never actually exercised — they are eyeballed, shipped, and trusted. `asset-validation` closes that gap. It runs the asset-under-test as a **real interactive CLI** (in tmux, never a stand-in subagent), feeds real tasks, observes what happened, independently re-verifies, captures evidence, and cleans up the sandbox.
+Reviews reusable assets with scoped static checks, or runs **real interactive CLI** acceptance when behavioral evidence is requested. The acceptance route stages the asset in isolation, feeds tasks, independently scores the outcome, and cleans up; ordinary review does not start that pipeline.
 
 It includes progressive task ladders, clean post-fix PASS gates, typed staging profiles (`skill` / `plugin` / `agent` / `rule`), secret redaction, and budgeted unattended runs.
 
@@ -47,7 +47,7 @@ After the task decision, the bundled Bun/TypeScript resource router can split th
 
 ### `trigger-build-workflow` — safe commit, push, and optional build dispatch
 
-Submits scoped Git changes and dispatches a release workflow only when the repository exposes a compatible `workflow_dispatch` contract. A bundled detector checks for channel, version, and changelog inputs; repositories without that contract automatically use a normal commit-and-push path without inventing release metadata.
+Executes explicitly selected commit, push, and build actions without inferring authorization from repository contents. The workflow detector validates channel, version, and changelog inputs only for a requested dispatch; ordinary commits and pushes do not require release metadata.
 
 **Reach for it when** committing and pushing changes, triggering a build, or publishing a beta/production release across repositories with different CI capabilities.
 
@@ -71,7 +71,7 @@ Turns release evidence into either customer-facing outcomes or technical/interna
 
 ### `awesome-presentation` — content-first React slide decks
 
-Turns a presentation idea into a runnable React deck. The hard gate is content discovery first: grilling, outline approval, then scaffold / pages / build. Uses the open-source [awesome-presentation](https://github.com/MarioJames/awesome-presentation) scaffold (layouts, components, deck rules, offline single-file build).
+Turns presentation materials or a goal into a runnable React deck. When scope is clear, it builds and validates directly; collaborative outline discussion is available when requested or when essential content is missing. Uses the open-source [awesome-presentation](https://github.com/MarioJames/awesome-presentation) scaffold (layouts, components, deck rules, offline single-file build).
 
 **Reach for it when** building a tech talk, training deck, product narrative, or management report — even from a vague one-liner.
 
@@ -120,9 +120,12 @@ Restart or reload the target agent runtime after installation so it can discover
 environment variables as an availability gate; the actual CLI response is authoritative, including
 from agent sandboxes that do not inherit the parent Herdr environment.
 
-Bun 1.3 or newer is the runtime for every bundled executable script and hook. No bundled
-entrypoint is implemented in Python or Bash; external tools and user-provided commands retain
-their own runtime requirements.
+Bun 1.3 or newer runs the Agent-facing script and hook entrypoints. Installable resources under
+`assets/`, including the SSH zsh runtime, retain their target runtime; the Bun initializer installs
+that runtime with the required permissions. External tools keep their own runtime requirements.
+
+Use one installation entry per skill in each host. For Codex, do not install the same skill in both
+`~/.agents/skills` and `~/.codex/skills`; keep the chosen copy synchronized from this repository.
 
 ### Manual Fallback
 
@@ -133,12 +136,12 @@ Codex:
 ```bash
 git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
-mkdir -p ~/.codex/skills
+mkdir -p ~/.agents/skills
 cp -R skills/asset-validation skills/browser-harness \
   skills/cloudflare-quick-tunnel \
   skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
-  skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.codex/skills/
+  skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.agents/skills/
 ```
 
 Claude-style runtimes:
@@ -157,19 +160,19 @@ cp -R skills/asset-validation skills/browser-harness \
 Verify the installation:
 
 ```bash
-test -f ~/.codex/skills/asset-validation/scripts/acc.ts
-test -f ~/.codex/skills/browser-harness/scripts/bh.ts
-test -f ~/.codex/skills/cloudflare-quick-tunnel/scripts/cqt.ts
-test -f ~/.codex/skills/herdr/scripts/route-lane.ts
-test -f ~/.codex/skills/trigger-build-workflow/scripts/detect-build-workflow.ts
-test -f ~/.codex/skills/trigger-build-workflow/scripts/dispatch-build-workflow.ts
-test -f ~/.codex/skills/persistent-ssh-ops/SKILL.md
-test -f ~/.codex/skills/persistent-ssh-ops/scripts/scan-hosts.ts
-test -f ~/.codex/skills/provision-xray-hy2-node/references/templates.md
-test -f ~/.codex/skills/changelog-writing/scripts/collect-commits.ts
-test -f ~/.codex/skills/awesome-presentation/SKILL.md
-test -f ~/.codex/skills/repo-knowledge-graph/SKILL.md
-test -f ~/.codex/skills/tdd/SKILL.md
+test -f ~/.agents/skills/asset-validation/scripts/acc.ts
+test -f ~/.agents/skills/browser-harness/scripts/bh.ts
+test -f ~/.agents/skills/cloudflare-quick-tunnel/scripts/cqt.ts
+test -f ~/.agents/skills/herdr/scripts/route-lane.ts
+test -f ~/.agents/skills/trigger-build-workflow/scripts/detect-build-workflow.ts
+test -f ~/.agents/skills/trigger-build-workflow/scripts/dispatch-build-workflow.ts
+test -f ~/.agents/skills/persistent-ssh-ops/SKILL.md
+test -f ~/.agents/skills/persistent-ssh-ops/scripts/scan-hosts.ts
+test -f ~/.agents/skills/provision-xray-hy2-node/references/templates.md
+test -f ~/.agents/skills/changelog-writing/scripts/collect-commits.ts
+test -f ~/.agents/skills/awesome-presentation/SKILL.md
+test -f ~/.agents/skills/repo-knowledge-graph/SKILL.md
+test -f ~/.agents/skills/tdd/SKILL.md
 ```
 
 ### Update Manual Installs
@@ -177,17 +180,17 @@ test -f ~/.codex/skills/tdd/SKILL.md
 ```bash
 cd skill-foundry
 git pull
-rm -rf ~/.codex/skills/asset-validation \
-  ~/.codex/skills/browser-harness ~/.codex/skills/cloudflare-quick-tunnel \
-  ~/.codex/skills/herdr ~/.codex/skills/trigger-build-workflow \
-  ~/.codex/skills/persistent-ssh-ops ~/.codex/skills/provision-xray-hy2-node \
-  ~/.codex/skills/changelog-writing ~/.codex/skills/awesome-presentation \
-  ~/.codex/skills/repo-knowledge-graph ~/.codex/skills/tdd
+rm -rf ~/.agents/skills/asset-validation \
+  ~/.agents/skills/browser-harness ~/.agents/skills/cloudflare-quick-tunnel \
+  ~/.agents/skills/herdr ~/.agents/skills/trigger-build-workflow \
+  ~/.agents/skills/persistent-ssh-ops ~/.agents/skills/provision-xray-hy2-node \
+  ~/.agents/skills/changelog-writing ~/.agents/skills/awesome-presentation \
+  ~/.agents/skills/repo-knowledge-graph ~/.agents/skills/tdd
 cp -R skills/asset-validation skills/browser-harness \
   skills/cloudflare-quick-tunnel \
   skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
-  skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.codex/skills/
+  skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.agents/skills/
 ```
 
 ## Usage
@@ -218,10 +221,10 @@ Route a new request across the current Agent and Herdr runtime:
 Use herdr to keep my current development slice in this Agent and decide whether the new request belongs here or needs another Agent; if independent, route it to the right workspace and clean up the lane after handoff.
 ```
 
-Submit changes with workflow-aware fallback:
+Submit changes within the requested scope:
 
 ```text
-Use trigger-build-workflow to commit and push these files; dispatch a build only if this repository supports the expected release inputs.
+Use trigger-build-workflow to commit and push these files without dispatching a build. Select --commit --push for this authorized scope; add --dispatch only when a build is requested.
 ```
 
 Operate a remote server through one persistent session:
@@ -245,7 +248,7 @@ Use changelog-writing to produce customer-facing production notes from the chang
 Build a presentation:
 
 ```text
-Use awesome-presentation to grill the talk outline, then scaffold the React deck after I approve the Deck Spec.
+Use awesome-presentation to turn these materials into a React deck, build it, and verify it in the browser. Make routine narrative and layout choices from the brief.
 ```
 
 Retrieve repository knowledge and cross-project context:
@@ -354,8 +357,8 @@ Package-free migrated skills run their behavior tests directly with Bun:
 bun test skills/asset-validation/tests
 bun test skills/browser-harness/tests
 bun test skills/cloudflare-quick-tunnel/tests
-bun test skills/trigger-build-workflow/test
-bun test skills/persistent-ssh-ops/test
+bun test skills/trigger-build-workflow/tests
+bun test skills/persistent-ssh-ops/tests
 ```
 
 ```bash

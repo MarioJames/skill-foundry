@@ -1,99 +1,101 @@
 ---
 name: trigger-build-workflow
-description: Commit local changes and push the current branch, optionally dispatching a compatible GitHub Actions build or release workflow. Use when the user asks to submit code, commit and push changes, trigger a build, package an artifact, publish a beta build, or release a production version. Repositories without the expected release workflow contract automatically use a git-only path.
+description: Commit, push, or dispatch GitHub Actions builds and releases within the user's authorized scope. Local packaging does not trigger this skill.
 ---
 
 # Trigger Build Workflow
 
-## Core workflow
+## Choose authorized actions
 
-Resolve this skill's directory from the loaded `SKILL.md`, then run the detector before drafting release metadata:
+Determine the operations from the current request and existing authorization before inspecting workflows. A compatible workflow is a capability, never permission to build or publish.
+
+- Local submission/commit: `--commit` only.
+- Push existing commits: `--push` only. It does not stage or commit local changes.
+- Commit and push: `--commit --push`.
+- Explicit GitHub Actions build/release: `--dispatch`. Add `--commit` and/or `--push` only when those operations are also authorized. Dispatch alone builds the existing remote branch, including when local changes or commits differ.
+- Local packaging: use the project's local build command; do not invoke this skill.
+
+If “build/package” is ambiguous, inspect the task context and project commands; clarify only if the intended local or remote operation remains unclear. Already authorized actions need no repeated confirmation. Do not infer push or dispatch from a version, changelog, compatible workflow, or a request to submit code. A push can still activate the repository's own `on: push` workflows.
+
+Resolve `<skill-dir>` from this loaded `SKILL.md`:
+
+```bash
+bun <skill-dir>/scripts/dispatch-build-workflow.ts --repo <repo-path> <action-flags> [options]
+```
+
+The script requires at least one of `--commit`, `--push`, `--dispatch`, executes selected actions in that order, and never supplies an implicit action. Commit options require `--commit`; workflow/release options require `--dispatch`.
+
+## Commit scope and destination
+
+Inspect `git status --short` and pass one `--path <path>` per task-owned file or area. Scoped commits exclude unrelated pre-staged changes and preserve them in the index. Omit `--path` only when all local changes are explicitly in scope; that selects `git add -A`. Ask only if ownership remains materially ambiguous after inspection.
+
+`--remote` defaults to `origin`; `--branch` defaults to the current branch. Push always sends current `HEAD` to `refs/heads/<branch>` on that remote; `--branch` is a destination, not a different local source branch. Existing upstream settings do not override these values. Detached HEAD needs an explicit destination for push/dispatch. Commit alone needs neither a remote nor a workflow.
+
+Dispatch and run monitoring use the selected remote's single push URL to resolve the GitHub repository, including when the fetch URL or gh's default repository differs. Without push, the script checks the destination remote branch and tracks its SHA. It does not upload local commits automatically.
+
+## Dispatch preflight and metadata
+
+Only for an authorized dispatch, run the detector before drafting release metadata:
 
 ```bash
 bun <skill-dir>/scripts/detect-build-workflow.ts --repo <repo-path>
 ```
 
-Read its JSON `mode`:
+The JSON `compatible` boolean reports capability only. Detection scans local `.github/workflows/*.yml` and `*.yaml` for `workflow_dispatch`, an `environment` or `channel` input, `version`, and one of `changelog`, `changelog_content`, or `changelogContent`. It prefers `package-orchestrator.yml` / `.yaml`, otherwise requires a single compatible workflow. Resolve ambiguity with `--workflow <file>`; files outside that directory are invalid candidates.
 
-- `git-only`: do not invoke changelog-writing, infer a release channel, or ask for version metadata. Run the dispatch script with the requested commit scope; it stages, commits, and pushes, then reports `dispatch=skipped`.
-- `dispatch`: choose beta or production metadata, draft the matching changelog, then run the dispatch script. The script repeats detection before making changes, so a stale or incompatible workflow cannot be dispatched accidentally.
+Missing, incompatible, or ambiguous workflows produce `compatible: false` from the detector. Explicit dispatch then fails clearly before staging, committing, pushing, or dispatching; it never silently degrades into a Git operation. Without `--dispatch`, the script does not detect workflows or require release metadata.
 
-Use the bundled script for the mechanical path:
+The script rechecks local compatibility, release inputs, and destination configuration before mutations. Non-dry dispatch also checks gh authentication; it never logs in automatically. Detection is local: ensure the selected workflow is committed on the branch to build (or included in the authorized commit/push). Local detection cannot prove the server's workflow availability, permissions, or concurrent branch state; remote dispatch failures are reported.
 
-```bash
-bun <skill-dir>/scripts/dispatch-build-workflow.ts --repo <repo-path> [options]
-```
+Route release metadata only for dispatch:
 
-## Commit scope
+- No version, empty version, or non-semver text selects beta. Omit the dispatch `version` field so the workflow generates it.
+- `X.Y.Z` or `vX.Y.Z` selects production.
+- `--environment production` requires that semver format; `--environment beta` always selects beta and omits version.
 
-- Inspect `git status --short` and preserve unrelated user changes.
-- With no extra scope instruction, pass explicit `--path <path>` arguments for only the changes owned by the current task.
-- When the user explicitly requests all local changes, use the default `git add -A` behavior by omitting `--path`.
-- When the user names a feature, area, or file set, pass one `--path` per requested path.
-- Ask only when the requested scope remains materially ambiguous after inspecting the worktree.
-
-## Compatible workflow contract
-
-The detector scans local `.github/workflows/*.yml` and `*.yaml` files. A compatible workflow must have:
-
-- `workflow_dispatch`;
-- an `environment` or `channel` input;
-- a `version` input;
-- one of `changelog`, `changelog_content`, or `changelogContent`.
-
-It prefers `package-orchestrator.yml` / `.yaml`, selects a single other compatible workflow, and returns `git-only` when none is compatible. If several compatible workflows remain ambiguous, pass an explicit `--workflow <file>` or keep the safe git-only result.
-
-Missing directories, missing files, unrelated workflows, missing inputs, and unsupported changelog shapes are normal git-only outcomes, not errors.
-
-## Release routing
-
-Apply these rules only when detection returns `dispatch`:
-
-- No version, empty version, or non-semver text means `beta`.
-- Beta omits the `version` dispatch value so the workflow can generate it.
-- `X.Y.Z` or `vX.Y.Z` means `production`.
-- Explicit `--environment production` requires a semver version.
-- Explicit `--environment beta` always uses beta behavior.
-
-For beta, use changelog-writing's technical/internal route. For production, use its customer-facing route. Prefer the JSON output and pass it with `--changelog-json-file` or `--changelog-json`.
+Use changelog-writing's technical/internal route for beta and customer-facing route for production. Pass its JSON via `--changelog-json-file` or `--changelog-json`, with `changelog`, `changelog_summary`, and `changelog_content`. The script maps the full text or content/summary to the detected inputs. For remaining input options, run the script with `--help`.
 
 ## Examples
 
-Submit selected files; this works with or without a compatible workflow:
+Commit selected files locally:
 
 ```bash
 bun <skill-dir>/scripts/dispatch-build-workflow.ts \
-  --repo . \
+  --repo . --commit \
   --message 'fix: handle empty configuration' \
-  --path src/config.ts \
-  --path tests/config.test.ts
+  --path src/config.ts --path tests/config.test.ts
 ```
 
-Beta build after the detector reports `dispatch`:
+Push current HEAD without committing or explicitly dispatching a workflow:
+
+```bash
+bun <skill-dir>/scripts/dispatch-build-workflow.ts --repo . --push
+```
+
+Commit and push selected changes:
 
 ```bash
 bun <skill-dir>/scripts/dispatch-build-workflow.ts \
-  --repo . \
-  --changelog-json-file <temporary-changelog.json>
+  --repo . --commit --push --path src/config.ts --message 'fix: handle empty configuration'
 ```
 
-Production release:
+Build the already-published remote branch as beta:
 
 ```bash
 bun <skill-dir>/scripts/dispatch-build-workflow.ts \
-  --repo . \
-  --version 1.2.3 \
-  --changelog-json-file <temporary-changelog.json>
+  --repo . --dispatch --changelog-json-file <temporary-changelog.json>
 ```
 
-## Reporting
+When committing, pushing, and production release are all authorized:
 
-Always report the commit SHA, branch, pushed remote/ref, workflow mode, and skip reason when git-only. For dispatched builds, also report workflow name, run URL, watch status, and final conclusion when watched.
+```bash
+bun <skill-dir>/scripts/dispatch-build-workflow.ts \
+  --repo . --commit --push --dispatch --path src/config.ts \
+  --version 1.2.3 --changelog-json-file <temporary-changelog.json>
+```
 
-## Gotchas
+## Verification and reporting
 
-- Do not draft a changelog before detection; ordinary repositories should not be forced into release semantics.
-- Do not treat the presence of any workflow file as compatibility. Validate the complete input contract.
-- Do not choose arbitrarily among multiple compatible non-default workflows.
-- `--dry-run` does not authenticate, commit, push, or dispatch; use it for fixture and scope verification.
-- Workflow detection is intentionally local. A remote-only workflow is not enough because dispatching a workflow absent from the branch being pushed is unsafe.
+`--dry-run` prints only selected actions and validates local inputs without modifying the index, committing, pushing, authenticating, or dispatching. It does not contact the remote to verify its branch or permissions. `--no-watch` skips waiting for completion but still locates and reports the dispatched run.
+
+Report performed/skipped actions, local commit SHA and branch, and the remote/ref when push was selected. For dispatch, include target repository/branch/SHA, workflow, run URL, watch status and final conclusion when watched. Failures stop subsequent actions; successful earlier actions are not rolled back. If dispatch succeeded but run discovery/watch failed, inspect that run before retrying to avoid duplicate releases.

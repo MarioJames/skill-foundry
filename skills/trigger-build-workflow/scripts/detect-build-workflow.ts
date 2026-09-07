@@ -9,7 +9,8 @@ function usage(): void {
 
 Detect whether a repository has one unambiguous GitHub Actions workflow that
 supports workflow_dispatch plus channel, version, and changelog inputs.
-Incompatible or missing workflows are a successful git-only result.`);
+Reports compatible=true/false only; this never authorizes commit, push, or dispatch.
+Incompatible or missing workflows are a successful detection result (compatible=false).`);
 }
 
 let repo = ".";

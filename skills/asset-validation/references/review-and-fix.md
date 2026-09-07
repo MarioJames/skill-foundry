@@ -1,13 +1,13 @@
 # Initial review & early fix
 
-Before producing the acceptance strategy, do one static review pass. If there are major logic problems, fix a few rounds until none remain, then produce the strategy.
+Inspect the requested asset and supporting material needed to establish concrete findings. For review-only, report findings without edits or an acceptance round. When fixes are requested, make scoped corrections and verify affected behavior. Design an acceptance strategy only when behavioral acceptance is requested.
 
 Principles:
 - Only edit the asset-under-test itself.
 - Review-only has no strategy `WORK` by default. Re-resolve the Bun ACC entry in each shell batch if it is needed; never write `"$WORK/.acc-path"` unless `WORK` was created and validated as a non-empty absolute directory in that same batch. Put temporary review inputs under `mktemp -d "${ACCEPTANCE_TMPDIR:-${TMPDIR:-/tmp}}/<purpose>.XXXXXX"`, not a fixed or top-level `/tmp` path.
 - Do not widen a completed review with optional error-path or portability probes that the task did not request. For a requested exit-code check, create the isolated scratch first, then capture with `>"$SCRATCH/stdout" 2>"$SCRATCH/stderr"`; never redirect to an illustrative `/tmp-placeholder`, `/dev` guess, root path, or other unvalidated target.
 - Look for: trigger-surface errors (description too broad/narrow), obvious script bugs, broken state machine / control flow, drift between docs and implementation.
-- Script-bearing assets: first confirm scripts actually run (syntax, dependencies, the bash 3.2 empty-array `set -u` trap), then review logic.
+- For scripts, choose syntax checks, existing tests, or isolated execution according to the changed behavior. Do not run deployments, external writes, or host setup merely to complete a static audit.
 - Skill assets should run the active skill-creator's canonical validator. Prefer a discovered Bun/TypeScript entry: `bun <skill-creator-dir>/scripts/quick_validate.ts <skill_dir>`. Search symlinked roots with `find -L`, checking `${CODEX_HOME:-$HOME/.codex}/skills` and `$HOME/.claude/skills`. If no `quick_validate.ts` exists, discover and run the authoritative external fallback with `python3 <skill-creator-dir>/scripts/quick_validate.py <skill_dir>`. That Python file belongs to the external skill-creator and is a review tool only; it is not imported by ACC, shipped in this skill, or a runtime dependency of `scripts/acc.ts`. If neither canonical entry exists (or its required interpreter is unavailable), state that gap in the report and run the asset's declared Bun check (for example, `(cd <skill_dir> && bun run check)`) when available. A custom smoke test must not silently claim canonical validation.
 - Do not inspect, grep, or read an external validator's implementation merely to predict its dependencies. Run the discovered entry directly. If and only if its failure explicitly says `ModuleNotFoundError: No module named 'yaml'`, and the task allows temporary `uv` use, rerun it as `uv run --no-project --with pyyaml python3 "$VALIDATOR_PY" <skill_dir>`; do not mutate project or global Python state.
 
@@ -24,7 +24,7 @@ else
   echo "canonical skill validator unavailable" >&2
 fi
 ```
-- After fixing, briefly state what changed and why. Once there are no major problems, move to "produce strategy".
+- Report findings or completed fixes, relevant validation, and material gaps. Static completion does not require a strategy or full acceptance run.
 
 ## Gotchas
 - macOS ships bash 3.2: expanding an empty array under `set -u` aborts. Verify shell stubs with `/bin/bash`, guard with `${arr[@]+"${arr[@]}"}`.

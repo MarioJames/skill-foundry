@@ -1,4 +1,4 @@
 interface:
   display_name: "Trigger Build Workflow"
-  short_description: "Commit, push, and dispatch compatible builds"
-  default_prompt: "Use $trigger-build-workflow to submit these changes and dispatch a build only when this repository has a compatible workflow."
+  short_description: "Commit, push, or build within authorized scope"
+  default_prompt: "Use $trigger-build-workflow to perform only the commit, push, or GitHub Actions build/release operations authorized in this request; workflow compatibility does not authorize additional actions."

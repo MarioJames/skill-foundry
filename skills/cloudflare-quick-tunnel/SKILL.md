@@ -1,6 +1,6 @@
 ---
 name: cloudflare-quick-tunnel
-description: Create and manage temporary public URLs for local HTTP services through the standard anonymous Cloudflare Quick Tunnel lifecycle, including start, status, stop, and cleanup. Use for temporary exposure of a local service; do not use for project-specific URL mapping, production, authenticated access, named tunnels, or custom domains.
+description: Create, inspect, and clean up temporary anonymous public tunnels for local HTTP services. Not for named tunnels or production deployments.
 ---
 
 # Cloudflare Quick Tunnel
@@ -20,7 +20,7 @@ description: Create and manage temporary public URLs for local HTTP services thr
 - 不自动安装或升级 Bun、cloudflared。缺失时报告准确前置。
 - 生命周期命令必须复用同一个 `--state-dir`；不要用宽泛 `pgrep` 猜测或清理其他 tunnel。
 - 把 `start` 的 stdout 当可 `eval` 环境变量读取；不要从日志猜公网 URL 或 PID。
-- `start` 解析到 cloudflared 生成的公网 URL 后必须立即输出，不做 HTTP、TLS 或页面探活，不等待远端就绪。
+- `start` 解析到 cloudflared 生成的公网 URL 后立即输出，不把 HTTP、TLS 或页面探活作为启动条件。任务另含可用性验收时，由调用方随后验证，分别报告地址生成和可达性结果。
 
 ## Setup
 
@@ -68,7 +68,8 @@ fi
 
 ```bash
 TASK_STATE_DIR="$(mktemp -d)/quick-tunnel"
-eval "$(bun "$CQT_DIR/cqt.ts" start "http://127.0.0.1:4173" --state-dir "$TASK_STATE_DIR")"
+TUNNEL_ENV="$(bun "$CQT_DIR/cqt.ts" start "http://127.0.0.1:4173" --state-dir "$TASK_STATE_DIR")" || exit $?
+eval "$TUNNEL_ENV"
 printf '公网地址：%s\nPID：%s\n日志：%s\n' "$PUBLIC_URL" "$TUNNEL_PID" "$TUNNEL_LOG"
 ```
 
@@ -85,7 +86,8 @@ printf '公网地址：%s\nPID：%s\n日志：%s\n' "$PUBLIC_URL" "$TUNNEL_PID" 
 只读检查不创建进程：
 
 ```bash
-eval "$(bun "$CQT_DIR/cqt.ts" status --state-dir "$TASK_STATE_DIR")"
+TUNNEL_ENV="$(bun "$CQT_DIR/cqt.ts" status --state-dir "$TASK_STATE_DIR")" || exit $?
+eval "$TUNNEL_ENV"
 printf '状态：%s\n' "$TUNNEL_STATUS" # running | stale | stopped
 ```
 

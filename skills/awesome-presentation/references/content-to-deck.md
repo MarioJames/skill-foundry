@@ -1,11 +1,10 @@
-# 从已批准 Deck Spec 到页面代码
+# 从 Deck Spec 到页面代码
 
-**前提**：用户已批准 [content-discovery.md](content-discovery.md) 中的 Deck Spec。  
-若无批准大纲，回到内容发现，不要从本文件开写。
+使用根据现有材料整理的内部页表或用户指定的大纲。用户已要求完整制作时直接实现；只有要求先讨论或缺关键事实时才回到 [内容发现](content-discovery.md)。
 
 ## 目标
 
-把**已批准**的页表落成：
+把页表落成：
 
 1. `src/pages/{number-name}/`
 2. `src/pages/registry.ts`
@@ -20,8 +19,8 @@
 
 ## Step A — 对照 Spec，不重新发明叙事
 
-- 页序、标题、takeaway 以批准 Spec 为准；实现中可微调用词，**不擅自加页/删主张**。
-- 若容量或证据迫使结构调整：暂停编码，更新 Spec 片段并请用户确认。
+- 页序、标题、takeaway 以当前 Spec 和用户固定约束为准；在内容取舍授权内可调整并同步页表。
+- 容量超限时在目标、页数和核心主张约束内拆页或换 recipe；事实缺口或必须改变固定约束时才澄清。
 - 默认 `start` 脚手架页在业务 Deck 就绪后删除。
 
 Spec 页表 → 实现清单：
@@ -127,7 +126,7 @@ export const slideRegistry = [
     section: '开场',
     sectionEn: 'Open',
     component: CoverPage,
-    takeaway: '…', // 与批准 Spec 一致
+    takeaway: '…', // 与当前 Spec 一致
     intent: 'cover',
     layoutId: 'cover-split',
     density: 'sparse',
@@ -162,6 +161,6 @@ diagnostics 挂在 `window.__PRESENTATION_VALIDATION__.diagnostics`。
 - 缺 metadata → 补五项必填
 - 容量超限 → 拆页或换 recipe，必要时回内容发现
 - 反模式（连续同 layout、无比较维度却 compare）→ 改结构
-- takeaway 与 Spec 漂移 → 改回 Spec 或再确认用户
+- takeaway 与 Spec 漂移 → 对齐当前页表；涉及核心主张变化且超出授权时才询问
 
 需要时调用 `validateDeck(slideRegistry)`（以项目导出为准）。

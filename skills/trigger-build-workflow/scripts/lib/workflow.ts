@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 export type WorkflowCapabilities = {
   workflowDispatch: boolean;
@@ -20,7 +20,7 @@ export type WorkflowCandidate = {
 
 export type WorkflowDetection = {
   ok: true;
-  mode: "dispatch" | "git-only";
+  compatible: boolean;
   reason:
     | "workflow-compatible"
     | "workflow-directory-missing"
@@ -151,7 +151,9 @@ function resolveRequestedWorkflow(repoRoot: string, requested: string): string |
     ? [requested]
     : [resolve(repoRoot, requested), resolve(repoRoot, ".github/workflows", requested)];
 
-  return candidates.find((candidate) => existsSync(candidate) && statSync(candidate).isFile()) ?? null;
+  const directory = resolve(repoRoot, ".github/workflows");
+  return candidates.find(candidate => /\.ya?ml$/i.test(candidate) && dirname(candidate) === directory &&
+    existsSync(candidate) && statSync(candidate).isFile() && dirname(realpathSync(candidate)) === realpathSync(directory)) ?? null;
 }
 
 export function detectBuildWorkflow(repoRoot: string, requestedWorkflow?: string): WorkflowDetection {
@@ -163,7 +165,7 @@ export function detectBuildWorkflow(repoRoot: string, requestedWorkflow?: string
     if (!requestedPath) {
       return {
         ok: true,
-        mode: "git-only",
+        compatible: false,
         reason: "workflow-not-found",
         repoRoot: normalizedRepoRoot,
         requestedWorkflow,
@@ -175,7 +177,7 @@ export function detectBuildWorkflow(repoRoot: string, requestedWorkflow?: string
     const workflow = inspectWorkflowFile(requestedPath);
     return {
       ok: true,
-      mode: workflow.compatible ? "dispatch" : "git-only",
+      compatible: workflow.compatible,
       reason: workflow.compatible ? "workflow-compatible" : "no-compatible-workflow",
       repoRoot: normalizedRepoRoot,
       requestedWorkflow,
@@ -187,7 +189,7 @@ export function detectBuildWorkflow(repoRoot: string, requestedWorkflow?: string
   if (!existsSync(workflowDirectory) || !statSync(workflowDirectory).isDirectory()) {
     return {
       ok: true,
-      mode: "git-only",
+      compatible: false,
       reason: "workflow-directory-missing",
       repoRoot: normalizedRepoRoot,
       requestedWorkflow: null,
@@ -200,12 +202,12 @@ export function detectBuildWorkflow(repoRoot: string, requestedWorkflow?: string
     .filter((name) => /\.ya?ml$/i.test(name))
     .sort()
     .map((name) => join(workflowDirectory, name))
-    .filter((path) => statSync(path).isFile());
+    .filter((path) => resolveRequestedWorkflow(normalizedRepoRoot, path) !== null);
 
   if (workflowPaths.length === 0) {
     return {
       ok: true,
-      mode: "git-only",
+      compatible: false,
       reason: "no-workflow-files",
       repoRoot: normalizedRepoRoot,
       requestedWorkflow: null,
@@ -221,7 +223,7 @@ export function detectBuildWorkflow(repoRoot: string, requestedWorkflow?: string
   if (preferred || compatible.length === 1) {
     return {
       ok: true,
-      mode: "dispatch",
+      compatible: true,
       reason: "workflow-compatible",
       repoRoot: normalizedRepoRoot,
       requestedWorkflow: null,
@@ -232,7 +234,7 @@ export function detectBuildWorkflow(repoRoot: string, requestedWorkflow?: string
 
   return {
     ok: true,
-    mode: "git-only",
+    compatible: false,
     reason: compatible.length > 1 ? "multiple-compatible-workflows" : "no-compatible-workflow",
     repoRoot: normalizedRepoRoot,
     requestedWorkflow: null,

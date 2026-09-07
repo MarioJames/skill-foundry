@@ -1,4 +1,4 @@
 interface:
   display_name: "Awesome Presentation"
-  short_description: "先 grilling 聊清内容，批准大纲后问目录并从 GitHub fork git clone 落成 slide deck"
-  default_prompt: "帮我做一套演示文稿：先一次一问把听众、主张、叙事弧和页级大纲聊清楚并形成 Deck Spec；我批准后先问项目装在哪，再 git clone --depth 1 https://github.com/MarioJames/awesome-presentation.git 落项目。"
+  short_description: "用 awesome-presentation 将材料落成可运行演示，按需讨论内容"
+  default_prompt: "用 $awesome-presentation 根据我的材料和目标完成演示文稿、构建与浏览器验收；信息足够或已授权自行决定时直接完成，只澄清影响正确性的关键缺口。"

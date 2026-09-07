@@ -1,14 +1,10 @@
-# Asset understanding & classification
+# Asset understanding and registration
 
-Goal: read the asset, determine its type (skill/plugin/rule/agent) and purpose, confirm with the user, then make the first `acc` write with `acc bootstrap`.
+For behavioral acceptance, identify the asset type (skill/plugin/rule/agent), purpose, source, and authorized side effects. Review-only requests do not need registration.
 
-Unattended fast path: if confirmation is pre-authorized, do not inspect rig source, run environment checks, validate plugin internals, or write a phase heading before the first `acc` write. Read only entry files needed for type/purpose, record the assumed confirmation, then run `acc bootstrap` as the first `acc` write. After it succeeds, immediately continue to review/fix and strategy/start; do not pause at the asset-registration boundary.
+Read the relevant entry files and resolve these facts from the request. Inspect prerequisites when they affect execution. Ask only if an ambiguity changes the evaluation; existing authorization applies in attended and unattended runs.
 
-Steps:
-1. Read the entry files — `SKILL.md` / `.claude-plugin/plugin.json` / `.codex-plugin/plugin.json` (or legacy root `plugin.json`) / agent frontmatter / rule matcher — and summarize: type, trigger conditions, public interface, dependencies, whether it ships scripts.
-2. Use AskUserQuestion to confirm: "I read this as a `<type>` whose purpose is `<goal>` — correct?" If the user explicitly pre-authorized unattended execution, record the confirmation you would have asked for and continue without stopping.
-3. On confirmation: `bun <skill_dir>/scripts/acc.ts bootstrap --name <n> --type <t> --source <path> --goal "<one-line user goal>"` — registers the asset and opens the acceptance in one write. Re-running with the same name/type/source reuses the asset registration (idempotent) and opens a fresh acceptance; a same-name asset with different type or source is rejected - pick a new name. Heed any `warning` in the output: it flags a declared type that does not match the source shape.
-4. The `--goal` is the user's intent for this asset — it seeds the acceptance you just opened. In unattended mode, move directly to the next command batch; do not stop after step 3.
+Register with `bun <skill_dir>/scripts/acc.ts bootstrap --name <name> --type <type> --source <path> --goal "<goal>"`. The same name/type/source reuses the asset registration but opens a fresh acceptance; resume an existing acceptance instead when that is the requested task. A same-name asset with different type or source is rejected. Check any source-shape warning before proceeding.
 
 After registration and before task design, write a capability profile for the asset:
 
@@ -25,4 +21,4 @@ Use this profile to derive acceptance tasks. Do not use a generic toy task ladde
 ## Gotchas
 - A skill's `description` is the trigger surface; read it as "when does this fire?", not as a summary. Over-broad or over-narrow descriptions are themselves defects to record.
 - For plugins, the asset is the whole folder (agents + skills + hooks + marketplace), not a single file.
-- Do not query SQLite directly. Use documented scoped reads such as `acc asset list`, `acc accept list`, `acc round list`, or `acc history --asset <asset-name-or-id>`; bare `acc history` is invalid. If the CLI lacks a needed read, add it before continuing.
+- Do not query SQLite directly. Use documented scoped reads such as `acc asset list`, `acc accept list`, `acc round list`, or `acc history --asset <asset-name-or-id>`; bare `acc history` is invalid. Add a missing read only when rig changes are authorized; otherwise report the specific evidence gap.

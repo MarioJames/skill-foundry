@@ -1,6 +1,6 @@
 # 布局与展示约定
 
-实现阶段（Spec 已批准）必须遵守。细节以生成项目内 `.claude/skills/presentation-*` 与源码为准。
+实现阶段遵守。细节以生成项目内 `.claude/skills/presentation-*` 与源码为准。
 
 ## 1. 章节标签：中文 · English（deck-meta 左侧）
 
@@ -47,36 +47,12 @@
 
 适用：`media-split`、`content-two-column` / `header-columns`、以及任何「左文右图 / 右媒体」构图。
 
-### 流程
+### 素材选择
 
-```text
-需要右侧图？
-  ├─ 否 → 不硬塞 Figure
-  └─ 是 → 用户是否已提供图片路径/资产？
-        ├─ 是 → Figure 引用 + alt/caption/source
-        └─ 否 → 检测宿主是否有生图技能
-              ├─ 有 → 单独询问是否调用（说明用途/风格）
-              │     ├─ 同意 → 生成 → 写入 src/assets → Figure
-              │     └─ 拒绝 → 占位 + 给出 prompt
-              └─ 无 → 占位 + 给出 prompt（用户自行生成后替换）
-```
-
-### 有生图技能时
-
-1. **先问再调**，禁止静默生成。问法示例：
-
-   > 这一页右侧需要一张「证据链路」说明图。当前环境有生图技能（如 `guizang-material-illustration` / Imagine）。是否允许我现在生成并放进项目？  
-   > **建议：允许**，比例 4:3，扁平说明风，中文短标签。
-
-2. 获准后生成，保存到项目 `src/assets/`（或用户指定目录），用 `Figure` 引用。
-3. registry `media` 与 Figure 的 alt/caption/source 对齐；source 写清「AI 生成 / 生成日期」等。
-
-### 无技能或用户拒绝时
-
-1. 输出**可复制的生图 prompt**（主题、构图、标签文案、宽高比、禁忌：无水印/无乱码英文 UI）。
-2. 页面落入**占位图**（本地 SVG/PNG placeholder 即可），`Figure` 仍给有效 alt/caption；`source` 标明「占位 / 待用户按 prompt 替换」。
-3. 在交付说明里列出：页 id、占位路径、完整 prompt、替换步骤。
-4. 不要假装已有真实产品截图或生产数据图。
+1. 用户提供图片路径/资产时直接引用，填写 alt/caption/source。
+2. 生成插图属于当前制作要求或已有用户授权，且工具可用时直接生成，保存到项目 `src/assets/` 或用户指定目录；registry `media` 与 Figure 保持一致，source 标明“AI 生成 / 日期”。不把生成图当产品截图或生产数据。
+3. 当前请求未涵盖生图且必须使用该能力时，说明用途与范围后取得授权，已有授权不重复问。无工具或用户拒绝时使用明确占位，给可复制 prompt 与替换步骤。
+4. 占位交付记录页 id、占位路径、prompt（主题、构图、标签、比例）和来源缺口；可以改用无图 recipe 时不硬塞 Figure。
 
 ### 占位最小约定
 

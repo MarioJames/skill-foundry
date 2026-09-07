@@ -14,7 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
-const RUNTIME_SOURCE = join(SCRIPT_DIRECTORY, "server-runtime.zsh");
+const RUNTIME_SOURCE = join(SCRIPT_DIRECTORY, "..", "assets", "server-runtime.zsh");
 const PROFILES_SOURCE = join(SCRIPT_DIRECTORY, "..", "assets", "servers.zsh");
 const MANAGED_MARKER = "Managed by persistent-ssh-ops";
 const RUNTIME_SOURCE_LINE = '[[ -f "$HOME/.config/zsh/server-runtime.zsh" ]] && source "$HOME/.config/zsh/server-runtime.zsh"';

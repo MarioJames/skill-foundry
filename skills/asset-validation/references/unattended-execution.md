@@ -1,17 +1,10 @@
 # Unattended Execution
 
-Use this reference when the user is away, sleeping, or explicitly asks for the whole acceptance flow to finish automatically.
+Use these command contracts for real CLI acceptance. When unattended execution is requested, continue authorized work through verification and cleanup without pausing for routine confirmations.
 
-## Fast Path Gate
+## Scope and preparation
 
-The unattended fast path is a positive sequence with no detours:
-
-1. Read only the asset entry files needed to classify type and purpose — `SKILL.md`, the host plugin manifest (`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, or legacy root `plugin.json`), agent frontmatter, or the rule matcher.
-2. Record the pre-authorized confirmation.
-3. Make the first `acc` write immediately: the first shell batch that touches `acc` must begin with the asset registration itself. Prefer `acc bootstrap`, which registers the asset and opens the acceptance in one write (`acc asset add` + `acc accept new` remain the two-step equivalent).
-4. Continue in the same execution batch to review/fix, strategy files, `acc accept update`, and `acc start`; do not pause for open-ended thinking between these commands.
-
-Everything else waits until after that first write: bundled `skills/`, `agents/`, hooks, or marketplace files; rig source, environment checks, or plugin-internal validation; this skill's `references/`, `scripts/acc.ts`, `scripts/observe.ts`; and any discovery such as `bun "$ACC" --help`, `bun "$ACC" asset --help`, `ls "$ACC"`, `echo $ACCEPTANCE_TMPDIR`, phase headings, or scanning this skill directory. The command contract in this reference is authoritative; **DO NOT** open references before the first `acc` write.
+Use the requested acceptance scope and CLI without reconfirmation. Read the relevant asset entry and prerequisites, resolve the CLI, then register the acceptance before creating rounds. Review-only tasks do not use this workflow. Necessary source or reference reads may precede registration; do not create state simply to satisfy an ordering ritual.
 
 Resolve `ACC` from the staged skill copy first; this keeps sandboxed standalone-skill validation from accidentally using a stale global install:
 
@@ -38,7 +31,7 @@ acc bootstrap --name <asset_name> --type <type> --source <source_path> --goal "<
 
 ## Continuation Rule
 
-In unattended mode, **NEVER** return control after asset understanding, classification, tool preflight, review-and-fix, strategy drafting, or any phase summary. A progress summary is allowed only immediately before the next `acc` command or observe-loop action in the same turn.
+Continue authorized preparation, execution, fixes, and cleanup to the requested completion criteria. Progress updates do not need approval; pause only for missing information or an action outside the permitted scope.
 
 If an unattended round returns FAIL/CONDITIONAL and the next action stays inside the asset-under-test or strategy/task design, record the failure, finalize that round, then immediately start the fix/rerun round. `acc finalize` performs round cleanup by default. For a boundary-only additive fix, apply the scoped revalidation rule in `references/convergence-and-task-design.md`: preserve mapped, unaffected PASS evidence and re-run only affected tasks. **DO NOT** ask "should I continue" unless the fix would touch assets outside the asset-under-test, reset history, or expand destructive scope.
 
@@ -48,9 +41,9 @@ A budget-exhausted acceptance is a terminal Blocked state, not a retry candidate
 
 ## Unattended Command Spine
 
-In unattended mode, do not expand rig source or run broad validation before the first `acc` write. Read only enough asset entry files to classify type/purpose (the applicable host manifest only for plugins), record the pre-authorized confirmation, then run `bun "$ACC" bootstrap --name <asset_name> --type <type> --source <source_path> --goal "<goal>"` before review/fix. Registration still happens before review, validation, or rig introspection.
+After resolving the asset and prerequisites, run `bun "$ACC" bootstrap --name <asset_name> --type <type> --source <source_path> --goal "<goal>"`, or resume the requested existing acceptance. Record the actual authorization scope rather than inventing a confirmation event.
 
-After the bootstrap write, the next action is not a phase heading or open-ended planning. Immediately run the review/fix scan. If no major blocker remains, immediately create strategy artifacts under:
+Review the relevant asset and fix authorized defects before launching rounds. Store strategy artifacts in a task-private directory:
 
 ```
 WORK="$(mktemp -d "${ACCEPTANCE_TMPDIR:-${TMPDIR:-/tmp}}/acc-strategy.XXXXXX")"
@@ -101,8 +94,8 @@ Run any needed `acc finding`, then `acc finalize`. A successful `acc finalize` m
 
 This documented spine is the PASS-gate contract. Do not open, grep, or line-slice `scripts/catalog.ts`, `scripts/commands.ts`, or any other ACC implementation file to predict whether finalize will pass. Invoke `acc finalize --verdict <PASS|FAIL|CONDITIONAL>` directly; if it returns a structured rejection, satisfy the reported requirement and retry the command.
 
-Independent history verification uses `acc history --asset <asset-name-or-id>`; never invoke bare `acc history`, because its required `--asset` omission is a usage error. Other state checks still go through documented scoped `acc` reads. **DO NOT** run `sqlite3` on `state.sqlite3`; if a read is missing, add a narrow `acc` read command first.
+Independent history verification uses `acc history --asset <asset-name-or-id>`; never invoke bare `acc history`, because its required `--asset` omission is a usage error. Other state checks still go through documented scoped `acc` reads. **DO NOT** run `sqlite3` on `state.sqlite3`; if a read is missing, add a narrow CLI operation only when rig changes are authorized, otherwise report the evidence gap.
 
-After every successful phase-mutating command (`bootstrap`, `asset add`, `accept new`, `accept update`, `profile run-task`, `start`, `launch`, `feed-task`, `capture`, `record`, `finalize`, and debug-only `cleanup`), the next action must be the next concrete tool call in this spine, not a standalone prose summary.
+Keep progressing through the recorded tasks and cleanup. Inspect the preceding result before choosing the next command, and give concise progress updates when useful.
 
 If finalizing a round leaves any acceptance criterion unmet, any accepted cleanup missing, or any manually fixed behavior unproven, the next concrete action is a repair plus a new `acc start` for the same acceptance. Re-run affected tasks; do not repeat mapped, unaffected PASS tasks after a qualifying boundary-only fix. **DO NOT** summarize as "done" from a failed or conditional round.

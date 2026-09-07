@@ -5,6 +5,9 @@ import { detectBuildWorkflow, type WorkflowDetection } from "./lib/workflow";
 
 type Options = {
   repo: string;
+  commit: boolean;
+  push: boolean;
+  dispatch: boolean;
   workflow?: string;
   environment?: string;
   version: string;
@@ -33,6 +36,9 @@ function usage(): void {
   dispatch-build-workflow.ts [options]
 
 Options:
+  --commit                   Stage and commit the selected local changes.
+  --push                     Push current HEAD to the destination branch.
+  --dispatch                 Dispatch a compatible remote workflow.
   --repo <path>              Git repo path. Defaults to current directory.
   --workflow <file>          Select a workflow explicitly. Defaults to safe auto-detection.
   --environment <env>        beta or production. Defaults from --version.
@@ -43,16 +49,17 @@ Options:
   --changelog <text>         Legacy Markdown changelog text.
   --changelog-summary <text>
   --changelog-summary-file <path>
-  --message <message>        Commit message. Defaults from the selected mode.
+  --message <message>        Commit message. Defaults from the selected actions.
   --path <path>              Stage only this path. Repeatable. Defaults to git add -A.
   --remote <name>            Git remote to push. Defaults to origin.
-  --branch <name>            Branch/ref to push and dispatch. Defaults to current branch.
+  --branch <name>            Destination branch (not a local source). Defaults to current branch.
   --no-watch                 Dispatch without waiting for completion.
   --dry-run                  Print actions without committing, pushing, or dispatching.
   -h, --help                 Show this help.
 
-When no compatible build workflow exists, the command succeeds in git-only
-mode and performs only the normal stage, commit, and push path.`);
+Select at least one action; flags can be combined in commit -> push -> dispatch
+order. No action implies another. Dispatch incompatibility fails before mutations.
+Remote defaults to origin; upstream settings never override --remote/--branch.`);
 }
 
 function die(message: string): never {
@@ -62,13 +69,16 @@ function die(message: string): never {
 
 function readValue(args: string[], index: number, option: string): [string, number] {
   const value = args[index + 1];
-  if (!value) die(`${option} requires a value`);
+  if (!value || value.startsWith("--")) die(`${option} requires a value`);
   return [value, index + 1];
 }
 
 function parseArgs(args: string[]): Options {
   const options: Options = {
     repo: ".",
+    commit: false,
+    push: false,
+    dispatch: false,
     version: "",
     paths: [],
     remote: "origin",
@@ -81,6 +91,15 @@ function parseArgs(args: string[]): Options {
     let value: string;
 
     switch (argument) {
+      case "--commit":
+        options.commit = true;
+        break;
+      case "--push":
+        options.push = true;
+        break;
+      case "--dispatch":
+        options.dispatch = true;
+        break;
       case "--repo":
         [value, index] = readValue(args, index, argument);
         options.repo = value;
@@ -154,6 +173,13 @@ function parseArgs(args: string[]): Options {
     }
   }
 
+  if (!options.commit && !options.push && !options.dispatch) die("select --commit, --push, and/or --dispatch");
+  if (!options.commit && (options.message !== undefined || options.paths.length > 0)) die("--message and --path require --commit");
+  if (!options.dispatch && (options.workflow !== undefined || options.environment !== undefined || options.version ||
+      options.changelogJsonFile || options.changelogJson || options.changelogFile || options.changelog ||
+      options.changelogSummary || options.changelogSummaryFile || !options.watch)) {
+    die("workflow, release metadata, and --no-watch options require --dispatch");
+  }
   return options;
 }
 
@@ -240,7 +266,7 @@ function parseChangelog(options: Options): Changelog {
 }
 
 function printDetection(detection: WorkflowDetection): void {
-  console.log(`workflow_mode=${detection.mode}`);
+  console.log(`workflow_compatible=${detection.compatible}`);
   console.log(`workflow_reason=${detection.reason}`);
   if (detection.workflow) {
     console.log(`workflow=${detection.workflow.name}`);
@@ -248,38 +274,68 @@ function printDetection(detection: WorkflowDetection): void {
   }
 }
 
+function githubRepository(remoteUrl: string): string {
+  // gh accepts [HOST/]OWNER/REPO, independent of its default remote selection.
+  const scp = remoteUrl.match(/^(?:[^@/]+@)?([^:/]+):([^/].*)$/);
+  let host: string;
+  let path: string;
+  if (scp && !remoteUrl.includes("://")) {
+    [, host, path] = scp;
+  } else {
+    let url: URL;
+    try { url = new URL(remoteUrl); } catch { die("dispatch requires a GitHub remote URL"); }
+    if (!["https:", "http:", "ssh:"].includes(url.protocol)) die("dispatch requires a GitHub remote URL");
+    host = url.hostname;
+    path = url.pathname.replace(/^\//, "");
+  }
+  path = path.replace(/\.git$/, "");
+  if (!/^[\w.-]+\/[\w.-]+$/.test(path)) die("cannot resolve GitHub owner/repository from push remote");
+  return host === "github.com" ? path : `${host}/${path}`;
+}
+
 const options = parseArgs(process.argv.slice(2));
 const repoResult = capture(["git", "-C", options.repo, "rev-parse", "--show-toplevel"], undefined, true);
 if (repoResult.code !== 0) die(`not a git repository: ${options.repo}`);
 const repoRoot = repoResult.stdout.trim();
-
-const branch = options.branch ?? capture(["git", "branch", "--show-current"], repoRoot).stdout.trim();
-if (!branch) die("cannot determine current branch; pass --branch");
-
-const detection = detectBuildWorkflow(repoRoot, options.workflow);
-printDetection(detection);
+const currentBranch = capture(["git", "branch", "--show-current"], repoRoot).stdout.trim();
+const branch = options.branch ?? currentBranch;
+const initialHead = capture(["git", "rev-parse", "--verify", "HEAD"], repoRoot, true).stdout.trim();
+let remoteUrl = "";
+if (options.push || options.dispatch) {
+  if (!branch) die("cannot determine destination branch; pass --branch");
+  if (capture(["git", "check-ref-format", `refs/heads/${branch}`], repoRoot, true).code !== 0) die("invalid destination --branch");
+  const remote = capture(["git", "remote", "get-url", "--push", "--all", options.remote], repoRoot, true);
+  if (remote.code !== 0) die(`unknown push remote: ${options.remote}`);
+  const urls = remote.stdout.trim().split(/\r?\n/);
+  if (urls.length !== 1 || !urls[0]) die("select a remote with exactly one push URL");
+  remoteUrl = urls[0];
+  if (options.push && !initialHead && !options.commit) die("nothing to push: HEAD does not exist");
+}
 
 let environment: "beta" | "production" | null = null;
 let version = options.version.trim();
 let workflowArgs: string[] = [];
+let detection: WorkflowDetection | undefined;
+let ghRepo = "";
+let dispatchSha = "";
 
-if (detection.mode === "dispatch") {
+if (options.dispatch) {
+  detection = detectBuildWorkflow(repoRoot, options.workflow);
+  printDetection(detection);
+  if (!detection.compatible) die(`dispatch requires one compatible workflow: ${detection.reason}`);
   const semver = /^v?\d+\.\d+\.\d+$/;
-  environment = (options.environment?.trim() || (semver.test(version) ? "production" : "beta")) as
-    | "beta"
-    | "production";
+  environment = (options.environment?.trim() || (semver.test(version) ? "production" : "beta")) as "beta" | "production";
   if (environment !== "beta" && environment !== "production") die("--environment must be beta or production");
   if (environment === "production" && !semver.test(version)) die("production requires --version X.Y.Z or vX.Y.Z");
   if (environment === "beta") version = "";
 
   const changelog = parseChangelog(options);
   if (!changelog.content) die(`${environment} dispatch requires changelog content from changelog-writing`);
-
+  ghRepo = githubRepository(remoteUrl);
   const workflow = detection.workflow!;
   const capabilities = workflow.capabilities;
-  workflowArgs = ["workflow", "run", workflow.name, "--ref", branch, "-f", `${capabilities.channelInput}=${environment}`];
+  workflowArgs = ["workflow", "run", workflow.name, "--repo", ghRepo, "--ref", branch, "-f", `${capabilities.channelInput}=${environment}`];
   if (environment === "production") workflowArgs.push("-f", `${capabilities.versionInput}=${version}`);
-
   if (capabilities.changelogInput === "changelog") {
     workflowArgs.push("-f", `changelog=${changelog.full}`);
   } else {
@@ -292,112 +348,109 @@ if (detection.mode === "dispatch") {
 
   if (!options.dryRun) {
     capture(["gh", "--version"]);
-    capture(["gh", "auth", "status"]);
+    capture(["gh", "auth", "status", "--hostname", ghRepo.split("/").length === 3 ? ghRepo.split("/")[0] : "github.com"]);
+    if (!options.push) {
+      const ref = `refs/heads/${branch}`;
+      const refs = capture(["git", "ls-remote", "--exit-code", "--refs", remoteUrl, ref], repoRoot, true);
+      dispatchSha = refs.stdout.trim().split(/\s+/)[0];
+      if (refs.code !== 0 || !/^[0-9a-f]{40,64}$/.test(dispatchSha)) die(`remote branch does not exist: ${options.remote}/${branch}`);
+    }
   }
-} else if (options.environment || options.version || options.changelog || options.changelogFile || options.changelogJson || options.changelogJsonFile) {
-  console.log("info: workflow-specific release options ignored in git-only mode");
-}
-
-const addCommands = options.paths.length > 0
-  ? options.paths.map((path) => ["git", "add", "--", path])
-  : [["git", "add", "-A"]];
-
-if (options.dryRun) {
-  for (const command of addCommands) printDryRun(command);
 } else {
-  for (const command of addCommands) run(command, repoRoot);
+  console.log("workflow_check=not-requested");
 }
 
-let hasChanges: boolean;
-if (options.dryRun) {
+const addCommand = options.paths.length ? ["git", "add", "--", ...options.paths] : ["git", "add", "-A"];
+if (options.commit) {
+  // Validate all pathspecs in one command before altering the index.
+  capture(["git", "add", "--dry-run", ...(options.paths.length ? ["--", ...options.paths] : ["-A"])], repoRoot);
   const statusCommand = ["git", "status", "--porcelain"];
-  if (options.paths.length > 0) statusCommand.push("--", ...options.paths);
-  hasChanges = capture(statusCommand, repoRoot).stdout.trim().length > 0;
-} else {
-  const diffCommand = ["git", "diff", "--cached", "--quiet"];
-  if (options.paths.length > 0) diffCommand.push("--", ...options.paths);
-  const diffResult = capture(diffCommand, repoRoot, true);
-  if (diffResult.code > 1) die(`git diff failed: ${diffResult.stderr.trim()}`);
-  hasChanges = diffResult.code === 1;
-}
-
-if (hasChanges) {
-  const commitMessage = options.message
-    ?? (environment === "production"
+  if (options.paths.length) statusCommand.push("--", ...options.paths);
+  const hasChanges = capture(statusCommand, repoRoot).stdout.length > 0;
+  if (hasChanges) {
+    const commitMessage = options.message ?? (environment === "production"
       ? `chore: release ${version.replace(/^v/, "")}`
-      : environment === "beta"
-        ? "chore: trigger beta build"
-        : "chore: submit changes");
-  const commitCommand = ["git", "commit"];
-  if (options.paths.length > 0) commitCommand.push("--only");
-  commitCommand.push("-m", commitMessage);
-  if (options.paths.length > 0) commitCommand.push("--", ...options.paths);
-  if (options.dryRun) printDryRun(commitCommand);
-  else run(commitCommand, repoRoot);
-} else {
-  console.log("info: no staged changes; pushing current HEAD");
+      : environment === "beta" ? "chore: trigger beta build" : "chore: submit changes");
+    const commitCommand = ["git", "commit"];
+    if (options.paths.length) commitCommand.push("--only");
+    commitCommand.push("-m", commitMessage);
+    if (options.paths.length) commitCommand.push("--", ...options.paths);
+    if (options.dryRun) {
+      printDryRun(addCommand);
+      printDryRun(commitCommand);
+    } else {
+      run(addCommand, repoRoot);
+      const diff = ["git", "diff", "--cached", "--quiet"];
+      if (options.paths.length) diff.push("--", ...options.paths);
+      const staged = capture(diff, repoRoot, true);
+      if (staged.code > 1) die(`git diff failed: ${staged.stderr.trim()}`);
+      if (staged.code === 1) run(commitCommand, repoRoot);
+      else console.log("commit=skipped (no selected changes)");
+    }
+  } else {
+    console.log("commit=skipped (no selected changes)");
+  }
 }
 
-const headSha = capture(["git", "rev-parse", "HEAD"], repoRoot).stdout.trim();
-const upstream = capture(
-  ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
-  repoRoot,
-  true,
-);
-const pushCommand = upstream.code === 0 ? ["git", "push"] : ["git", "push", "-u", options.remote, branch];
-
-if (options.dryRun) printDryRun(pushCommand);
-else run(pushCommand, repoRoot);
-
-console.log(`branch=${branch}`);
+const head = capture(["git", "rev-parse", "--verify", "HEAD"], repoRoot, true);
+if (!options.dryRun && options.push && head.code !== 0) die("nothing to push: HEAD does not exist");
+const headSha = head.code === 0 ? head.stdout.trim() : "unborn";
+console.log(`branch=${currentBranch || "detached"}`);
 console.log(`commit=${headSha}`);
 
-if (detection.mode === "git-only") {
-  console.log("dispatch=skipped");
-  process.exit(0);
+if (options.push) {
+  const pushCommand = ["git", "push", options.remote, `HEAD:refs/heads/${branch}`];
+  if (options.dryRun) printDryRun(pushCommand);
+  else run(pushCommand, repoRoot);
+  console.log(`push=${options.dryRun ? "planned" : "completed"} remote=${options.remote} ref=refs/heads/${branch}`);
+  dispatchSha = headSha;
+} else {
+  console.log("push=skipped");
 }
 
+if (!options.dispatch) {
+  console.log("dispatch=skipped (not requested)");
+  process.exit(0);
+}
+console.log(`environment=${environment}`);
+console.log(`version=${environment === "production" ? version : "workflow-generated"}`);
+console.log(`dispatch_repo=${ghRepo}`);
+console.log(`dispatch_branch=${branch}`);
 if (options.dryRun) {
   printDryRun(["gh", ...workflowArgs]);
+  console.log("info: dry-run validates local inputs; remote ref and authentication are not checked");
   process.exit(0);
 }
 
-const workflowName = detection.workflow!.name;
-const beforeId = capture(
-  ["gh", "run", "list", "--workflow", workflowName, "--branch", branch, "--limit", "1", "--json", "databaseId", "--jq", ".[0].databaseId // \"\""],
-  repoRoot,
-).stdout.trim();
+const workflowName = detection!.workflow!.name;
+const listArgs = ["gh", "run", "list", "--repo", ghRepo, "--workflow", workflowName, "--branch", branch,
+  "--event", "workflow_dispatch", "--limit", "20", "--json", "databaseId,headSha"];
+type WorkflowRun = { databaseId: number; headSha: string };
+const before = JSON.parse(capture(listArgs, repoRoot).stdout) as WorkflowRun[];
+const beforeIds = new Set(before.map(candidate => candidate.databaseId));
 run(["gh", ...workflowArgs], repoRoot);
+console.log("dispatch=completed");
+console.log(`dispatch_sha=${dispatchSha}`);
 
 let runId = "";
 for (let attempt = 0; attempt < 24; attempt += 1) {
-  const runs = capture(
-    ["gh", "run", "list", "--workflow", workflowName, "--branch", branch, "--limit", "20", "--json", "databaseId,headSha"],
-    repoRoot,
-  ).stdout;
-  const parsedRuns = JSON.parse(runs) as Array<{ databaseId: number; headSha: string }>;
-  const match = parsedRuns.find((candidate) => candidate.headSha === headSha && String(candidate.databaseId) !== beforeId);
-  if (match) {
-    runId = String(match.databaseId);
-    break;
-  }
+  const runs = JSON.parse(capture(listArgs, repoRoot).stdout) as WorkflowRun[];
+  const match = runs.find(candidate => candidate.headSha === dispatchSha && !beforeIds.has(candidate.databaseId));
+  if (match) { runId = String(match.databaseId); break; }
   Bun.sleepSync(5000);
 }
-if (!runId) die(`workflow dispatched, but no new run was found for ${headSha}`);
-
-const runUrl = capture(["gh", "run", "view", runId, "--json", "url", "--jq", ".url"], repoRoot).stdout.trim();
+if (!runId) die(`workflow dispatched, but no new run was found for ${dispatchSha}; inspect runs before retrying`);
+const runUrl = capture(["gh", "run", "view", runId, "--repo", ghRepo, "--json", "url", "--jq", ".url"], repoRoot).stdout.trim();
 console.log(`run_id=${runId}`);
 console.log(`run_url=${runUrl}`);
-console.log(`environment=${environment}`);
-console.log(`version=${environment === "production" ? version : "workflow-generated"}`);
-
 if (options.watch) {
-  run(["gh", "run", "watch", runId, "--exit-status"], repoRoot);
-  const conclusion = capture(
-    ["gh", "run", "view", runId, "--json", "status,conclusion,url", "--jq", '"status=\\(.status)\\nconclusion=\\(.conclusion)\\nurl=\\(.url)"'],
-    repoRoot,
-  ).stdout.trim();
-  console.log(conclusion);
+  const watch = capture(["gh", "run", "watch", runId, "--repo", ghRepo, "--exit-status"], repoRoot, true);
+  console.log(watch.stdout.trim());
+  if (watch.stderr.trim()) console.error(watch.stderr.trim());
+  console.log(capture(["gh", "run", "view", runId, "--repo", ghRepo, "--json", "status,conclusion,url", "--jq",
+    '"status=\\(.status)\\nconclusion=\\(.conclusion)\\nurl=\\(.url)"'], repoRoot).stdout.trim());
+  console.log(`watch=${watch.code === 0 ? "completed" : "failed"}`);
+  if (watch.code !== 0) die(`workflow watch failed with exit ${watch.code}`);
 } else {
   console.log("watch=skipped");
 }

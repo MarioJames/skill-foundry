@@ -1,84 +1,32 @@
 ---
 name: changelog-writing
-description: Draft, revise, or review changelogs, release notes, version notes, GitHub Release bodies, beta/production notes, customer-facing update copy, and technical release summaries. Use whenever release changes must be routed to a customer or engineering audience and formatted for people or workflow inputs.
+description: Draft or review release notes for users or engineering teams from release evidence, including structured output for release workflows.
 ---
 
 # Changelog Writing
 
-## Choose the audience route
+## Audience and language
 
-Choose the audience before drafting. `production` defaults to customer-facing; `beta`, `rc`, and nightly default to technical/internal. Do not combine customer copy and internal evidence unless the user explicitly requests two artifacts.
+Choose the audience before drafting. Production defaults to customer-facing; beta, RC, and nightly default to technical/internal. Follow the user's requested language, then the established release channel, then the conversation language.
 
-Write changelogs in English by default. Follow an existing release channel's language when one is clearly established, or use another language when requested.
+Use [audience-routes.md](references/audience-routes.md) for filtering and audience-specific checks. Include only sections that help the reader. If both audiences need artifacts, keep internal evidence separate from public copy.
 
-Read [references/audience-routes.md](references/audience-routes.md) for filtering, tone, and route-specific checks.
+## Output
 
-## Output contract
+For people, write the requested prose or Markdown. For a release workflow or explicitly requested machine format, use [workflow-output.md](references/workflow-output.md), which defines the existing three-field JSON contract. Do not force JSON on an ordinary request to write update notes.
 
-Unless the user asks for prose only, output one JSON object with these exact string fields:
+## Source material
 
-```json
-{
-  "changelog": "<complete artifact for legacy single-field consumers>",
-  "changelog_summary": "<single-line release summary>",
-  "changelog_content": "<full release body>"
-}
-```
-
-Do not wrap machine-consumed JSON in a Markdown fence.
-
-- `changelog`: include summary and body as one coherent artifact.
-- `changelog_summary`: one short sentence following the summary format below.
-- `changelog_content`: concise route-appropriate bullets or sections. Exclude raw CI logs and unrelated implementation evidence.
-
-## Summary format
-
-Use:
-
-```text
-Version x.y.z, <most important change summary>
-```
-
-Omit a leading `v` in summary prose unless the release channel requires it. For production, summarize the most important user-visible outcome. For beta/internal notes, summarize the most important technical or operational change.
-
-Keep customer summaries short enough for compact dialogs. Prefer outcome language over inventory and vary the verb to fit the actual value.
-
-## Collect git source material
-
-Resolve this skill's directory from the loaded `SKILL.md`, then run:
+Use supplied notes, a concrete Git/PR range, or release evidence. When Git collection is needed, resolve this skill directory and run:
 
 ```bash
 bun <skill-dir>/scripts/collect-commits.ts --from <previous-tag> --to HEAD
 ```
 
-Useful variants:
+The collector also supports `--range v1.0.0..HEAD`, `--auto-beta --to HEAD`, and `--auto-production --to HEAD`. Treat collected commits as evidence; group by meaningful outcome instead of pasting raw lists into customer copy.
 
-```bash
-bun <skill-dir>/scripts/collect-commits.ts --range v1.0.0..HEAD
-bun <skill-dir>/scripts/collect-commits.ts --auto-beta --to HEAD
-bun <skill-dir>/scripts/collect-commits.ts --auto-production --to HEAD
-```
+Include upgrade actions, compatibility changes, and known risks when relevant. Do not invent a version, source range, verification result, or user impact. Keep credentials, private URLs, hostnames, and internal incident identifiers out of public artifacts.
 
-Treat the output as source material. Do not paste raw commit lists into customer-facing copy.
+## Publication tasks
 
-## Drafting workflow
-
-1. Determine environment and audience route.
-2. Gather user notes, a concrete git/tag range, PRs/issues, release runs, or deployment evidence.
-3. Cluster customer-facing changes by visible capability, improvement, fix, or upgrade impact; cluster internal changes by subsystem, risk, operations, verification, and rollback.
-4. Remove noise that does not matter to the chosen audience.
-5. Write concise bullets with concrete outcomes.
-6. Build the JSON object.
-7. Apply the route-specific quick check in [references/audience-routes.md](references/audience-routes.md).
-
-## Release closure
-
-When the task also publishes a release, verify that a tag points at the release commit so the next changelog has a clean range. Read [references/release-closure.md](references/release-closure.md) before creating or pushing a tag.
-
-## Gotchas
-
-- Do not make a production GitHub Release read like an engineering handoff.
-- Do not hide rollback, migration, compatibility, or known-risk facts in internal notes.
-- Do not invent a version, source range, test result, or customer impact.
-- Do not include internal repository names, hostnames, credentials, incident identifiers, or private URLs in public release copy.
-- Do not force release semantics onto a git-only submission when the target repository has no compatible release workflow.
+Writing release notes does not authorize publication. When the request also publishes a release, read [release-closure.md](references/release-closure.md) for tag verification and already-authorized follow-through. A git-only submission does not need release metadata.

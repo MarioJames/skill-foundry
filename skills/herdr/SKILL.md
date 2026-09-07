@@ -1,6 +1,6 @@
 ---
 name: herdr
-description: "Use Herdr when an Agent with active work receives an additional or replacement task, when parallel work can shorten the critical path, when work should be routed to an existing Agent, or when the user asks to manage Herdr panes, tabs, workspaces, or Agents. Do not use for status-only messages, one small serial task, tightly coupled work, or overlapping ownership that cannot be separated safely."
+description: Route independent parallel tasks or manage Herdr resources. Status updates and tightly coupled work stay with the owning Agent.
 ---
 
 # Herdr
