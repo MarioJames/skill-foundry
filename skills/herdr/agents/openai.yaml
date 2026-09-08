@@ -1,7 +1,7 @@
 interface:
   display_name: "Herdr"
-  short_description: "Add task routing to an active development Agent"
-  default_prompt: "Use $herdr to route independent additions while keeping the current Agent on its own concrete development slice."
+  short_description: "Prioritize useful parallel work through Herdr"
+  default_prompt: "Use $herdr to parallelize work where it shortens the critical path, integrate the results, and clean up task-owned resources."
 
 policy:
   allow_implicit_invocation: true

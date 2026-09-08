@@ -37,13 +37,13 @@ Creates standard anonymous Cloudflare Quick Tunnels for local HTTP services and 
 
 **Reach for it when** a local service needs a temporary public review URL; use it through `browser-harness` when the service is part of frontend acceptance.
 
-### `herdr` — developer-attached task routing
+### `herdr` — parallel work and resource ownership
 
-`herdr` adds routing to an Agent that remains a developer: the owning Agent keeps and executes a concrete primary work slice, while derived work stays local, replacements supersede stale work, and additive independent work can reuse or create an Agent lane. It then classifies each created lane as `oneshot`, `service`, or `coding-agent`, manages ownership and handoff, and joins the result back into the owning Agent. It does not turn the owning Agent into a pure orchestrator unless the user explicitly requests that role.
+`herdr` is the preferred path when parallel work can shorten the critical path, including independent subtasks of one deliverable. The skill gives principles for task boundaries, write ownership, result integration, and resource cleanup, leaving the Agent to choose a useful split and continue work toward the complete result.
 
 After the task decision, the bundled Bun/TypeScript resource router can split the caller tab, create a tab in an existing directory-matched workspace, or create a new workspace when no safe match exists. It matches target directories using cwd and Git roots, preserves focus, returns an explicit cleanup contract, and rolls back newly created resources when verification fails.
 
-**Reach for it when** an Agent receives another task mid-run, independent commands or Agent deliverables can overlap safely, or Herdr runtime resources need coordination.
+**Reach for it when** independent commands or Agent deliverables can overlap with a net time benefit, or Herdr runtime resources need coordination.
 
 ### `trigger-build-workflow` — safe commit, push, and optional build dispatch
 
@@ -215,10 +215,10 @@ Expose a local HTTP service temporarily:
 Use cloudflare-quick-tunnel to publish http://127.0.0.1:4173 for remote review, report its status, and clean it up when I finish.
 ```
 
-Route a new request across the current Agent and Herdr runtime:
+Parallelize useful work through Herdr:
 
 ```text
-Use herdr to keep my current development slice in this Agent and decide whether the new request belongs here or needs another Agent; if independent, route it to the right workspace and clean up the lane after handoff.
+Use herdr to parallelize independent parts of this task where it saves time, integrate the results, and clean up task-owned resources.
 ```
 
 Submit changes within the requested scope:
@@ -263,8 +263,8 @@ Decide whether a change needs a real test:
 Use tdd before implementing this feature or adding a unit test.
 ```
 
-Each skill defines its own activation rules in `SKILL.md`. `herdr` may activate implicitly when an
-active Agent receives another task or a concrete independent lane can shorten the critical path. `tdd` is meant to activate on every
+Each skill defines its own activation rules in `SKILL.md`. Prefer `herdr` implicitly when parallel work can
+shorten the critical path, including within a single deliverable. `tdd` is meant to activate on every
 production-code or test change; the skill body then chooses TDD vs skip.
 
 ## Repository Layout
