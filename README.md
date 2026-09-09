@@ -45,6 +45,16 @@ After the task decision, the bundled Bun/TypeScript resource router can split th
 
 **Reach for it when** independent commands or Agent deliverables can overlap with a net time benefit, or Herdr runtime resources need coordination.
 
+### `cow-workspace` — copy-on-write development workspaces
+
+Prepares one fixed Git and dependency baseline, then uses `fuse-overlayfs` to give each task its own writable view on Linux. Shared `.env` configuration remains available while source edits, dependency changes, Git state, and build output stay local to each workspace. The Bun CLI exports task commits as Git bundles, resumes retained writes, and refuses unsafe cleanup. Herdr can route Agents to the returned working directory.
+
+**Reach for it when** parallel development needs isolated writes without copying a complete source and dependency tree for every Agent.
+
+Preparation makes one ordinary baseline copy when native reflinks are unavailable; subsequent workspaces reuse it through CoW. Task-specific configuration belongs in `.env.local`, using the project's loader. The shared `.env` target remains writable outside CoW, and databases, network services, and processes need their own isolation.
+
+See the [CoW workspace guide](skills/cow-workspace/SKILL.md) for preparation, returned working directories, Git bundle handoff, recovery, and guarded cleanup. Operational rules live in that skill; no duplicate global workspace rule is required.
+
 ### `trigger-build-workflow` — safe commit, push, and optional build dispatch
 
 Executes explicitly selected commit, push, and build actions without inferring authorization from repository contents. The workflow detector validates channel, version, and changelog inputs only for a requested dispatch; ordinary commits and pushes do not require release metadata.
@@ -101,6 +111,7 @@ bunx skills add MarioJames/skill-foundry --skill asset-validation
 bunx skills add MarioJames/skill-foundry --skill browser-harness
 bunx skills add MarioJames/skill-foundry --skill cloudflare-quick-tunnel
 bunx skills add MarioJames/skill-foundry --skill herdr
+bunx skills add MarioJames/skill-foundry --skill cow-workspace
 bunx skills add MarioJames/skill-foundry --skill trigger-build-workflow
 bunx skills add MarioJames/skill-foundry --skill persistent-ssh-ops
 bunx skills add MarioJames/skill-foundry --skill provision-xray-hy2-node
@@ -119,6 +130,12 @@ Restart or reload the target agent runtime after installation so it can discover
 `herdr` requires Bun and an installed Herdr CLI. It does not use `HERDR_ENV` or other inherited
 environment variables as an availability gate; the actual CLI response is authoritative, including
 from agent sandboxes that do not inherit the parent Herdr environment.
+
+`cow-workspace` requires Linux, Git, Bun, `flock`, `fuse-overlayfs`, `fusermount3`, and a usable
+`/dev/fuse`. Its CLI checks real mounting and does not install missing system tools or silently
+fall back to a full copy per workspace. Prepare from a clean, committed repository; ignored root
+`node_modules` is included automatically. See the [preparation requirements](skills/cow-workspace/SKILL.md#prepare-once-create-as-needed)
+for extra dependency directories and unsupported layouts.
 
 Bun 1.3 or newer runs the Agent-facing script and hook entrypoints. Installable resources under
 `assets/`, including the SSH zsh runtime, retain their target runtime; the Bun initializer installs
@@ -139,7 +156,7 @@ cd skill-foundry
 mkdir -p ~/.agents/skills
 cp -R skills/asset-validation skills/browser-harness \
   skills/cloudflare-quick-tunnel \
-  skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
+  skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
   skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.agents/skills/
 ```
@@ -152,7 +169,7 @@ cd skill-foundry
 mkdir -p ~/.claude/skills
 cp -R skills/asset-validation skills/browser-harness \
   skills/cloudflare-quick-tunnel \
-  skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
+  skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
   skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.claude/skills/
 ```
@@ -164,6 +181,7 @@ test -f ~/.agents/skills/asset-validation/scripts/acc.ts
 test -f ~/.agents/skills/browser-harness/scripts/bh.ts
 test -f ~/.agents/skills/cloudflare-quick-tunnel/scripts/cqt.ts
 test -f ~/.agents/skills/herdr/scripts/route-lane.ts
+test -f ~/.agents/skills/cow-workspace/scripts/cow.ts
 test -f ~/.agents/skills/trigger-build-workflow/scripts/detect-build-workflow.ts
 test -f ~/.agents/skills/trigger-build-workflow/scripts/dispatch-build-workflow.ts
 test -f ~/.agents/skills/persistent-ssh-ops/SKILL.md
@@ -182,13 +200,13 @@ cd skill-foundry
 git pull
 rm -rf ~/.agents/skills/asset-validation \
   ~/.agents/skills/browser-harness ~/.agents/skills/cloudflare-quick-tunnel \
-  ~/.agents/skills/herdr ~/.agents/skills/trigger-build-workflow \
+  ~/.agents/skills/herdr ~/.agents/skills/cow-workspace ~/.agents/skills/trigger-build-workflow \
   ~/.agents/skills/persistent-ssh-ops ~/.agents/skills/provision-xray-hy2-node \
   ~/.agents/skills/changelog-writing ~/.agents/skills/awesome-presentation \
   ~/.agents/skills/repo-knowledge-graph ~/.agents/skills/tdd
 cp -R skills/asset-validation skills/browser-harness \
   skills/cloudflare-quick-tunnel \
-  skills/herdr skills/trigger-build-workflow skills/persistent-ssh-ops \
+  skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
   skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.agents/skills/
 ```
@@ -220,6 +238,16 @@ Parallelize useful work through Herdr:
 ```text
 Use herdr to parallelize independent parts of this task where it saves time, integrate the results, and clean up task-owned resources.
 ```
+
+Prepare an isolated development directory with existing dependencies:
+
+```text
+Prepare an independent development directory for this repository so another Agent can edit it without copying the complete source and node_modules for each task. Reuse the shared .env, keep task overrides local, and report the working directory. When the work is committed, export the commits for integration and clean up the task workspace.
+```
+
+The installed skill's description helps the Agent select `cow-workspace`; selection is model-driven,
+not an execution hook or guarantee. Name `cow-workspace` explicitly when you want to require it.
+The [skill guide](skills/cow-workspace/SKILL.md) also provides direct CLI commands.
 
 Submit changes within the requested scope:
 
@@ -291,6 +319,11 @@ skill-foundry/
 │   │   ├── SKILL.md
 │   │   ├── agents/
 │   │   └── scripts/
+│   ├── cow-workspace/
+│   │   ├── SKILL.md
+│   │   ├── agents/
+│   │   ├── scripts/
+│   │   └── tests/
 │   ├── trigger-build-workflow/
 │   │   ├── SKILL.md
 │   │   ├── agents/
@@ -332,6 +365,7 @@ Installable skill packages:
 - `skills/browser-harness/`
 - `skills/cloudflare-quick-tunnel/`
 - `skills/herdr/`
+- `skills/cow-workspace/`
 - `skills/trigger-build-workflow/`
 - `skills/persistent-ssh-ops/`
 - `skills/provision-xray-hy2-node/`
@@ -357,12 +391,27 @@ Package-free migrated skills run their behavior tests directly with Bun:
 bun test skills/asset-validation/tests
 bun test skills/browser-harness/tests
 bun test skills/cloudflare-quick-tunnel/tests
+bun test skills/cow-workspace/tests # Requires Linux, fuse-overlayfs and /dev/fuse
 bun test skills/trigger-build-workflow/tests
 bun test skills/persistent-ssh-ops/tests
 ```
 
+`cow-workspace` passed fixture-based behavioral acceptance on 2026-09-09 with a real Codex CLI
+using `gpt-6-astra` and `medium` reasoning. The run exercised the staged skill without global CoW
+instructions and independently checked:
+
+- Natural selection, real CoW mounts, and source/dependency/configuration isolation.
+- Two task commits exported and integrated through Git bundles, including binary changes and deletion.
+- Uncommitted changes surviving unmount/remount, and busy-workspace removal preserving data until the holder stopped.
+- A fresh read-only environment-variable question that did not load the skill or create a workspace.
+
+The original repository stayed unchanged; task mounts, temporary workspaces, processes, and the
+acceptance sandbox were removed. This records the observed run; changes should be validated against
+the affected scenarios again.
+
 ```bash
 bun skills/herdr/scripts/route-lane.ts --help
+bun skills/cow-workspace/scripts/cow.ts --help
 bun skills/herdr/scripts/probe-workspace.ts --help
 bun skills/trigger-build-workflow/scripts/detect-build-workflow.ts --help
 bun skills/trigger-build-workflow/scripts/dispatch-build-workflow.ts --help
