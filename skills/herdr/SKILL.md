@@ -1,11 +1,13 @@
 ---
 name: herdr
-description: Use when starting or switching tasks in Herdr to name the current tab, when parallel work can shorten the critical path, or when managing Herdr agents and terminal resources.
+description: Use at the start of a conversation or when the main task changes to name the current Herdr tab, including read-only Q&A and evaluations without parallel work. No explicit Herdr mention is needed. Also use for useful parallel work and Herdr agent or terminal management.
 ---
 
 # Herdr
 
-Use Herdr as the first choice for useful parallel work, including independent subtasks of the same deliverable.
+At conversation start or a main-task change, resolve the caller and name its tab as soon as the task is clear, before substantive task work or a final answer. This applies to read-only questions and evaluations as well as implementation; neither an explicit Herdr request nor a need for parallel work is required. Use the CLI result to establish availability, not inherited environment variables; if the caller cannot be resolved, continue the task without naming.
+
+Naming and delegation are independent. After the naming check, use Herdr as the first choice for useful parallel work, including independent subtasks of the same deliverable.
 
 ## Name your own tab
 

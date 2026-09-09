@@ -1,7 +1,7 @@
 interface:
   display_name: "Herdr"
-  short_description: "Name task tabs and coordinate parallel work in Herdr"
-  default_prompt: "Use $herdr to name your own tab and update it when the main task changes, parallelize work where it shortens the critical path, integrate the results, and clean up task-owned resources."
+  short_description: "Name tabs at task start, even for read-only or solo work"
+  default_prompt: "Use $herdr at conversation start or a main-task change to name your own tab, including for read-only questions without parallel work, then coordinate useful parallel work and clean up task-owned resources."
 
 policy:
   allow_implicit_invocation: true
