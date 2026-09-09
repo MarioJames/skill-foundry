@@ -1,11 +1,24 @@
 ---
 name: herdr
-description: Prefer Herdr when parallel work can shorten the critical path, or when managing Herdr agents and terminal resources.
+description: Use when starting or switching tasks in Herdr to name the current tab, when parallel work can shorten the critical path, or when managing Herdr agents and terminal resources.
 ---
 
 # Herdr
 
 Use Herdr as the first choice for useful parallel work, including independent subtasks of the same deliverable.
+
+## Name your own tab
+
+When the task is clear, automatically give your tab a short, concrete task label in the user's language, including for work that needs no parallel lanes. For example: `修复登录跳转` or `Herdr Tab 自动命名`. Re-evaluate the label when the user replaces or switches the main task, even if the existing label is already descriptive or was set in an earlier session. Progress updates, follow-up questions, and subtasks of the same goal do not require renaming.
+
+- Set the label directly from the current task, regardless of the existing name or who set it. Do not add a name-preservation check or ask for confirmation. The user can manually change it afterward.
+- Determine delegation from the task's explicit handoff context, not focus, pane count, or the CLI's Agent kind. When delegating, include your tab ID and who owns naming of the destination tab. A delegate sharing its parent's tab leaves naming to the parent; a delegate in a separate tab names it for its assigned task. If a delegated task lacks this context, resolve the parent's tab or naming assignment before renaming; continue the assigned work if that cannot be resolved.
+
+1. Run `herdr pane current --current` and read `result.pane.tab_id` to locate yourself, regardless of which pane the user has focused. If the caller cannot be resolved, skip naming; do not fall back to the focused tab.
+2. Run `herdr tab get <tab_id>` and read `result.tab.label`. Respect the delegation ownership above; skip the write if the desired label already matches.
+3. Run `herdr tab rename <tab_id> '<task label>'`, passing the label as one safely quoted argument. Read the tab back and verify `result.tab.label` matches. If naming fails, report it briefly and continue the task.
+
+Only change the tab label; keep workspace names, focus, order, and panes intact. The tab label is distinct from `terminal_title` and the Agent's conversation title. When creating a new tab through `scripts/route-lane.ts`, pass a task label with `--label` so it is recognizable immediately.
 
 ## Principles
 
