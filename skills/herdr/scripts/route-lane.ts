@@ -23,7 +23,8 @@ Options:
   --scope same-task|independent  Override the type default.
   --caller-pane PANE_ID          Anchor routing to an explicit caller pane.
   --direction auto|right|down    Split direction; default: auto.
-  --label TEXT                   Label a created tab or workspace.
+  --label TEXT                   Set and verify a new tab's task label (also names a new workspace).
+                                 Split panes keep their parent tab's label.
   --dry-run                      Probe and report without creating anything.
   -h, --help                     Show this help.
 

@@ -220,10 +220,21 @@ export async function resolveCaller(paneId?: string): Promise<ResourceIds> {
   return caller;
 }
 
-async function closeQuietly(kind: "pane" | "tab" | "workspace", id: string | null): Promise<void> {
-  if (!id) return;
-  const child = Bun.spawn(["herdr", kind, "close", id], { stdout: "ignore", stderr: "ignore" });
-  await child.exited;
+async function ensureTabLabel(result: ResourceIds, label: string): Promise<void> {
+  if (!label) return;
+  const readTab = async () => {
+    const response = await herdr("tab", "get", result.tabId!);
+    const tab = response?.result?.tab;
+    if (tab?.tab_id !== result.tabId || tab?.workspace_id !== result.workspaceId) {
+      throw new CliError("verification_failed", "Created tab read-back did not match its resource IDs");
+    }
+    return tab;
+  };
+  if ((await readTab()).label === label) return;
+  await herdr("tab", "rename", result.tabId!, label);
+  if ((await readTab()).label !== label) {
+    throw new CliError("verification_failed", `Created tab ${result.tabId} did not retain the requested label`);
+  }
 }
 
 const INTERACTIVE_SHELLS = new Set(["bash", "dash", "fish", "ksh", "nu", "pwsh", "sh", "zsh"]);
@@ -305,6 +316,30 @@ export async function createResource(options: {
   direction: Direction;
   label: string;
 }): Promise<ResourceIds> {
+  const kind = options.action === "split-pane" ? "pane"
+    : options.action === "create-tab" ? "tab" : "workspace";
+  const workspaceId = options.action === "create-tab" ? options.matchedWorkspaceId : options.caller.workspaceId;
+  const listed = await herdr(kind, "list", ...(kind === "workspace" ? [] : ["--workspace", workspaceId!]));
+  const existing = listed?.result?.[`${kind}s`];
+  if (!Array.isArray(existing)) {
+    throw new CliError("verification_failed", `Could not establish existing ${kind} IDs before creation`);
+  }
+  const existingIds = new Set(existing.map((resource: any) => resource?.[`${kind}_id`]));
+  existingIds.add(options.caller[`${kind}Id`]);
+  const verifyNewId = (id: string | null) => {
+    if (typeof id !== "string" || !id || existingIds.has(id)) {
+      throw new CliError("verification_failed", `Herdr did not return a new ${kind} ID; existing resources were left intact`);
+    }
+  };
+  const rollback = async (id: string, error: unknown): Promise<never> => {
+    try {
+      await herdrWithoutJson(kind, "close", id);
+    } catch (cleanupError) {
+      throw new CliError("cleanup_failed", `${error instanceof Error ? error.message : error}; rollback failed: ${cleanupError instanceof Error ? cleanupError.message : cleanupError}. Cleanup only this resource: herdr ${kind} close ${id}`);
+    }
+    throw error;
+  };
+
   if (options.action === "split-pane") {
     let direction = options.direction;
     if (direction === "auto") {
@@ -324,21 +359,20 @@ export async function createResource(options: {
       "--ratio", "0.5", "--cwd", options.cwd, "--no-focus",
     );
     const result = ids(created?.result?.pane);
+    verifyNewId(result.paneId);
     const createdCwd = normalizeDir(created?.result?.pane?.cwd ?? "");
-    if (
-      result.workspaceId !== options.caller.workspaceId
-      || result.tabId !== options.caller.tabId
-      || !result.paneId
-      || createdCwd !== options.cwd
-    ) {
-      await closeQuietly("pane", result.paneId);
-      throw new CliError("verification_failed", "Created pane did not match the intended workspace, tab, and cwd");
-    }
     try {
+      if (
+        result.workspaceId !== options.caller.workspaceId
+        || result.tabId !== options.caller.tabId
+        || !result.paneId
+        || createdCwd !== options.cwd
+      ) {
+        throw new CliError("verification_failed", "Created pane did not match the intended workspace, tab, and cwd");
+      }
       await waitForPaneShell(result.paneId);
     } catch (error) {
-      await closeQuietly("pane", result.paneId);
-      throw error;
+      return rollback(result.paneId!, error);
     }
     return result;
   }
@@ -353,21 +387,21 @@ export async function createResource(options: {
       tabId: created?.result?.tab?.tab_id ?? null,
       paneId: created?.result?.root_pane?.pane_id ?? null,
     } as ResourceIds;
+    verifyNewId(result.tabId);
     const createdCwd = normalizeDir(created?.result?.root_pane?.cwd ?? "");
-    if (
-      result.workspaceId !== options.matchedWorkspaceId
-      || !result.tabId
-      || !result.paneId
-      || createdCwd !== options.cwd
-    ) {
-      await closeQuietly("tab", result.tabId);
-      throw new CliError("verification_failed", "Created tab did not match the intended workspace and cwd");
-    }
     try {
+      if (
+        result.workspaceId !== options.matchedWorkspaceId
+        || !result.tabId
+        || !result.paneId
+        || createdCwd !== options.cwd
+      ) {
+        throw new CliError("verification_failed", "Created tab did not match the intended workspace and cwd");
+      }
       await waitForPaneShell(result.paneId!);
+      await ensureTabLabel(result, options.label);
     } catch (error) {
-      await closeQuietly("tab", result.tabId);
-      throw error;
+      return rollback(result.tabId!, error);
     }
     return result;
   }
@@ -381,16 +415,16 @@ export async function createResource(options: {
     tabId: created?.result?.tab?.tab_id ?? null,
     paneId: created?.result?.root_pane?.pane_id ?? null,
   } as ResourceIds;
+  verifyNewId(result.workspaceId);
   const createdCwd = normalizeDir(created?.result?.root_pane?.cwd ?? "");
-  if (!result.workspaceId || !result.tabId || !result.paneId || createdCwd !== options.cwd) {
-    await closeQuietly("workspace", result.workspaceId);
-    throw new CliError("verification_failed", "Created workspace did not match the intended cwd");
-  }
   try {
+    if (!result.workspaceId || !result.tabId || !result.paneId || createdCwd !== options.cwd) {
+      throw new CliError("verification_failed", "Created workspace did not match the intended cwd");
+    }
     await waitForPaneShell(result.paneId);
+    await ensureTabLabel(result, options.label);
   } catch (error) {
-    await closeQuietly("workspace", result.workspaceId);
-    throw error;
+    return rollback(result.workspaceId!, error);
   }
   return result;
 }
