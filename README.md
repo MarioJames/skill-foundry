@@ -27,11 +27,11 @@ It includes progressive task ladders, clean post-fix PASS gates, typed staging p
 
 ### `browser-harness` — browser acceptance scaffolding
 
-Frontend acceptance helper around [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser). Resolves target shape (URL / static HTML / project dir), starts a dev server when needed, prepares login state, injects a stable `APP_URL`, and collects screenshot + console + network evidence. Step-level browser actions stay on the agent-browser CLI; temporary public review delegates standard tunnel lifecycle to `cloudflare-quick-tunnel` while retaining project-specific Host, environment, and URL mapping here.
+Frontend acceptance helper around [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser). Resolves target shape (URL / static HTML / project dir), starts a dev server when needed, prepares login state, injects a stable `APP_URL`, and collects screenshot + console + network evidence. Step-level browser actions stay on the agent-browser CLI; temporary public review delegates standard tunnel lifecycle to `public-acceptance` while retaining project-specific Host, environment, and URL mapping here.
 
 **Reach for it when** doing smoke checks, journey prep with `APP_URL`, interactive browser exploration, or reusable headed login profiles.
 
-### `cloudflare-quick-tunnel` — public DEV acceptance
+### `public-acceptance` — public DEV acceptance
 
 Prepares a local DEV service, discovers and verifies its actual listening port, creates a temporary Cloudflare review URL, and retrieves the application's development login credentials from effective environment configuration or the development database. Reports available plaintext credentials to the requesting user, verifies login, and explains hash-only or external-auth limitations without inventing passwords. Uses `browser-harness` for frontend interaction and evidence, and retains the service and tunnel for manual review until cleanup.
 
@@ -111,7 +111,7 @@ bunx skills add MarioJames/skill-foundry --all
 # One skill
 bunx skills add MarioJames/skill-foundry --skill asset-validation
 bunx skills add MarioJames/skill-foundry --skill browser-harness
-bunx skills add MarioJames/skill-foundry --skill cloudflare-quick-tunnel
+bunx skills add MarioJames/skill-foundry --skill public-acceptance
 bunx skills add MarioJames/skill-foundry --skill herdr
 bunx skills add MarioJames/skill-foundry --skill cow-workspace
 bunx skills add MarioJames/skill-foundry --skill trigger-build-workflow
@@ -157,7 +157,7 @@ git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
 mkdir -p ~/.agents/skills
 cp -R skills/asset-validation skills/browser-harness \
-  skills/cloudflare-quick-tunnel \
+  skills/public-acceptance \
   skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
   skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.agents/skills/
@@ -170,7 +170,7 @@ git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
 mkdir -p ~/.claude/skills
 cp -R skills/asset-validation skills/browser-harness \
-  skills/cloudflare-quick-tunnel \
+  skills/public-acceptance \
   skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
   skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.claude/skills/
@@ -181,7 +181,7 @@ Verify the installation:
 ```bash
 test -f ~/.agents/skills/asset-validation/scripts/acc.ts
 test -f ~/.agents/skills/browser-harness/scripts/bh.ts
-test -f ~/.agents/skills/cloudflare-quick-tunnel/scripts/cqt.ts
+test -f ~/.agents/skills/public-acceptance/scripts/cqt.ts
 test -f ~/.agents/skills/herdr/scripts/route-lane.ts
 test -f ~/.agents/skills/cow-workspace/scripts/cow.ts
 test -f ~/.agents/skills/trigger-build-workflow/scripts/detect-build-workflow.ts
@@ -201,13 +201,13 @@ test -f ~/.agents/skills/tdd/SKILL.md
 cd skill-foundry
 git pull
 rm -rf ~/.agents/skills/asset-validation \
-  ~/.agents/skills/browser-harness ~/.agents/skills/cloudflare-quick-tunnel \
+  ~/.agents/skills/browser-harness ~/.agents/skills/public-acceptance \
   ~/.agents/skills/herdr ~/.agents/skills/cow-workspace ~/.agents/skills/trigger-build-workflow \
   ~/.agents/skills/persistent-ssh-ops ~/.agents/skills/provision-xray-hy2-node \
   ~/.agents/skills/changelog-writing ~/.agents/skills/awesome-presentation \
   ~/.agents/skills/repo-knowledge-graph ~/.agents/skills/tdd
 cp -R skills/asset-validation skills/browser-harness \
-  skills/cloudflare-quick-tunnel \
+  skills/public-acceptance \
   skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
   skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.agents/skills/
@@ -232,7 +232,7 @@ Use browser-harness to prepare the app, open it, and collect screenshot + consol
 Expose a local HTTP service temporarily:
 
 ```text
-Use cloudflare-quick-tunnel to start this project in DEV, discover its actual port, create a public acceptance URL, and provide the configured login username and password. Verify the page and keep the service available until I finish.
+Use public-acceptance to start this project in DEV, discover its actual port, create a public acceptance URL, and provide the configured login username and password. Verify the page and keep the service available until I finish.
 ```
 
 Parallelize useful work through Herdr:
@@ -312,7 +312,7 @@ skill-foundry/
 │   ├── browser-harness/
 │   │   ├── SKILL.md
 │   │   └── scripts/
-│   ├── cloudflare-quick-tunnel/
+│   ├── public-acceptance/
 │   │   ├── SKILL.md
 │   │   ├── agents/
 │   │   ├── scripts/
@@ -365,7 +365,7 @@ Installable skill packages:
 
 - `skills/asset-validation/`
 - `skills/browser-harness/`
-- `skills/cloudflare-quick-tunnel/`
+- `skills/public-acceptance/`
 - `skills/herdr/`
 - `skills/cow-workspace/`
 - `skills/trigger-build-workflow/`
@@ -392,7 +392,7 @@ Package-free migrated skills run their behavior tests directly with Bun:
 ```bash
 bun test skills/asset-validation/tests
 bun test skills/browser-harness/tests
-bun test skills/cloudflare-quick-tunnel/tests
+bun test skills/public-acceptance/tests
 bun test skills/cow-workspace/tests # Requires Linux, fuse-overlayfs and /dev/fuse
 bun test skills/trigger-build-workflow/tests
 bun test skills/persistent-ssh-ops/tests
@@ -422,7 +422,7 @@ bun skills/persistent-ssh-ops/scripts/init-server-config.ts --help
 bun skills/persistent-ssh-ops/scripts/scan-hosts.ts --help
 bun skills/asset-validation/scripts/acc.ts --help
 bun skills/browser-harness/scripts/bh.ts --version
-bun skills/cloudflare-quick-tunnel/scripts/cqt.ts --version
+bun skills/public-acceptance/scripts/cqt.ts --version
 ```
 
 ```bash

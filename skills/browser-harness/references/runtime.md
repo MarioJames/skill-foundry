@@ -4,7 +4,7 @@
 
 ## 依赖与定位
 
-依赖 Bun ≥ 1.3 与 vercel-labs/agent-browser CLI ≥ 0.29。`share` / `publish` 还需要安装 `cloudflare-quick-tunnel` 伴生技能；其脚本负责检查 `cloudflared`，非公网流程不得因这些公网依赖缺失而失败：
+依赖 Bun ≥ 1.3 与 vercel-labs/agent-browser CLI ≥ 0.29。`share` / `publish` 还需要安装 `public-acceptance` 伴生技能；其脚本负责检查 `cloudflared`，非公网流程不得因这些公网依赖缺失而失败：
 
 ```bash
 command -v bun >/dev/null || {

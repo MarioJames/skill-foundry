@@ -94,7 +94,7 @@ function stableKey(value: string): string {
 export function defaultStateDir(startDir = process.cwd()): string {
   const root = join(
     process.env.HOME || "/tmp",
-    ".cloudflare-quick-tunnel",
+    ".public-acceptance",
     "state",
   );
   return join(root, stableKey(physicalPath(startDir)));
@@ -476,7 +476,7 @@ export async function startTunnel(
 
   let tunnelPid: number | null = null;
   if (process.platform === "darwin" && findExecutable("launchctl")) {
-    const label = `com.codex.cloudflare-quick-tunnel.${stableKey(paths.dir)}.${Math.floor(Date.now() / 1_000)}`;
+    const label = `com.codex.public-acceptance.${stableKey(paths.dir)}.${Math.floor(Date.now() / 1_000)}`;
     writePrivate(paths.label, `${label}\n`);
     try {
       launchWithLaunchctl(label, paths, command);
@@ -542,7 +542,7 @@ async function runWorker(arguments_: string[]): Promise<number> {
     !environmentPath ||
     !commandJson
   ) {
-    process.stderr.write("cloudflare-quick-tunnel worker: invalid arguments\n");
+    process.stderr.write("public-acceptance worker: invalid arguments\n");
     return 2;
   }
 
@@ -589,7 +589,7 @@ async function runWorker(arguments_: string[]): Promise<number> {
     });
   } catch (error) {
     process.stderr.write(
-      `cloudflare-quick-tunnel worker: ${error instanceof Error ? error.message : String(error)}\n`,
+      `public-acceptance worker: ${error instanceof Error ? error.message : String(error)}\n`,
     );
     return 127;
   }
@@ -616,7 +616,7 @@ if (import.meta.main) {
     })
     .catch((error) => {
       process.stderr.write(
-        `cloudflare-quick-tunnel worker: ${error instanceof Error ? error.message : String(error)}\n`,
+        `public-acceptance worker: ${error instanceof Error ? error.message : String(error)}\n`,
       );
       process.exitCode = 1;
     });

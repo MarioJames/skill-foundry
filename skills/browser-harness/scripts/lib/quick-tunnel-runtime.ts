@@ -23,13 +23,13 @@ export interface QuickTunnelInfo {
 }
 
 function companionEntry(): string {
-  const configured = process.env.CLOUDFLARE_QUICK_TUNNEL_SKILL_DIR;
+  const configured = process.env.PUBLIC_ACCEPTANCE_SKILL_DIR;
   if (configured) {
     const entry = join(configured, "scripts", "cqt.ts");
     if (!existsSync(entry)) {
       fail(
         2,
-        `CLOUDFLARE_QUICK_TUNNEL_SKILL_DIR 中未找到 scripts/cqt.ts：${configured}`,
+        `PUBLIC_ACCEPTANCE_SKILL_DIR 中未找到 scripts/cqt.ts：${configured}`,
       );
     }
     return entry;
@@ -37,12 +37,12 @@ function companionEntry(): string {
 
   const skillRoot = dirname(BROWSER_HARNESS_SKILL_DIR);
   const candidates = [
-    join(skillRoot, "cloudflare-quick-tunnel", "scripts", "cqt.ts"),
+    join(skillRoot, "public-acceptance", "scripts", "cqt.ts"),
     join(
       process.env.HOME || "",
       ".agents",
       "skills",
-      "cloudflare-quick-tunnel",
+      "public-acceptance",
       "scripts",
       "cqt.ts",
     ),
@@ -50,7 +50,7 @@ function companionEntry(): string {
       process.env.HOME || "",
       ".codex",
       "skills",
-      "cloudflare-quick-tunnel",
+      "public-acceptance",
       "scripts",
       "cqt.ts",
     ),
@@ -58,7 +58,7 @@ function companionEntry(): string {
       process.env.HOME || "",
       ".claude",
       "skills",
-      "cloudflare-quick-tunnel",
+      "public-acceptance",
       "scripts",
       "cqt.ts",
     ),
@@ -66,7 +66,7 @@ function companionEntry(): string {
       process.env.HOME || "",
       ".cc-switch",
       "skills",
-      "cloudflare-quick-tunnel",
+      "public-acceptance",
       "scripts",
       "cqt.ts",
     ),
@@ -77,7 +77,7 @@ function companionEntry(): string {
 
   fail(
     2,
-    "未找到 cloudflare-quick-tunnel 伴生技能；请安装后再执行 share/publish",
+    "未找到 public-acceptance 伴生技能；请安装后再执行 share/publish",
   );
 }
 
@@ -107,7 +107,7 @@ function runCompanion(
   } catch (error) {
     fail(
       2,
-      `无法执行 cloudflare-quick-tunnel：${error instanceof Error ? error.message : String(error)}`,
+      `无法执行 public-acceptance：${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
@@ -117,7 +117,7 @@ function runCompanion(
   if (exitCode !== 0) {
     throw new BhError(
       exitCode,
-      `cloudflare-quick-tunnel ${arguments_[0] || "command"} 失败（exit ${exitCode}）`,
+      `public-acceptance ${arguments_[0] || "command"} 失败（exit ${exitCode}）`,
     );
   }
 
@@ -125,14 +125,14 @@ function runCompanion(
   for (const line of (result.stdout?.toString() || "").split("\n")) {
     if (!line) continue;
     const parsed = parseAssignmentValue(line);
-    if (!parsed) fail(2, `cloudflare-quick-tunnel 输出不是安全赋值：${line}`);
+    if (!parsed) fail(2, `public-acceptance 输出不是安全赋值：${line}`);
     assignments[parsed[0]] = parsed[1];
   }
   return assignments;
 }
 
 export function quickTunnelStateDir(projectDir: string): string {
-  return join(logDir(), "cloudflare-quick-tunnel", projectKey(projectDir));
+  return join(logDir(), "public-acceptance", projectKey(projectDir));
 }
 
 export function startQuickTunnel(
@@ -163,7 +163,7 @@ export function startQuickTunnel(
     !Number.isSafeInteger(pid) ||
     pid <= 0
   ) {
-    fail(2, "cloudflare-quick-tunnel start 缺少 PUBLIC_URL/PID/LOG 输出");
+    fail(2, "public-acceptance start 缺少 PUBLIC_URL/PID/LOG 输出");
   }
   let publicUrl: string;
   try {
@@ -173,7 +173,7 @@ export function startQuickTunnel(
     mapped.hash = parsedAppUrl.hash;
     publicUrl = mapped.toString();
   } catch {
-    fail(2, `cloudflare-quick-tunnel PUBLIC_URL 不是有效 URL：${publicBaseUrl}`);
+    fail(2, `public-acceptance PUBLIC_URL 不是有效 URL：${publicBaseUrl}`);
   }
   return { publicUrl, pid, logPath };
 }

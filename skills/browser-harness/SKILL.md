@@ -49,5 +49,5 @@ agent-browser close
 
 - 登录、多账号、profile 复用：[登录态](references/login.md)。
 - 点击/填写/截图、网络深挖、证据结构：[交互采证](references/interaction-evidence.md)。
-- 用户要求远程走查、保留服务或启动并发布：[远程流程](references/remote-review.md)。创建公网仍须用户授权，已有授权不重复问；加载 cloudflare-quick-tunnel，复用同一 tunnel。启动获得地址立即交付，不把探活作为启动条件。
+- 用户要求远程走查、保留服务或启动并发布：[远程流程](references/remote-review.md)。创建公网仍须用户授权，已有授权不重复问；加载 public-acceptance，复用同一 tunnel。启动获得地址立即交付，不把探活作为启动条件。
 - 依赖、dispatcher 定位、自定义服务、macOS、清理故障：[平台排障](references/runtime.md)。

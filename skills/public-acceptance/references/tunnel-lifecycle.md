@@ -17,18 +17,18 @@ command -v cloudflared >/dev/null || {
 }
 ```
 
-将 `CLOUDFLARE_QUICK_TUNNEL_SKILL_DIR` 设为宿主加载本 `SKILL.md` 时提供的实际技能目录，再解析脚本目录；独立安装位置只作为兼容兜底：
+将 `PUBLIC_ACCEPTANCE_SKILL_DIR` 设为宿主加载本 `SKILL.md` 时提供的实际技能目录，再解析脚本目录；独立安装位置只作为兼容兜底：
 
 ```bash
-CQT_DIR="${CLOUDFLARE_QUICK_TUNNEL_SKILL_DIR:+$CLOUDFLARE_QUICK_TUNNEL_SKILL_DIR/scripts}"
+CQT_DIR="${PUBLIC_ACCEPTANCE_SKILL_DIR:+$PUBLIC_ACCEPTANCE_SKILL_DIR/scripts}"
 if [ -z "$CQT_DIR" ] && [ -n "${ACCEPTANCE_SANDBOX:-}" ]; then
-  CQT_DIR="$(find "$ACCEPTANCE_SANDBOX/.iso" -path '*/skills/cloudflare-quick-tunnel/scripts' -type d 2>/dev/null | head -1)"
+  CQT_DIR="$(find "$ACCEPTANCE_SANDBOX/.iso" -path '*/skills/public-acceptance/scripts' -type d 2>/dev/null | head -1)"
 fi
 for candidate in \
-  "$HOME/.agents/skills/cloudflare-quick-tunnel/scripts" \
-  "$HOME/.codex/skills/cloudflare-quick-tunnel/scripts" \
-  "$HOME/.claude/skills/cloudflare-quick-tunnel/scripts" \
-  "$HOME/.cc-switch/skills/cloudflare-quick-tunnel/scripts"
+  "$HOME/.agents/skills/public-acceptance/scripts" \
+  "$HOME/.codex/skills/public-acceptance/scripts" \
+  "$HOME/.claude/skills/public-acceptance/scripts" \
+  "$HOME/.cc-switch/skills/public-acceptance/scripts"
 do
   if [ -z "$CQT_DIR" ] && [ -f "$candidate/cqt.ts" ]; then
     CQT_DIR="$candidate"
@@ -37,7 +37,7 @@ do
 done
 
 if [ -z "$CQT_DIR" ] || [ ! -f "$CQT_DIR/cqt.ts" ]; then
-  echo "无法定位当前加载的 cloudflare-quick-tunnel scripts 目录" >&2
+  echo "无法定位当前加载的 public-acceptance scripts 目录" >&2
   exit 1
 fi
 ```

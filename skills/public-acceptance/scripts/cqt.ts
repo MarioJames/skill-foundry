@@ -89,7 +89,7 @@ async function main(arguments_ = Bun.argv.slice(2)): Promise<number> {
       usage();
       return 1;
     case "--version":
-      process.stdout.write(`cloudflare-quick-tunnel ${CQT_VERSION}\n`);
+      process.stdout.write(`public-acceptance ${CQT_VERSION}\n`);
       return 0;
     case "start": {
       const options = parseOptions("start", rest);
