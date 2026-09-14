@@ -1,4 +1,4 @@
 interface:
-  display_name: "Cloudflare Quick Tunnel"
-  short_description: "Manage temporary public URLs for local HTTP services"
-  default_prompt: "Use $cloudflare-quick-tunnel to expose this local HTTP service temporarily and manage the tunnel through cleanup."
+  display_name: "Cloudflare 公网验收"
+  short_description: "启动 DEV、探测实际端口、生成 CF 公网验收地址并交付登录账号密码"
+  default_prompt: "使用 $cloudflare-quick-tunnel 启动当前项目的 DEV 服务，探测实际端口并生成公网验收地址；有登录时查找并输出可用用户名和密码，验证页面并保留服务供我验收。"

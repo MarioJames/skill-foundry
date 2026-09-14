@@ -1,109 +1,50 @@
 ---
 name: cloudflare-quick-tunnel
-description: Create, inspect, and clean up temporary anonymous public tunnels for local HTTP services. Not for named tunnels or production deployments.
+description: 公网验收本地项目：启动 DEV 服务、探测实际端口、创建 Cloudflare 临时验收地址，查找并交付登录账号密码，验证页面并管理资源。也支持已有服务的临时隧道及状态查询、清理；不用于生产部署或命名隧道。
 ---
 
-# Cloudflare Quick Tunnel
+# Cloudflare 公网验收
 
-## Overview
+把本地项目准备成可供用户打开的公网验收环境，交付实际地址、登录信息和验证结果。保留 `cloudflare-quick-tunnel` 技能名与 `cqt.ts` 生命周期接口，项目启动和账号发现由 Agent 按项目事实完成。
 
-本技能只负责标准匿名 Cloudflare Quick Tunnel 的完整生命周期：启动并返回公网入口、查询精确状态、停止进程、清理本轮状态与日志。它不解释项目环境变量，不拼接业务 path/query/hash，也不添加项目专用的 cloudflared 参数；这些内容由调用方负责。
+## 入口与边界
 
-> 下文 `cqt ...` 均为 `bun "$CQT_DIR/cqt.ts" ...` 的速记。每次 shell 调用都重新解析 `CQT_DIR`；不要依赖上一批命令留下的局部变量。
+- 用户要求“CF 公网验收”“生成公网验收地址”“暴露到公网”已授权本流程，不重复确认。只要求本地验收时不创建隧道；只要求隧道状态或清理时直接走 [生命周期](references/tunnel-lifecycle.md)，不启动服务或读取账号。
+- 默认使用本地 DEV 环境和开发数据。随机 `*.trycloudflare.com` 地址不是访问控制，不把生产或敏感数据放到匿名隧道后。
+- 使用已有项目脚本、依赖和环境加载规则；不自动安装或升级系统工具。公共 `.env` 默认不改，必要的公网 origin、Host 或回调配置使用项目实际支持的任务覆盖方式，不假定 `.env.local` 自动生效。
+- 前端验收加载 `browser-harness`，复用其服务准备、浏览器交互与采证能力；本技能负责把启动、端口、公网入口和账号交付串起来。没有伴生技能时仍可启动和交付地址，但不得声称已完成浏览器验收。
 
-## HARD CONSTRAINTS
+## 1. 启动并确认 DEV 服务
 
-- 未经用户确认不得创建公网隧道；用户明确要求“发布、暴露到公网、生成远程走查地址”即视为确认。
-- `*.trycloudflare.com` 是无认证随机地址，不是访问控制；不得承载生产或敏感数据。
-- 只使用 PATH 中的 `cloudflared` 创建匿名 Quick Tunnel，并传入隔离的空配置；不接受 token、命名隧道、自定义域名或自定义 cloudflared 命令。
-- 不生成、解释或改写项目环境变量；标准进程环境会原样传给 cloudflared，调用方对其提供的值负责。
-- 不自动安装或升级 Bun、cloudflared。缺失时报告准确前置。
-- 生命周期命令必须复用同一个 `--state-dir`；不要用宽泛 `pgrep` 猜测或清理其他 tunnel。
-- 把 `start` 的 stdout 当可 `eval` 环境变量读取；不要从日志猜公网 URL 或 PID。
-- `start` 解析到 cloudflared 生成的公网 URL 后立即输出，不把 HTTP、TLS 或页面探活作为启动条件。任务另含可用性验收时，由调用方随后验证，分别报告地址生成和可达性结果。
+1. 固定项目绝对路径，读取项目说明、启动脚本、环境加载与登录实现。按项目现有脚本启动开发服务；包管理器遵循项目约定，无约定时优先 Bun、其次 pnpm。不要用生产部署替代 DEV 启动。
+2. 已有目标项目的健康 DEV 服务时可复用，记录其归属，不重复启动或在结束时关闭用户已有进程。新服务用可跨命令存活的托管进程，并记录精确 PID、日志和停止方法。
+3. 使用 `browser-harness prepare` 时消费成功返回的 `APP_URL`、`DEV_SERVER_PID`、`DEV_SERVER_LOG`，不要重新猜端口。其他项目从实际启动输出取得监听 URL，再用该服务精确 PID 对应的监听端口和本地 HTTP 响应核实。配置的 PORT 只是意图，端口占用自动递增后以实际监听值为准；不能拿机器上任意开放端口当目标服务。
+4. 确认服务就绪且响应属于目标应用；登录重定向或预期的鉴权响应可作为就绪证据。通配监听地址 `0.0.0.0` / `::` 应转换成实际可达的 loopback origin。启动失败、退出或端口归属无法确认时，不继续建隧道。
 
-## Setup
+前后端分离时先核实前端代理与 API 路由，公网页面不能依赖验收者机器上的 `localhost` API；优先复用开发代理，不默认把数据库或其他内部服务暴露出去。
 
-依赖 Bun ≥ 1.3 与 `cloudflared`：
+## 2. 创建公网验收地址
 
-```bash
-command -v bun >/dev/null || {
-  echo "请先安装 Bun 1.3+：https://bun.sh"
-  exit 2
-}
-command -v cloudflared >/dev/null || {
-  echo "请先安装 cloudflared：https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/"
-  exit 2
-}
-```
+- `browser-harness` 已准备的项目使用其 `share`；直接启动并发布可使用 `publish`，但仍需确认本地服务实际响应。两者已经调用本技能的隧道脚本，不再另起第二条隧道。被 browser-harness 调用时复用已有准备结果，不递归启动整个流程。
+- 其他服务按 [隧道生命周期](references/tunnel-lifecycle.md) 用已核实的 `LOCAL_ORIGIN` 执行 `cqt start`，全程复用任务专属绝对 `--state-dir`。仅使用 PATH 中的 cloudflared 和隔离空配置，不加入命名隧道、token、自定义域名或项目专用启动参数。
+- 只消费成功命令的结构化赋值输出，不从日志猜公网 URL 或 PID。`PUBLIC_URL` 是隧道根地址；以项目真实入口的 path/query/hash 生成最终验收地址。browser-harness 已返回 `REMOTE_REVIEW_URL` 时直接使用，避免重复拼接。
+- 地址生成后立即交付，再做可达性和页面验收；底层 `start` 不因 HTTP/TLS 探活等待或失败。新域名短暂报错时保留同一隧道，在最多 60 秒内限时复查；持续失败则报告实际错误和验收未通过，不循环重建隧道。
 
-将 `CLOUDFLARE_QUICK_TUNNEL_SKILL_DIR` 设为宿主加载本 `SKILL.md` 时提供的实际技能目录，再解析脚本目录；独立安装位置只作为兼容兜底：
+## 3. 查找并交付登录信息
 
-```bash
-CQT_DIR="${CLOUDFLARE_QUICK_TUNNEL_SKILL_DIR:+$CLOUDFLARE_QUICK_TUNNEL_SKILL_DIR/scripts}"
-if [ -z "$CQT_DIR" ] && [ -n "${ACCEPTANCE_SANDBOX:-}" ]; then
-  CQT_DIR="$(find "$ACCEPTANCE_SANDBOX/.iso" -path '*/skills/cloudflare-quick-tunnel/scripts' -type d 2>/dev/null | head -1)"
-fi
-for candidate in \
-  "$HOME/.agents/skills/cloudflare-quick-tunnel/scripts" \
-  "$HOME/.codex/skills/cloudflare-quick-tunnel/scripts" \
-  "$HOME/.claude/skills/cloudflare-quick-tunnel/scripts" \
-  "$HOME/.cc-switch/skills/cloudflare-quick-tunnel/scripts"
-do
-  if [ -z "$CQT_DIR" ] && [ -f "$candidate/cqt.ts" ]; then
-    CQT_DIR="$candidate"
-    break
-  fi
-done
+有登录时执行，无登录则明确写“无需登录”。本流程包含向当前用户输出本地验收账号及可取得的明文密码，不把账号发现替换为“请自行查看 .env”。
 
-if [ -z "$CQT_DIR" ] || [ ! -f "$CQT_DIR/cqt.ts" ]; then
-  echo "无法定位当前加载的 cloudflare-quick-tunnel scripts 目录" >&2
-  exit 1
-fi
-```
+1. 先确认实际认证方式和配置加载优先级，定向读取启动环境、项目环境文件中与验收登录有关的字段；同时核对登录实现、seed 或初始化逻辑，确认变量确实是应用账号，而非数据库连接用户名或密码。`.env.example` 和 seed 默认值只作线索，不当成当前可用凭据。
+2. 若账号存数据库，使用当前 DEV 服务实际连接的开发数据库，沿用项目已有 ORM、客户端或查询工具，按账号/角色定向只读查询必要字段；不打印整表、数据库连接串或无关密钥。
+3. 输出选定验收账号的用户名/邮箱、可取得的明文密码、角色和来源（文件路径与变量名，或数据库表/字段；不附连接密钥）。只交付本轮验收所需账号，凭据只发给当前用户，不写入仓库、公开报告、公网页面、隧道日志或 URL 参数。
+4. 数据库只有 bcrypt/Argon2 等哈希时不能还原密码，也不要把哈希当密码输出。继续查找实际启用的开发凭据来源；仍无明文则输出已知用户名和“密码仅存哈希，无法还原”。账号缺失或只有 SSO、验证码、passkey 时如实说明入口及缺失条件，不猜默认密码、不擅自建号或重置密码。
+5. 有可用凭据时，通过实际登录验证，并标明“登录已验证”或具体失败；配置值存在不代表账号可用。认证页面、请求体和截图中的密码、token 不纳入公开证据。
 
-## Lifecycle
+## 4. 验收、保留与回收
 
-为每个任务创建专属状态目录，并在整个生命周期复用它。默认状态目录按当前物理工作目录隔离；跨 shell、多个服务并行或由其他技能联动时应显式传绝对 `--state-dir`。
+- 使用最终公网地址完成关键页面和登录验证。前端按 `browser-harness` 采集截图、console/network 证据，特别检查登录后跳转、API 请求是否错误地返回本地地址，以及公网 Host、可信 origin、Cookie 或 OAuth 回调是否匹配。所需配置不支持临时域名或需要外部管理权限时报告具体阻塞，不伪造通过。
+- 地址生成、HTTP 可达、页面与登录验收分别报告；拿到 URL 不等于验收通过。属于当前已授权开发范围的失败继续修复，否则如实交付阻塞与现有验证结果。
+- 给用户手动验收时保留必要 DEV 服务和隧道，报告 PID、实际端口、日志位置、状态目录或 browser-harness target，以及可直接执行的清理命令；不要刚发出地址就关掉服务。及时关闭本次浏览器和验证进程。
+- 用户结束验收后，browser-harness 管理的资源用同一 target cleanup；直接管理的隧道用同一 state-dir cleanup，再停止本任务创建的 DEV 服务。验证精确进程已退出，不宽泛杀进程。启动或建隧道失败且没有可交付入口时回收本任务创建的资源，保留用户原有服务。
 
-```bash
-TASK_STATE_DIR="$(mktemp -d)/quick-tunnel"
-TUNNEL_ENV="$(bun "$CQT_DIR/cqt.ts" start "http://127.0.0.1:4173" --state-dir "$TASK_STATE_DIR")" || exit $?
-eval "$TUNNEL_ENV"
-printf '公网地址：%s\nPID：%s\n日志：%s\n' "$PUBLIC_URL" "$TUNNEL_PID" "$TUNNEL_LOG"
-```
-
-`start` 会先停止同一状态目录中仍存活的旧 tunnel，再按收到的 origin 启动新实例。`PUBLIC_URL` 始终是 cloudflared 生成的 Quick Tunnel 根地址，不附加项目路径。stdout 包含：
-
-- `ORIGIN_URL`
-- `PUBLIC_URL`
-- `TUNNEL_PID`
-- `TUNNEL_LOG`
-- `TUNNEL_STATE_DIR`
-
-`start` 只等待 cloudflared 在日志中生成 `*.trycloudflare.com` 地址，解析成功后立即写入状态并输出上述变量。它不会请求公网 URL，也不会把 HTTP/TLS 可达性作为启动条件。地址刚生成时可能短暂返回 Cloudflare 5xx 或出现 TLS/传输错误；仍应直接交付给用户打开，不要因此阻塞、重试或停止本轮 tunnel。
-
-只读检查不创建进程：
-
-```bash
-TUNNEL_ENV="$(bun "$CQT_DIR/cqt.ts" status --state-dir "$TASK_STATE_DIR")" || exit $?
-eval "$TUNNEL_ENV"
-printf '状态：%s\n' "$TUNNEL_STATUS" # running | stale | stopped
-```
-
-走查结束后停止 tunnel。`stop` 幂等并保留本轮日志；需要彻底回收本技能创建的状态与日志时执行 `cleanup`：
-
-```bash
-bun "$CQT_DIR/cqt.ts" stop --state-dir "$TASK_STATE_DIR"
-bun "$CQT_DIR/cqt.ts" cleanup --state-dir "$TASK_STATE_DIR"
-```
-
-`cleanup` 只删除脚本明确拥有的状态文件和日志，再尝试移除空状态目录；不会递归删除调用方放入的其他文件。
-
-## Runtime Notes
-
-- macOS 使用 `launchctl` 托管 worker，其他平台使用 detached 进程；两者都把精确 PID 写入状态目录。
-- macOS worker 只为保持跨平台一致性而原样恢复调用进程环境，不识别其中任何项目变量。
-- `start` 不设置 origin Host、不映射业务 URL，也不输出调用方专用变量。
-- `status` 只依据状态目录中的精确 PID；`stale` 表示 PID 状态存在但进程已退出。
-- `stop` 先发 `SIGTERM`，超时后仅对该 PID/独立进程组发 `SIGKILL`。
+交付内容：本地 `APP_URL`、公网验收地址、账号/密码（或无需登录、不可取得的原因）、实际验证结果、资源保留状态和清理命令。地址已先行交付时，最终回复仍包含这些信息。

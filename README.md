@@ -31,11 +31,13 @@ Frontend acceptance helper around [vercel-labs/agent-browser](https://github.com
 
 **Reach for it when** doing smoke checks, journey prep with `APP_URL`, interactive browser exploration, or reusable headed login profiles.
 
-### `cloudflare-quick-tunnel` — temporary public tunnel lifecycle
+### `cloudflare-quick-tunnel` — public DEV acceptance
 
-Creates standard anonymous Cloudflare Quick Tunnels for local HTTP services and owns the full start / status / stop / cleanup lifecycle. Its Bun CLI uses an isolated empty config, returns the generated tunnel root URL immediately without probing it, tracks exact process state, and keeps cleanup scoped to one caller-provided state directory; project URL mapping and custom environment belong to the caller.
+Prepares a local DEV service, discovers and verifies its actual listening port, creates a temporary Cloudflare review URL, and retrieves the application's development login credentials from effective environment configuration or the development database. Reports available plaintext credentials to the requesting user, verifies login, and explains hash-only or external-auth limitations without inventing passwords. Uses `browser-harness` for frontend interaction and evidence, and retains the service and tunnel for manual review until cleanup.
 
-**Reach for it when** a local service needs a temporary public review URL; use it through `browser-harness` when the service is part of frontend acceptance.
+The existing Bun CLI owns anonymous tunnel start / status / stop / cleanup with isolated configuration and exact process state. It returns the generated root URL immediately; the acceptance workflow verifies reachability and pages afterward.
+
+**Reach for it when** preparing a project for public acceptance, handing over a temporary review URL with login details, or inspecting and cleaning up an existing Quick Tunnel.
 
 ### `herdr` — parallel work and resource ownership
 
@@ -230,7 +232,7 @@ Use browser-harness to prepare the app, open it, and collect screenshot + consol
 Expose a local HTTP service temporarily:
 
 ```text
-Use cloudflare-quick-tunnel to publish http://127.0.0.1:4173 for remote review, report its status, and clean it up when I finish.
+Use cloudflare-quick-tunnel to start this project in DEV, discover its actual port, create a public acceptance URL, and provide the configured login username and password. Verify the page and keep the service available until I finish.
 ```
 
 Parallelize useful work through Herdr:
