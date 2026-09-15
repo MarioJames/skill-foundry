@@ -73,7 +73,7 @@ interface Preflight {
   reason?: string;
 }
 
-function preflight(cli = "claude"): Preflight {
+function preflight(cli = "codex"): Preflight {
   if (process.env.ACCEPTANCE_SKIP_PREFLIGHT) {
     return { ok: true, cli, resolved: cli, skipped: true };
   }

@@ -11,6 +11,8 @@ description: Review reusable skills, plugins, rules, and agents; run real CLI ac
 - **Fix / iterate:** implement the requested corrections and verify affected behavior. A documentation edit does not automatically require full acceptance.
 - **Behavioral acceptance / real CLI evaluation:** use [acceptance.md](references/acceptance.md) for isolation, task design, observation, and cleanup. A static review cannot establish a behavioral PASS.
 
+Use Codex for real CLI acceptance by default. Use Claude Code only when the user explicitly selects it; an unavailable Codex must not silently trigger a Claude fallback.
+
 Infer the route from the requested deliverable and existing authorization. Ask only when a missing choice changes scope, cost, or permitted side effects. An already specified asset, purpose, or CLI needs no reconfirmation. If an asset is named without a requested operation, start with a brief read-only assessment.
 
 ## Shared boundaries

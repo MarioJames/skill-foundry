@@ -193,7 +193,7 @@ function validateTaskKey(connection: Connection, acceptanceId: string, taskKey: 
   }
 }
 
-export function preflight(cli = "claude"): Record<string, unknown> {
+export function preflight(cli = "codex"): Record<string, unknown> {
   const found = Bun.which(cli);
   if (!found) {
     return { ok: false, reason: `selected CLI '${cli}' not on PATH`, cli };

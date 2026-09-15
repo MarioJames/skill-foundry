@@ -4,7 +4,7 @@ Use this route when the task requires evidence of an asset performing real work.
 
 ## Prepare the evaluation
 
-1. Identify the asset and permitted side effects from the request. Read [asset-understanding.md](asset-understanding.md) if type or registration is unclear. Reuse an explicitly selected CLI; otherwise default to `claude`.
+1. Identify the asset and permitted side effects from the request. Read [asset-understanding.md](asset-understanding.md) if type or registration is unclear. Reuse an explicitly selected CLI; otherwise default to `codex`. If Codex is unavailable, report the blocker rather than falling back to Claude Code.
 2. Read [convergence-and-task-design.md](convergence-and-task-design.md) for capability-based tasks, meaningful coverage, and affected-task revalidation. Apply [asset-strategies/common.md](asset-strategies/common.md) plus the matching type guide: [skill](asset-strategies/skill.md), [plugin](asset-strategies/plugin.md), [rule](asset-strategies/rule.md), or [agent](asset-strategies/agent.md).
 3. Use [unattended-execution.md](unattended-execution.md) for the exact CLI commands, entry resolver, staging, task files, and recovery. These command contracts also apply to attended runs.
 4. Register with `acc bootstrap`, record criteria and bounded tasks, choose `stop-loss`, `collect-first`, or `hybrid`, and start the round. Inspect relevant prerequisites before mutating state; do not turn routine setup into an approval gate.

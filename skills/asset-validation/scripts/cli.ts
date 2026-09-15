@@ -17,7 +17,7 @@ type CommandSpecs = Record<string, Record<string, OptionSpec>>;
 
 const ASSET_TYPES = ["skill", "plugin", "rule", "agent"] as const;
 const MODES = ["stop-loss", "collect-first", "hybrid"] as const;
-const CLIS = ["claude", "codex"] as const;
+const CLIS = ["codex", "claude"] as const;
 const VERDICTS = ["PASS", "CONDITIONAL", "FAIL", "blocked"] as const;
 const ROUND_VERDICTS = [...VERDICTS, "running"] as const;
 
@@ -72,11 +72,11 @@ const COMMAND_SPECS: CommandSpecs = {
     acceptance: { required: true },
     mode: { required: true, choices: MODES },
     n: { kind: "int", default: 1 },
-    cli: { choices: CLIS, default: "claude" },
+    cli: { choices: CLIS, default: "codex" },
   },
   launch: {
     round: { required: true },
-    cli: { choices: CLIS, default: "claude" },
+    cli: { choices: CLIS, default: "codex" },
   },
   "round list": {
     acceptance: {},
@@ -141,7 +141,7 @@ const COMMAND_SPECS: CommandSpecs = {
     acceptance: { required: true },
     task: { required: true },
     mode: { required: true, choices: MODES },
-    cli: { choices: CLIS, default: "claude" },
+    cli: { choices: CLIS, default: "codex" },
     "wait-seconds": { kind: "float", default: 60 },
     "capture-start": { default: "-2000" },
     "finalize-verdict": { choices: VERDICTS },

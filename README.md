@@ -23,6 +23,8 @@ Reviews reusable assets with scoped static checks, or runs **real interactive CL
 
 It includes progressive task ladders, clean post-fix PASS gates, typed staging profiles (`skill` / `plugin` / `agent` / `rule`), secret redaction, and budgeted unattended runs.
 
+Real CLI acceptance defaults to Codex. Claude Code requires an explicit user choice and is never an automatic fallback.
+
 **Reach for it when** validating a skill, plugin, rule, or agent before release, or re-checking one after changes.
 
 ### `browser-harness` — browser acceptance scaffolding
@@ -35,7 +37,7 @@ Frontend acceptance helper around [vercel-labs/agent-browser](https://github.com
 
 Uses a signed-in, headed regular Chrome session for design discussions and code reviews. Keeps one conversation per requirement in the user's chosen project, stores context privately, and monitors the exact submitted turn every 60 seconds in a background task. Completed model responses are checked against local evidence.
 
-**Reach for it when** asking ChatGPT for a second opinion, continuing a previous design discussion, or reviewing repository and browser-acceptance evidence.
+**Reach for it when** making consequential architecture decisions, finalizing substantial plans, preparing high-risk changes, or resolving material uncertainty in debugging and acceptance. Also supports explicit second-opinion requests and continued discussions; routine low-risk work stays local.
 
 ### `public-acceptance` — public DEV acceptance
 

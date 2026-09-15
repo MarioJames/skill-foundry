@@ -20,7 +20,7 @@ Read the installed `agent-browser skills get core` guide. For an existing browse
 
 ## Consume and close the loop
 
-Read the complete response and its citations. Judge the advice against local evidence; a model opinion is not an engineering test. Update the requirement record with the decision, evidence limits and next unresolved issue. Report the conversation link and whether repository reads actually succeeded.
+Read the complete response and its citations. Judge the advice against local evidence; a model opinion is not an engineering test. Apply the [decision gate and repeat-review boundaries](proactive-review.md#close-the-gate-without-a-review-loop) before treating the work as final. Update the requirement record with the decision, evidence limits and next unresolved issue. Report the conversation link and whether repository reads actually succeeded.
 
 Clean only the finished watcher and its Herdr lane. Preserve login data and any user-requested browser window. The watcher session auto-expires after inactivity; do not call `agent-browser close` against the shared CDP browser merely to clean its client. Old browser installations are retained until the user authorizes removal.
 
