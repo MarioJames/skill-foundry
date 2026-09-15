@@ -1,1 +1,4 @@
 **/tests/
+
+# Ship behavioral regression coverage for ChatGPT coordination.
+!skills/chatgpt-review/tests/

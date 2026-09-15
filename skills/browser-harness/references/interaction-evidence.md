@@ -1,6 +1,13 @@
 # 交互与证据
 
-`bh` 是 `bun "$BH_DIR/bh.ts"` 的速记。命令在目标项目根运行；profile 选择见 [登录态](login.md)。
+`bh` 是 `bun "$BH_DIR/bh.ts"` 的速记。命令在目标项目根运行；profile 选择见 [登录态](login.md)。每批命令恢复同一任务的浏览器身份：
+
+```bash
+export AGENT_BROWSER_SESSION="<task-session>"
+export AGENT_BROWSER_PROFILE="$(bun "$BH_DIR/bh.ts" profile-dir)"
+```
+
+在本机 agent-browser 0.34 的实际验收中，open 带 profile、下一条 snapshot 不带时会切换到空白页。通过上述环境变量或每条命令传入同一 `--profile` 避免重启；采证后读回 DOM 的真实 origin 与交互结果，不能只看 summary 中的目标 URL。
 
 ## 一次性烟测
 

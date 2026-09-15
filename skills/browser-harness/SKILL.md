@@ -7,6 +7,12 @@ description: 验收前端页面：准备服务和登录态，通过 agent-browse
 
 为 URL、HTML 文件或项目目录准备验收环境，通过 agent-browser 完成浏览器交互和截图、控制台、网络采证。项目测试由项目自身执行，本技能提供实际 `APP_URL`。
 
+## 浏览器配置
+
+默认遵循用户的 agent-browser 配置，不另设浏览器配置层。普通已安装的 Google Chrome 可通过 `~/.agent-browser/config.json` 的 `executablePath` 配置一次，供 agent-browser 与本技能共用；无需为 harness 另装 Chrome for Testing。
+
+浏览器路径与窗口模式是独立选择：`executablePath` 选择浏览器，`headed` 决定是否显示窗口。本机验收可在上述用户配置中设 `"headed": true`，继续使用同一份 Chrome。单次无头采证可运行 `AGENT_BROWSER_HEADED=false bun "$BH_DIR/bh.ts" collect-evidence "$APP_URL"`；`login` 会显式添加 `--headed`，不受这个无头覆盖控制。配置优先级、平台路径示例和切换模式见 [平台与运行时](references/runtime.md#浏览器与窗口模式)。
+
 ## 默认流程
 
 1. 固定任务根目录与 target；按实际加载的本 `SKILL.md` 所在目录定位 dispatcher。
@@ -18,6 +24,8 @@ description: 验收前端页面：准备服务和登录态，通过 agent-browse
 ```bash
 # BROWSER_HARNESS_SKILL_DIR = 实际加载本 SKILL.md 的目录
 BH_DIR="$BROWSER_HARNESS_SKILL_DIR/scripts"
+export AGENT_BROWSER_SESSION="<task-session>"
+export AGENT_BROWSER_PROFILE="$(bun "$BH_DIR/bh.ts" profile-dir)"
 # TARGET = 用户目标 URL、HTML 绝对路径或项目绝对路径
 # 在任务/项目根运行；失败时停止依赖动作，并清理本任务已创建的资源
 if BH_PREPARE_ENV="$(bun "$BH_DIR/bh.ts" prepare "$TARGET")"; then
@@ -41,6 +49,7 @@ agent-browser close
 - `collect-evidence` 默认重新打开 URL。交互后要保留瞬时状态，须在同一 profile 已打开目标页时使用 `--reuse-page`，此时 URL 只作元数据。
 - `artifact_errors` 非空的文件是 fallback 占位，不能作为有效证据判通过；`open` 失败退出 3 且无证据目录。从 stdout 的 `evidence_dir` 取精确目录，不猜“最新”目录。请求 body 按 `requestId` 单条读取。
 - `cleanup` 使用与 prepare/share/publish 相同的 target；HTML target 归一到所在目录。它回收 tunnel 和 dev server，浏览器须另行关闭。
+- 整个交互与采证流程使用同一命名 session 和 profile。跨命令保留 `AGENT_BROWSER_SESSION` / `AGENT_BROWSER_PROFILE` 或逐次传参；遗漏 profile 可能使 agent-browser 重启到空白页。不要操作共享默认 session。
 - 清理边界是本任务创建的精确 PID、target、profile；保留用户既有服务和登录态。核对 PID、父进程与 profile，不用宽泛 `pgrep -f` 杀进程。close 后只从外部查精确 PID/CDP 端口，不再用 snapshot/open 探测，以免重启浏览器。
 - 验收失败时，负责开发的 Agent 应回到当前已授权的开发任务修复业务/环境问题，再准备环境并继续浏览器验收，直到通过或遇到真实阻塞。browser-harness 只提供验收工具，不限制同一 Agent 的开发职责；不要修改 mock、诊断或证据来伪造通过。
 - 不自动全局安装或升级 Bun、agent-browser、浏览器或项目依赖；缺失时报告准确前置，并依据已有安装授权与项目包管理约定执行。

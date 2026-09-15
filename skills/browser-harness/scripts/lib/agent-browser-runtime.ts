@@ -27,7 +27,7 @@ export function requireAgentBrowser(): void {
   if (!findExecutable("agent-browser")) {
     fail(
       2,
-      "未找到 agent-browser CLI；请按 https://github.com/vercel-labs/agent-browser 安装并运行 'agent-browser install' 拉取 Chrome for Testing",
+      "未找到 agent-browser CLI；请按 https://github.com/vercel-labs/agent-browser 安装，并在 agent-browser 用户配置中设置已安装的普通 Google Chrome 的 executablePath；没有可用浏览器时再按授权安装",
     );
   }
 

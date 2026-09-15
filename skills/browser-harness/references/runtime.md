@@ -12,7 +12,7 @@ command -v bun >/dev/null || {
   exit 2
 }
 command -v agent-browser >/dev/null || {
-  echo "请按 https://github.com/vercel-labs/agent-browser 安装 agent-browser，然后 'agent-browser install' 拉取 Chrome for Testing"
+  echo "请按 https://github.com/vercel-labs/agent-browser 安装 agent-browser，并配置已安装的 Chrome 路径；没有可用浏览器时再按授权安装"
   exit 2
 }
 ```
@@ -44,6 +44,20 @@ if [ -z "$BH_DIR" ] || [ ! -f "$BH_DIR/bh.ts" ]; then
   exit 1
 fi
 ```
+
+## 浏览器与窗口模式
+
+`login` / `collect-evidence` 直接调用 agent-browser，继承调用环境与其配置读取规则；本技能只管理验收 profile，不另设 `executablePath` 或 `headed` 配置层。agent-browser 默认优先级从低到高为：`~/.agent-browser/config.json` → 当前工作目录的 `agent-browser.json` → 环境变量 → CLI 参数。显式 `AGENT_BROWSER_CONFIG` / `--config` 会改用指定文件，替代默认配置文件读取。
+
+普通已安装的 Google Chrome 可在用户配置中设置一次 `executablePath`，直接调用 agent-browser 和运行 harness 时共用。按平台核实实际安装位置，例如 Linux 的 `/usr/bin/google-chrome-stable` 或 macOS 的 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`。已有可用 Chrome 时，无需额外运行 `agent-browser install` 下载 Chrome for Testing；未配置路径时的浏览器发现行为由 agent-browser 决定。
+
+`headed` 独立于浏览器路径，同一份 Chrome 支持有头和无头模式。本机验收希望显示窗口时，可在现有用户配置中合并 `"headed": true`，保留其他配置。`collect-evidence` 不主动指定窗口模式；单次无头采证可用：
+
+```bash
+AGENT_BROWSER_HEADED=false bun "$BH_DIR/bh.ts" collect-evidence "$APP_URL"
+```
+
+`login` 为交互登录显式传入 `--headed`，优先于环境变量，所以以上无头覆盖仅适用于采证。切换浏览器路径或窗口模式前，先关闭本任务的 agent-browser 会话，再以新配置启动；已有会话或 `--reuse-page` 不会因此自动切换模式。关闭时保持同一 session/profile 边界，不关闭用户既有浏览器，也不删除持久化登录态。
 
 ## 运行约束
 
