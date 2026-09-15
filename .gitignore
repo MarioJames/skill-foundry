@@ -3,7 +3,8 @@
 # Ship behavioral regression coverage for ChatGPT coordination.
 !skills/chatgpt-review/tests/
 
-# Ship the CLI selection contract without adding unrelated local test fixtures.
+# Ship maintained acceptance checks without adding unrelated local test fixtures.
 !skills/asset-validation/tests/
 skills/asset-validation/tests/*
 !skills/asset-validation/tests/cli-default.test.ts
+!skills/asset-validation/tests/docs.test.ts
