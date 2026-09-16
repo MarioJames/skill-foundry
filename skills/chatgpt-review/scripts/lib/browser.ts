@@ -21,7 +21,7 @@ export async function browser(id: string, opts: Record<string, string>) {
     return result.data;
   };
   await run('tab', target);
-  return { session, read: async (): Promise<PageState> => {
+  return { session, run, read: async (): Promise<PageState> => {
     const data = await run('eval', PAGE_SCRIPT);
     const value = data.result;
     if (!value || !Array.isArray(value.messages) || typeof value.url !== 'string') throw new Error('Unexpected agent-browser eval response');

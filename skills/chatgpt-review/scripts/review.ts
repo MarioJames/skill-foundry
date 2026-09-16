@@ -5,6 +5,7 @@ import { conversationId } from './lib/page.ts';
 import { browser } from './lib/browser.ts';
 import { required } from './lib/command.ts';
 import { watch } from './lib/watch.ts';
+import { ensureModel, modelUrl } from './lib/model.ts';
 
 function args(raw: string[]) {
   const opts: Record<string, string> = {};
@@ -18,14 +19,18 @@ export async function main(raw = process.argv.slice(2)) {
   const [cmd, ...rest] = raw;
   const store = new Store();
   if (!cmd || cmd === '--help') {
-    console.log('review.ts record --input FILE | list [QUERY] | show --id ID | status/result/cancel --id ID [--run RUN_ID] | capture --id ID --cdp PORT --target TARGET | watch --id ID --cdp PORT --target TARGET --user MESSAGE_ID [--notify-pane PANE] [--timeout-seconds 1800]');
+    console.log('review.ts record --input FILE | list [QUERY] | show --id ID | status/result/cancel --id ID [--run RUN_ID] | ensure-model --id ID --cdp PORT --target TARGET --url URL [--model "6 Pro"] | capture --id ID --cdp PORT --target TARGET | watch --id ID --cdp PORT --target TARGET --user MESSAGE_ID [--notify-pane PANE] [--timeout-seconds 1800]');
     return 0;
   }
   if (cmd === 'list') { console.log(JSON.stringify(store.list(rest.join(' ')), null, 2)); return 0; }
   const opts = args(rest);
   if (cmd === 'record') { console.log(JSON.stringify(store.record(JSON.parse(readFileSync(required(opts, 'input'), 'utf8'))), null, 2)); return 0; }
   const id = required(opts, 'id');
-  if (cmd === 'show') console.log(JSON.stringify(store.get(id), null, 2));
+  if (cmd === 'ensure-model') {
+    modelUrl(required(opts, 'url'));
+    if (opts.model && opts.model !== '6 Pro') throw new Error('Automated selection currently supports only --model "6 Pro"');
+    console.log(JSON.stringify(await ensureModel(await browser(id, opts), opts), null, 2));
+  } else if (cmd === 'show') console.log(JSON.stringify(store.get(id), null, 2));
   else if (cmd === 'status') console.log(JSON.stringify(store.status(id, opts.run), null, 2));
   else if (cmd === 'result') console.log(JSON.stringify(store.result(id, opts.run), null, 2));
   else if (cmd === 'cancel') {

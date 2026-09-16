@@ -1,6 +1,6 @@
 # Proactive Pro review
 
-Judge the cost of a wrong decision, its reach, and the strength of available evidence. Topic keywords alone do not justify a remote review. Use the user's designated Pro model and existing account/project authorization; do not silently substitute a model or expand the material allowed to leave the machine.
+Judge the cost of a wrong decision, its reach, and the strength of available evidence. Topic keywords alone do not justify a remote review. Apply the [review model selection gate](conversation.md#select-the-review-model-before-every-send) using existing account/project authorization; do not silently fall back to another model or expand the material allowed to leave the machine.
 
 ## Trigger at decision points
 

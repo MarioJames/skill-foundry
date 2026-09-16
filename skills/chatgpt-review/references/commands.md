@@ -2,6 +2,19 @@
 
 The Bun helper has no package dependencies. Private state defaults to `~/.local/share/chatgpt-review`; `CHATGPT_REVIEW_HOME` can select a task-private test directory. Never put this directory inside a public repository. Records and replies are mode `0600`, directories `0700`.
 
+## Select and verify the model before sending
+
+Use the observed loopback CDP endpoint, target ID, and exact page URL. New unsent chats are supported; this command does not require a registered conversation:
+
+```bash
+bun <skill-dir>/scripts/review.ts ensure-model --id admin-auth-review \
+  --cdp 9222 --target <targetId> --url <observedChatGPTUrl> --model "6 Pro"
+```
+
+`--model` defaults to `6 Pro`; other models are rejected before browser attachment. The command pins its session to the supplied target, checks the URL before each action, selects Latest when needed, focuses Power and increases it to Pro, then confirms both `6 Pro` / `Pro, 5 of 5` in the menu and `6 Pro` on the closed control. Already-correct settings are checked without toggling their model or power. UI drift, disabled controls, login/challenge, an active response, a changed page, or a model label mismatch produce a nonzero exit. Retries are bounded; failure never sends a message or falls back to a lighter model.
+
+Success returns JSON with `verified: true`, `expectedModel`, `observedModel`, `before`, `changed`, `url`, `target`, `session`, `verifiedAt`, and menu/power `evidence`. Require exit code 0 and check the result's target and URL immediately before sending. It does not submit, navigate, reload, close Chrome, update the requirement record, or verify backend inference. Use `observedModel` when recording the turn; repeat the command for each follow-up and after navigation or any model change.
+
 ## Register or update a requirement
 
 Write a task-private JSON file, then run `bun <skill-dir>/scripts/review.ts record --input /absolute/record.json`:
@@ -23,6 +36,8 @@ Write a task-private JSON file, then run `bun <skill-dir>/scripts/review.ts reco
 ```
 
 `projectVerified` is true only after UI read-back. If a project move fails, record false and the blocker; do not claim it succeeded. `conversationCreatedAt` is optional and must come from actual conversation metadata, not the time of registration. The helper records a separate `recordedAt`/`updatedAt`.
+
+Set `model` to the label observed after the [pre-send model selection gate](conversation.md#select-the-review-model-before-every-send), refreshing it for each submitted turn. This field records the observation; `record` does not validate the model or replace `ensure-model`.
 
 `record` refuses to map an existing requirement ID to another conversation. To update background/summary/status, send the full record again. Supported status values: `open`, `blocked`, `complete`. Different project-prefixed URLs for the same conversation are treated as one identity.
 
@@ -68,4 +83,4 @@ Successful completion means the response is finished, not that its content appro
 
 ## Validation
 
-`bun test <skill-dir>/tests` covers turn matching, current-run result gating, stale responses, partial generation, cross-conversation protection, record reuse, and lock behavior. CLI regression tests use task-private state and browser/notification command substitutes. For real browser verification use an explicitly authorized test prompt, record its submitted user ID and watcher run ID, and let a Herdr watcher observe it while the parent does other work. Read the result and verify the watcher exits, the original tab survives, and the exact service lane is removed. Report script tests separately from actual Agent/CLI acceptance.
+`bun test <skill-dir>/tests` covers model switching and read-back, model/UI failures, turn matching, current-run result gating, stale responses, partial generation, cross-conversation protection, record reuse, and lock behavior. CLI regression tests use task-private state and browser/notification command substitutes. Validate model selection on an authorized unsent browser tab with a lower initial model/power, run `ensure-model`, read back the UI, and rerun to confirm idempotency; no test prompt is needed. To verify response monitoring, use an explicitly authorized test prompt, record its submitted user ID and watcher run ID, and let a Herdr watcher observe it while the parent does other work. Read the result and verify the watcher exits, the original tab survives, and the exact service lane is removed. Report script tests separately from actual Agent/CLI acceptance.
