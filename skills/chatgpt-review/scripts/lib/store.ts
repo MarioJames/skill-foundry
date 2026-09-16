@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, openSync, closeSync, readFileSync, re
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { conversationId, type Message } from './page.ts';
+import { validatePreferences, type OrganizationPreferences } from './organize.ts';
 
 const now = () => new Date().toISOString();
 export type WatchState = 'starting' | 'waiting' | 'complete' | 'blocked' | 'superseded' | 'timeout' | 'cancelled';
@@ -20,6 +21,7 @@ export interface RecordEntry {
   background: string; summary: string; status: 'open' | 'blocked' | 'complete';
   repo?: string; revision?: string; model?: string; conversationCreatedAt?: string;
   recordedAt?: string; updatedAt?: string;
+  titleVerified?: boolean; organizationError?: string; organizationVerifiedAt?: string;
 }
 export function validateRecord(value: RecordEntry): RecordEntry {
   if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(value.id)) throw new Error('Invalid requirement id');
@@ -42,6 +44,14 @@ export function privateWrite(path: string, value: unknown) {
 }
 export class Store {
   constructor(public root = resolve(process.env.CHATGPT_REVIEW_HOME || join(homedir(), '.local/share/chatgpt-review'))) {}
+  preferences(): OrganizationPreferences {
+    return validatePreferences(JSON.parse(readFileSync(join(this.root, 'preferences.json'), 'utf8')));
+  }
+  configure(value: OrganizationPreferences) {
+    validatePreferences(value);
+    privateWrite(join(this.root, 'preferences.json'), value);
+    return value;
+  }
   path(kind: string, id: string) {
     if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(id)) throw new Error('Invalid requirement id');
     return join(this.root, kind, id + '.json');

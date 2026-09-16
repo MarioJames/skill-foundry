@@ -8,6 +8,15 @@ function endpoint(value: string) {
   if (!['http:', 'ws:'].includes(u.protocol) || !['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname) || u.username || u.password) throw new Error('CDP must use an unauthenticated loopback endpoint');
   return value;
 }
+export function browserTabs(id: string, opts: Record<string, string>) {
+  const cdp = endpoint(required(opts, 'cdp'));
+  const session = 'review-tabs-' + createHash('sha256').update(id + ':' + cdp).digest('hex').slice(0, 16);
+  return async (...args: string[]) => {
+    const result = JSON.parse(await command(['agent-browser', '--session', session, '--cdp', cdp, '--pin-tab', '--idle-timeout', '5m', '--json', 'tab', ...args]));
+    if (!result.success) throw new Error(JSON.stringify(result.error || result.data).slice(0, 800));
+    return result.data;
+  };
+}
 export async function browser(id: string, opts: Record<string, string>) {
   const cdp = endpoint(required(opts, 'cdp'));
   const target = required(opts, 'target');

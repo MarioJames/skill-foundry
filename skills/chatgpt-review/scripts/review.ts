@@ -2,10 +2,12 @@
 import { readFileSync } from 'node:fs';
 import { Store } from './lib/store.ts';
 import { conversationId } from './lib/page.ts';
-import { browser } from './lib/browser.ts';
+import { browser, browserTabs } from './lib/browser.ts';
 import { required } from './lib/command.ts';
 import { watch } from './lib/watch.ts';
 import { ensureModel, modelUrl } from './lib/model.ts';
+import { organizeConversation } from './lib/organize.ts';
+import { finishReview, openReview } from './lib/lifecycle.ts';
 
 function args(raw: string[]) {
   const opts: Record<string, string> = {};
@@ -19,14 +21,40 @@ export async function main(raw = process.argv.slice(2)) {
   const [cmd, ...rest] = raw;
   const store = new Store();
   if (!cmd || cmd === '--help') {
-    console.log('review.ts record --input FILE | list [QUERY] | show --id ID | status/result/cancel --id ID [--run RUN_ID] | ensure-model --id ID --cdp PORT --target TARGET --url URL [--model "6 Pro"] | capture --id ID --cdp PORT --target TARGET | watch --id ID --cdp PORT --target TARGET --user MESSAGE_ID [--notify-pane PANE] [--timeout-seconds 1800]');
+    console.log('review.ts open --id ID --cdp PORT | finish --id ID --cdp PORT --run RUN_ID | configure --project-url URL --project-name NAME --timezone ZONE [--language en|zh] | preferences | organize --id ID --cdp PORT --target TARGET --type FIX --topic TOPIC | record --input FILE | list [QUERY] | show --id ID | status/result/cancel --id ID [--run RUN_ID] | ensure-model --id ID --cdp PORT --target TARGET --url URL [--model "6 Pro"] | capture --id ID --cdp PORT --target TARGET | watch --id ID --cdp PORT --target TARGET --user MESSAGE_ID [--notify-pane PANE] [--timeout-seconds 1800]');
     return 0;
   }
   if (cmd === 'list') { console.log(JSON.stringify(store.list(rest.join(' ')), null, 2)); return 0; }
   const opts = args(rest);
+  if (cmd === 'preferences') { console.log(JSON.stringify(store.preferences(), null, 2)); return 0; }
+  if (cmd === 'configure') {
+    console.log(JSON.stringify(store.configure({ projectUrl: required(opts, 'project-url'), projectName: required(opts, 'project-name'),
+      timezone: required(opts, 'timezone'), language: (opts.language || 'en') as 'en' | 'zh' }), null, 2));
+    return 0;
+  }
   if (cmd === 'record') { console.log(JSON.stringify(store.record(JSON.parse(readFileSync(required(opts, 'input'), 'utf8'))), null, 2)); return 0; }
   const id = required(opts, 'id');
-  if (cmd === 'ensure-model') {
+  if (cmd === 'open') {
+    console.log(JSON.stringify(await openReview(store, id, required(opts, 'cdp'), browserTabs(id, opts)), null, 2));
+  } else if (cmd === 'finish') {
+    console.log(JSON.stringify(await finishReview(store, id, required(opts, 'cdp'), required(opts, 'run'), browserTabs(id, opts),
+      async target => (await browser(id, { ...opts, target })).read()), null, 2));
+  } else if (cmd === 'organize') {
+    const record = store.get(id);
+    const preferences = store.preferences();
+    const type = required(opts, 'type'), topic = required(opts, 'topic');
+    try {
+      const result = await organizeConversation(await browser(id, opts), record.url, preferences, type, topic);
+      store.record({ ...record, title: result.title, url: result.url, projectUrl: result.projectUrl,
+        projectVerified: true, titleVerified: true, conversationCreatedAt: result.conversationCreatedAt,
+        organizationVerifiedAt: result.verifiedAt, organizationError: undefined });
+      console.log(JSON.stringify(result, null, 2));
+    } catch (error) {
+      store.record({ ...record, projectVerified: false, titleVerified: false,
+        organizationVerifiedAt: undefined, organizationError: error instanceof Error ? error.message : 'Organization failed' });
+      throw error;
+    }
+  } else if (cmd === 'ensure-model') {
     modelUrl(required(opts, 'url'));
     if (opts.model && opts.model !== '6 Pro') throw new Error('Automated selection currently supports only --model "6 Pro"');
     console.log(JSON.stringify(await ensureModel(await browser(id, opts), opts), null, 2));

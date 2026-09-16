@@ -2,6 +2,49 @@
 
 The Bun helper has no package dependencies. Private state defaults to `~/.local/share/chatgpt-review`; `CHATGPT_REVIEW_HOME` can select a task-private test directory. Never put this directory inside a public repository. Records and replies are mode `0600`, directories `0700`.
 
+## Open, reuse and close task tabs
+
+The durable binding is `records/<requirement-id>.json`: task ID → conversation URL, project, repository and summary. Browser session names and CDP target IDs are temporary and never replace this binding. Search `list <keywords>` or persistent memory when the ID is unknown, check the exact requirement/repository with `show --id ...`, then:
+
+```bash
+bun <skill-dir>/scripts/review.ts open --id admin-auth-review --cdp 9222
+```
+
+For a registered task, `open` focuses an existing tab on that conversation or opens its stored URL in a new tab. For a new task, it opens the configured project; after the first submission immediately register the observed conversation URL. Repeat calls reuse the managed tab. A managed tab that has navigated elsewhere fails instead of opening duplicates or navigating it away. The output includes `target`, `owned`, `reused`, and `url`; pass this target to model checks, capture, watch and organize. It never sends a message. An existing tab is treated as user-owned unless this helper already recorded creating it.
+
+The private `tabs/<id>.json` records ownership separately from the durable conversation record. Keep both under the Home state directory; do not use a temporary directory that gets deleted between tasks. OpenViking can additionally index the task, repository, conclusion and link for semantic discovery, but no memory-service call is needed to reopen a known ID.
+
+After reading the current completed result, running `organize`, and updating the record's final summary and `status: complete`, close the finished task tab:
+
+```bash
+bun <skill-dir>/scripts/review.ts finish --id admin-auth-review --cdp 9222 --run <currentRunId>
+```
+
+This is a required controlling-Agent cleanup step, not a suggestion to the user. `finish` requires the saved completed result for the **current** run and verified organization, checks the live page is still on that completed turn, closes only its recorded owned target, then verifies that target is gone. Rerunning after closure is safe. It preserves user-owned/untracked tabs, active or newer turns, unrelated pages, other tabs, Chrome and login data. When the owned target is the last tab, it leaves an inert `about:blank` tab to keep the shared browser alive. It retains records and replies so `open` later restores the same conversation, even after browser restart. A user request to keep the tab open takes precedence; include the target and reason in the handoff. Failed/blocked organization or monitoring retains the tab for recovery and must be reported. For task-created diagnostic tabs outside `open`, close their exact observed targets explicitly after use; never call browser-wide `close`.
+
+## Configure and verify conversation organization
+
+Read the existing private policy with `review.ts preferences`. Configure it once from the user's standing instructions and an observed project URL; do not hardcode a personal project or its ID in the skill:
+
+```bash
+bun <skill-dir>/scripts/review.ts configure \
+  --project-url <observedProjectUrl> --project-name <exactProjectName> \
+  --timezone Asia/Shanghai --language en
+```
+
+This writes only mode-0600 `preferences.json` under the private state root. `en` uses `FEA/DES/FIX/OPT/REL/EXP/DOC/RES`; `zh` uses their corresponding 功能/设计/修复/优化/发布/探索/文档/研究 labels. The supported title format is `MMDD｜TYPE｜Topic`, using **conversation creation time** in the configured timezone. Topic summarizes this conversation without repeating its project. If the user's naming policy differs, follow it through the UI with equivalent persistence verification instead of coercing it into this format.
+
+After registering the assistant-created conversation and finishing its active response:
+
+```bash
+bun <skill-dir>/scripts/review.ts organize --id admin-auth-review \
+  --cdp 9222 --target <targetId> --type FIX --topic 'Authentication recovery'
+```
+
+The command binds to the registered conversation and refuses an active response or changed page. It reads the latest loaded conversation response (reloading if the browser session did not capture it), selecting only ID, title, `create_time`, project ID and archive/pin flags. Request headers, credentials, prompts and full response bodies are never printed or persisted. It uses the target's sidebar options to rename and independently move to the configured project. It never clicks Archive or changes pin/star flags. Open the target's project/history in the same tab first if its sidebar entry is unavailable; the command does not search or navigate other chats.
+
+Each change must receive a successful save response before reloading, then match a **new** successful conversation GET. Menu closure and local DOM text alone do not count. HTTP rejection stops without repeatedly submitting or reloading away an unacknowledged save. Success returns `verified: true`, the actual title/creation time/project, and `changed`; it updates the private requirement record with `titleVerified`, `projectVerified` and `organizationVerifiedAt`. Rerunning an already organized conversation verifies it without renaming or moving again. Failure exits nonzero and records `organizationError` with verification flags false, even after a partial successful change. Correct the reported problem and rerun without resending the review prompt. Do not close the review task with these flags false or omit the pending step from a handoff.
+
 ## Select and verify the model before sending
 
 Use the observed loopback CDP endpoint, target ID, and exact page URL. New unsent chats are supported; this command does not require a registered conversation:
@@ -35,7 +78,7 @@ Write a task-private JSON file, then run `bun <skill-dir>/scripts/review.ts reco
 }
 ```
 
-`projectVerified` is true only after UI read-back. If a project move fails, record false and the blocker; do not claim it succeeded. `conversationCreatedAt` is optional and must come from actual conversation metadata, not the time of registration. The helper records a separate `recordedAt`/`updatedAt`.
+Initially use `projectVerified: false` unless placement has actually been verified; `organize` verifies and fills both title/project flags and `conversationCreatedAt`. Preserve those fields when updating the record. A failed or deferred organization remains outstanding work, not a completed review. The helper's separate `recordedAt`/`updatedAt` must never supply the title date.
 
 Set `model` to the label observed after the [pre-send model selection gate](conversation.md#select-the-review-model-before-every-send), refreshing it for each submitted turn. This field records the observation; `record` does not validate the model or replace `ensure-model`.
 
@@ -83,4 +126,4 @@ Successful completion means the response is finished, not that its content appro
 
 ## Validation
 
-`bun test <skill-dir>/tests` covers model switching and read-back, model/UI failures, turn matching, current-run result gating, stale responses, partial generation, cross-conversation protection, record reuse, and lock behavior. CLI regression tests use task-private state and browser/notification command substitutes. Validate model selection on an authorized unsent browser tab with a lower initial model/power, run `ensure-model`, read back the UI, and rerun to confirm idempotency; no test prompt is needed. To verify response monitoring, use an explicitly authorized test prompt, record its submitted user ID and watcher run ID, and let a Herdr watcher observe it while the parent does other work. Read the result and verify the watcher exits, the original tab survives, and the exact service lane is removed. Report script tests separately from actual Agent/CLI acceptance.
+`bun test <skill-dir>/tests` covers model switching and read-back, model/UI failures, turn matching, current-run result gating, stale responses, partial generation, cross-conversation protection, record reuse, lock behavior, organization persistence, task URL reuse, tab ownership, and safe completion cleanup. CLI regression tests use task-private state and browser/notification command substitutes. Validate model selection on an authorized unsent browser tab with a lower initial model/power, run `ensure-model`, read back the UI, and rerun to confirm idempotency; no test prompt is needed. To verify response monitoring, use an explicitly authorized test prompt, record its submitted user ID and watcher run ID, and let a Herdr watcher observe it while the parent does other work. Read the result and verify the watcher exits, the original tab survives until its reply is consumed and organized, `finish` closes only the owned target, `open` reuses the persisted link, and the exact service lane is removed. Report script tests separately from actual Agent/CLI acceptance.

@@ -46,6 +46,15 @@ describe('response identity and completion', () => {
   });
 });
 describe('private requirement registry', () => {
+  test('stores destination and naming preferences privately and validates them', () => {
+    const s = store();
+    const policy = { projectUrl: 'https://chatgpt.com/g/g-p-example/project', projectName: 'Agent reviews', timezone: 'Asia/Shanghai', language: 'en' as const };
+    s.configure(policy);
+    expect(s.preferences()).toEqual(policy);
+    expect(statSync(join(s.root, 'preferences.json')).mode & 0o777).toBe(0o600);
+    expect(() => s.configure({ ...policy, timezone: 'Invalid/Timezone' })).toThrow();
+    expect(s.preferences()).toEqual(policy);
+  });
   test('updates context while preserving the original requirement conversation', () => {
     const s = store(); const first = s.record(base);
     s.record({ ...base, summary: 'Reviewed', url: 'https://chatgpt.com/g/example/c/conversation-a' });
