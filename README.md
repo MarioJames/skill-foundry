@@ -33,12 +33,6 @@ Frontend acceptance helper around [vercel-labs/agent-browser](https://github.com
 
 **Reach for it when** doing smoke checks, journey prep with `APP_URL`, interactive browser exploration, or reusable headed login profiles.
 
-### `chatgpt-review` — review task policy
-
-Initiates design discussions and code reviews through the independent Convorel service. The skill owns prompt strategy, evidence selection and review decisions; Convorel owns persistent conversation bindings, continuation, recovery, exact-turn monitoring and resource cleanup. Completed model responses are checked against local evidence. Convorel must be installed separately; this skill contains no browser lifecycle runtime.
-
-**Reach for it when** making consequential architecture decisions, finalizing substantial plans, preparing high-risk changes, or resolving material uncertainty in debugging and acceptance. Also supports explicit second-opinion requests and continued discussions; routine low-risk work stays local.
-
 ### `public-acceptance` — public DEV acceptance
 
 Prepares a local DEV service, discovers and verifies its actual listening port, creates a temporary Cloudflare review URL, and retrieves the application's development login credentials from effective environment configuration or the development database. Reports available plaintext credentials to the requesting user, verifies login, and explains hash-only or external-auth limitations without inventing passwords. Uses `browser-harness` for frontend interaction and evidence, and retains the service and tunnel for manual review until cleanup.
@@ -109,6 +103,8 @@ A thin coding-time gate: default is fast path. Write a test only when the assert
 
 ## Install
 
+`chatgpt-review` is now bundled and maintained in [Convorel](https://github.com/MarioJames/convorel). Install it from Convorel; preserve existing personal modifications and private review history when migrating. It is no longer distributed by skill-foundry.
+
 Install with the [`skills`](https://github.com/vercel-labs/skills) CLI (`pnpm dlx` or `npx` can
 replace `bunx` when Bun is unavailable):
 
@@ -119,7 +115,6 @@ bunx skills add MarioJames/skill-foundry --all
 # One skill
 bunx skills add MarioJames/skill-foundry --skill asset-validation
 bunx skills add MarioJames/skill-foundry --skill browser-harness
-bunx skills add MarioJames/skill-foundry --skill chatgpt-review
 bunx skills add MarioJames/skill-foundry --skill public-acceptance
 bunx skills add MarioJames/skill-foundry --skill herdr
 bunx skills add MarioJames/skill-foundry --skill cow-workspace
@@ -165,7 +160,7 @@ Codex:
 git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
 mkdir -p ~/.agents/skills
-cp -R skills/asset-validation skills/browser-harness skills/chatgpt-review \
+cp -R skills/asset-validation skills/browser-harness \
   skills/public-acceptance \
   skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
@@ -178,7 +173,7 @@ Claude-style runtimes:
 git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
 mkdir -p ~/.claude/skills
-cp -R skills/asset-validation skills/browser-harness skills/chatgpt-review \
+cp -R skills/asset-validation skills/browser-harness \
   skills/public-acceptance \
   skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
@@ -190,7 +185,6 @@ Verify the installation:
 ```bash
 test -f ~/.agents/skills/asset-validation/scripts/acc.ts
 test -f ~/.agents/skills/browser-harness/scripts/bh.ts
-test -f ~/.agents/skills/chatgpt-review/references/convorel.md
 test -f ~/.agents/skills/public-acceptance/scripts/cqt.ts
 test -f ~/.agents/skills/herdr/scripts/route-lane.ts
 test -f ~/.agents/skills/cow-workspace/scripts/cow.ts
@@ -211,12 +205,12 @@ test -f ~/.agents/skills/tdd/SKILL.md
 cd skill-foundry
 git pull
 rm -rf ~/.agents/skills/asset-validation \
-  ~/.agents/skills/browser-harness ~/.agents/skills/chatgpt-review ~/.agents/skills/public-acceptance \
+  ~/.agents/skills/browser-harness ~/.agents/skills/public-acceptance \
   ~/.agents/skills/herdr ~/.agents/skills/cow-workspace ~/.agents/skills/trigger-build-workflow \
   ~/.agents/skills/persistent-ssh-ops ~/.agents/skills/provision-xray-hy2-node \
   ~/.agents/skills/changelog-writing ~/.agents/skills/awesome-presentation \
   ~/.agents/skills/repo-knowledge-graph ~/.agents/skills/tdd
-cp -R skills/asset-validation skills/browser-harness skills/chatgpt-review \
+cp -R skills/asset-validation skills/browser-harness \
   skills/public-acceptance \
   skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
@@ -375,7 +369,6 @@ Installable skill packages:
 
 - `skills/asset-validation/`
 - `skills/browser-harness/`
-- `skills/chatgpt-review/`
 - `skills/public-acceptance/`
 - `skills/herdr/`
 - `skills/cow-workspace/`
