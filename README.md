@@ -29,7 +29,7 @@ Real CLI acceptance defaults to Codex. Claude Code requires an explicit user cho
 
 ### `browser-harness` — browser acceptance scaffolding
 
-Frontend acceptance helper around [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser). Resolves target shape (URL / static HTML / project dir), starts a dev server when needed, prepares login state, injects a stable `APP_URL`, and collects screenshot + console + network evidence. Step-level browser actions stay on the agent-browser CLI; temporary public review delegates standard tunnel lifecycle to `public-acceptance` while retaining project-specific Host, environment, and URL mapping here.
+Frontend acceptance helper around [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser), using bundled headless Chromium by default and headed mode for interactive login. Resolves target shape (URL / static HTML / project dir), starts a dev server when needed, prepares login state, injects a stable `APP_URL`, and collects screenshot + console + network evidence. Step-level browser actions stay on the agent-browser CLI; temporary public review delegates standard tunnel lifecycle to `public-acceptance` while retaining project-specific Host, environment, and URL mapping here.
 
 **Reach for it when** doing smoke checks, journey prep with `APP_URL`, interactive browser exploration, or reusable headed login profiles.
 

@@ -4,6 +4,8 @@
 
 ```bash
 export AGENT_BROWSER_SESSION="<task-session>"
+export AGENT_BROWSER_HEADED=false
+export AGENT_BROWSER_EXECUTABLE_PATH="<已核实的自带 Chromium 可执行文件绝对路径>"
 export AGENT_BROWSER_PROFILE="$(bun "$BH_DIR/bh.ts" profile-dir)"
 ```
 
@@ -34,7 +36,9 @@ else
   bun "$BH_DIR/bh.ts" cleanup "$TARGET"
   exit "$BH_PREPARE_STATUS"  # 仅结束当前命令批次；Agent 按失败原因修复后重试
 fi
-bun "$BH_DIR/bh.ts" login "$APP_URL/login"     # 必要时；默认使用当前项目 profile
+# 仅在需要人工登录时执行以下两行，等待登录完成后再 close：
+bun "$BH_DIR/bh.ts" login "$APP_URL/login"
+agent-browser close  # 保留 profile；下面重新打开即恢复无头模式
 
 # agent 直接驱动 agent-browser；用 profile-dir 复用 bh 持久化的登录态
 PROFILE_DIR="$(bun "$BH_DIR/bh.ts" profile-dir)"

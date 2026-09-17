@@ -12,7 +12,7 @@ command -v bun >/dev/null || {
   exit 2
 }
 command -v agent-browser >/dev/null || {
-  echo "请按 https://github.com/vercel-labs/agent-browser 安装 agent-browser，并配置已安装的 Chrome 路径；没有可用浏览器时再按授权安装"
+  echo "请按 https://github.com/vercel-labs/agent-browser 安装 agent-browser；使用工具自带 Chromium，没有可用浏览器时再按授权运行 agent-browser install"
   exit 2
 }
 ```
@@ -49,15 +49,21 @@ fi
 
 `login` / `collect-evidence` 直接调用 agent-browser，继承调用环境与其配置读取规则；本技能只管理验收 profile，不另设 `executablePath` 或 `headed` 配置层。agent-browser 默认优先级从低到高为：`~/.agent-browser/config.json` → 当前工作目录的 `agent-browser.json` → 环境变量 → CLI 参数。显式 `AGENT_BROWSER_CONFIG` / `--config` 会改用指定文件，替代默认配置文件读取。
 
-普通已安装的 Google Chrome 可在用户配置中设置一次 `executablePath`，直接调用 agent-browser 和运行 harness 时共用。按平台核实实际安装位置，例如 Linux 的 `/usr/bin/google-chrome-stable` 或 macOS 的 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`。已有可用 Chrome 时，无需额外运行 `agent-browser install` 下载 Chrome for Testing；未配置路径时的浏览器发现行为由 agent-browser 决定。
+验收固定为 **自带 Chromium + 无头模式**。浏览器使用工具管理的独立安装或缓存，例如已有 Playwright Chromium；先检查实际安装记录和可执行文件，再通过 agent-browser 原生 `executablePath` / `AGENT_BROWSER_EXECUTABLE_PATH` 显式指定，不把某台机器的路径或缓存版本硬编码进技能。agent-browser 引擎名称为 `chrome`，但这不意味着使用系统 Google Chrome。
 
-`headed` 独立于浏览器路径，同一份 Chrome 支持有头和无头模式。本机验收希望显示窗口时，可在现有用户配置中合并 `"headed": true`，保留其他配置。`collect-evidence` 不主动指定窗口模式；单次无头采证可用：
+禁止省略路径后依赖自动发现：agent-browser 的发现顺序可能优先选择系统 Chrome，见 [官方浏览器说明](https://agent-browser.dev/engines/chrome)。没有可用的自带 Chromium 时报告缺失前置，按已有授权安装；不静默回退到系统 Chrome，不自动安装系统依赖。
+
+验收入口统一设置 `AGENT_BROWSER_HEADED=false`，直接交互与 `collect-evidence` 都继承此设置。恢复旧配置时，只调整本任务已获授权的 `headed` / `executablePath`，保留其他字段；不在脚本中自动改写用户配置。临时需要可视化调试时可以显式覆盖，完成后关闭该会话再切回无头：
 
 ```bash
-AGENT_BROWSER_HEADED=false bun "$BH_DIR/bh.ts" collect-evidence "$APP_URL"
+export AGENT_BROWSER_HEADED=false
+export AGENT_BROWSER_EXECUTABLE_PATH="<已核实的自带 Chromium 可执行文件绝对路径>"
+bun "$BH_DIR/bh.ts" collect-evidence "$APP_URL"
 ```
 
-`login` 为交互登录显式传入 `--headed`，优先于环境变量，所以以上无头覆盖仅适用于采证。切换浏览器路径或窗口模式前，先关闭本任务的 agent-browser 会话，再以新配置启动；已有会话或 `--reuse-page` 不会因此自动切换模式。关闭时保持同一 session/profile 边界，不关闭用户既有浏览器，也不删除持久化登录态。
+`login` 为交互登录显式传入 `--headed`，优先于环境变量，所以以上无头设置适用于直接交互和采证，登录除外。切换浏览器路径或窗口模式前，先关闭本任务的 agent-browser 会话，再以新配置启动；已有会话或 `--reuse-page` 不会因此自动切换模式。关闭时保持同一 session/profile 边界，不关闭用户既有浏览器，也不删除持久化登录态。
+
+日常验收使用任务独有 session/profile，不使用 `--auto-connect` 或指向 Convorel 的 `--cdp`，避免接管 ChatGPT 登录浏览器。
 
 ## 运行约束
 

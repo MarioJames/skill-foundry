@@ -9,9 +9,9 @@ description: 验收前端页面：准备服务和登录态，通过 agent-browse
 
 ## 浏览器配置
 
-默认遵循用户的 agent-browser 配置，不另设浏览器配置层。普通已安装的 Google Chrome 可通过 `~/.agent-browser/config.json` 的 `executablePath` 配置一次，供 agent-browser 与本技能共用；无需为 harness 另装 Chrome for Testing。
+默认使用 **自带 Chromium + 无头模式**，交互验收和采证共用同一命名 session/profile。遵循 agent-browser 原生配置，不另设浏览器配置层；日常验收不连接 Convorel 的 ChatGPT 浏览器，也不复用其 CDP、session 或 profile。
 
-浏览器路径与窗口模式是独立选择：`executablePath` 选择浏览器，`headed` 决定是否显示窗口。本机验收可在上述用户配置中设 `"headed": true`，继续使用同一份 Chrome。单次无头采证可运行 `AGENT_BROWSER_HEADED=false bun "$BH_DIR/bh.ts" collect-evidence "$APP_URL"`；`login` 会显式添加 `--headed`，不受这个无头覆盖控制。配置优先级、平台路径示例和切换模式见 [平台与运行时](references/runtime.md#浏览器与窗口模式)。
+`login` 为人工登录显式添加 `--headed`，登录后关闭本任务会话，再以无头模式继续验收，持久化 profile 保留。若旧配置仍有 `"headed": true`，本次任务设置 `AGENT_BROWSER_HEADED=false`；浏览器路径必须显式指向已安装的自带 Chromium（工具管理的浏览器缓存），不依赖自动发现、也不回退到系统 Chrome。配置优先级、已有配置迁移和模式切换见 [平台与运行时](references/runtime.md#浏览器与窗口模式)。
 
 ## 默认流程
 
@@ -25,6 +25,9 @@ description: 验收前端页面：准备服务和登录态，通过 agent-browse
 # BROWSER_HARNESS_SKILL_DIR = 实际加载本 SKILL.md 的目录
 BH_DIR="$BROWSER_HARNESS_SKILL_DIR/scripts"
 export AGENT_BROWSER_SESSION="<task-session>"
+export AGENT_BROWSER_HEADED=false
+# 先核实工具管理的 Chromium 实际路径；不填系统 Chrome 或 Convorel 浏览器路径
+export AGENT_BROWSER_EXECUTABLE_PATH="<已核实的自带 Chromium 可执行文件绝对路径>"
 export AGENT_BROWSER_PROFILE="$(bun "$BH_DIR/bh.ts" profile-dir)"
 # TARGET = 用户目标 URL、HTML 绝对路径或项目绝对路径
 # 在任务/项目根运行；失败时停止依赖动作，并清理本任务已创建的资源
