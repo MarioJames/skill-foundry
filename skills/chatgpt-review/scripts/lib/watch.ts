@@ -9,7 +9,7 @@ export const POLL_MS = 60_000;
 const now = () => new Date().toISOString();
 async function notify(opts: Record<string, string>, id: string, runId: string, status: string, path: string) {
   if (!opts['notify-pane']) return { delivered: false, reason: 'No originating pane supplied' };
-  const note = `ChatGPT 后台任务 ${id}（runId=${runId}）已结束，状态 ${status}。结果文件：${path}。请用 result --id ${id} --run ${runId} 核对当前轮次后继续原需求；不要重新发送原提示。`;
+  const note = `ChatGPT 后台任务 ${id}（runId=${runId}）已结束，状态 ${status}。结果文件：${path}。请用 result --id ${id} --run ${runId} 核对当前轮次后继续原需求；不要重新发送原提示。消费最终回复并保存总结后，执行 finish --id ${id} --cdp ${required(opts, 'cdp')} --run ${runId} 关闭自有标签页；组织验证失败须记录 blocked 和原因，清理仍需执行。`;
   const results = await Promise.allSettled([
     command(['herdr', 'agent', 'prompt', opts['notify-pane'], note]),
     command(['herdr', 'notification', 'show', `ChatGPT: ${id}`, '--body', status, '--sound', 'done']),

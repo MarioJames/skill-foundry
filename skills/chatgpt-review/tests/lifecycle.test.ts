@@ -60,12 +60,12 @@ test('leaves active, changed and superseded pages open', async () => {
     expect(f.calls.some(c => c[0] === 'close')).toBe(false);
   }
 });
-test('refuses stale runs and incomplete organization before closing', async () => {
+test('refuses stale runs but releases completed replies with pending organization', async () => {
   const f = fixture(); await openReview(f.store, f.id, '9222', f.tabs);
   await expect(finishReview(f.store, f.id, '9222', randomUUID(), f.tabs, f.read)).rejects.toThrow('no longer current');
   f.store.record({ ...f.record, projectVerified: false });
-  await expect(finishReview(f.store, f.id, '9222', f.runId, f.tabs, f.read)).rejects.toThrow('organize');
-  expect(f.calls.some(c => c[0] === 'close')).toBe(false);
+  expect(await finishReview(f.store, f.id, '9222', f.runId, f.tabs, f.read)).toMatchObject({ closed: true, organizationPending: true });
+  expect(f.store.get(f.id)).toMatchObject({ projectVerified: false, status: 'blocked' });
 });
 test('new requirements open the configured project once without inventing a conversation URL', async () => {
   const f = fixture();
@@ -80,4 +80,20 @@ test('closes the final review tab while leaving an inert tab for the shared brow
   await openReview(f.store, f.id, '9222', f.tabs);
   expect(await finishReview(f.store, f.id, '9222', f.runId, f.tabs, f.read)).toMatchObject({ closed: true });
   expect(f.available().map(t => t.url)).toEqual(['about:blank']);
+});
+
+test('organization failure remains blocked after closing its completed conversation', async () => {
+  const f = fixture(); await openReview(f.store, f.id, '9222', f.tabs);
+  f.store.record({ ...f.record, status: 'blocked', titleVerified: false, organizationError: 'Save rejected' });
+  expect(await finishReview(f.store, f.id, '9222', f.runId, f.tabs, f.read)).toMatchObject({ closed: true, organizationPending: true });
+  expect(f.store.get(f.id)).toMatchObject({ status: 'blocked', organizationError: 'Save rejected' });
+});
+
+test('does not close when a successor starts during the page check', async () => {
+  const f = fixture(); await openReview(f.store, f.id, '9222', f.tabs);
+  await expect(finishReview(f.store, f.id, '9222', f.runId, f.tabs, async () => {
+    privateWrite(f.store.path('watch', f.id), { ...f.store.status(f.id), runId: randomUUID(), state: 'waiting' });
+    return f.read();
+  })).rejects.toThrow('no longer current');
+  expect(f.calls.some(c => c[0] === 'close')).toBe(false);
 });

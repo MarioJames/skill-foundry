@@ -41,12 +41,12 @@ export async function finishReview(store: Store, id: string, cdp: string, runId:
   const record = store.get(id);
   const result = store.result(id, runId);
   if (result.state !== 'complete' || !result.reply) throw new Error('A completed, saved reply is required before closing');
-  if (!record.projectVerified || !record.titleVerified || !record.organizationVerifiedAt || record.organizationError)
-    throw new Error('Verify conversation title and project with organize before closing');
-  if (record.status !== 'complete') throw new Error('Record the final summary and mark the review complete before closing');
+  const organizationPending = !record.projectVerified || !record.titleVerified || !record.organizationVerifiedAt || !!record.organizationError;
+  if (record.status !== 'complete' && record.status !== 'blocked') throw new Error('Record the final summary and mark the review complete or blocked before closing');
+  if (organizationPending && record.status === 'complete') store.record({ ...record, status: 'blocked' });
   const saved = binding(store, id);
-  if (!saved || !saved.owned) return { closed: false, reason: 'User-owned or untracked tab is preserved', url: record.url };
-  if (saved.closedAt) return { closed: true, alreadyClosed: true, url: record.url };
+  if (!saved || !saved.owned) return { closed: false, reason: 'User-owned or untracked tab is preserved', organizationPending, url: record.url };
+  if (saved.closedAt) return { closed: true, alreadyClosed: true, organizationPending, url: record.url };
   if (saved.cdp !== cdp) throw new Error('CDP endpoint differs from the managed tab binding');
   const before = await tabs('list');
   if (!Array.isArray(before.tabs)) throw new Error('Cannot inspect browser targets');
@@ -56,10 +56,11 @@ export async function finishReview(store: Store, id: string, cdp: string, runId:
     // Never call browser close: preserve other targets, the shared process and login.
     // agent-browser refuses to close the last tab; leave one inert blank tab instead.
     if (before.tabs.length === 1) await tabs('new', 'about:blank');
+    store.result(id, runId); // A successor may have started during the browser reads.
     await tabs('close', saved.target);
     const after = await tabs('list');
     if (!Array.isArray(after.tabs) || after.tabs.some((t: any) => t.targetId === saved.target)) throw new Error('Tab closure was not verified');
   }
   privateWrite(store.path('tabs', id), { ...saved, closedAt: new Date().toISOString() });
-  return { closed: true, target: saved.target, url: record.url };
+  return { closed: true, target: saved.target, organizationPending, url: record.url };
 }
