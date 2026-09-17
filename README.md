@@ -33,9 +33,9 @@ Frontend acceptance helper around [vercel-labs/agent-browser](https://github.com
 
 **Reach for it when** doing smoke checks, journey prep with `APP_URL`, interactive browser exploration, or reusable headed login profiles.
 
-### `chatgpt-review` — persistent ChatGPT collaboration
+### `chatgpt-review` — review task policy
 
-Uses a signed-in, headed regular Chrome session for design discussions and code reviews. Keeps one conversation per requirement in the user's chosen project, stores context privately, and monitors the exact submitted turn every 60 seconds in a background task. Completed model responses are checked against local evidence.
+Initiates design discussions and code reviews through the independent Convorel service. The skill owns prompt strategy, evidence selection and review decisions; Convorel owns persistent conversation bindings, continuation, recovery, exact-turn monitoring and resource cleanup. Completed model responses are checked against local evidence. Convorel must be installed separately; this skill contains no browser lifecycle runtime.
 
 **Reach for it when** making consequential architecture decisions, finalizing substantial plans, preparing high-risk changes, or resolving material uncertainty in debugging and acceptance. Also supports explicit second-opinion requests and continued discussions; routine low-risk work stays local.
 
@@ -190,7 +190,7 @@ Verify the installation:
 ```bash
 test -f ~/.agents/skills/asset-validation/scripts/acc.ts
 test -f ~/.agents/skills/browser-harness/scripts/bh.ts
-test -f ~/.agents/skills/chatgpt-review/scripts/review.ts
+test -f ~/.agents/skills/chatgpt-review/references/convorel.md
 test -f ~/.agents/skills/public-acceptance/scripts/cqt.ts
 test -f ~/.agents/skills/herdr/scripts/route-lane.ts
 test -f ~/.agents/skills/cow-workspace/scripts/cow.ts

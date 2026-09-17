@@ -1,6 +1,6 @@
 # Proactive Pro review
 
-Judge the cost of a wrong decision, its reach, and the strength of available evidence. Topic keywords alone do not justify a remote review. Apply the [review model selection gate](conversation.md#select-the-review-model-before-every-send) using existing account/project authorization; do not silently fall back to another model or expand the material allowed to leave the machine.
+Judge the cost of a wrong decision, its reach, and the strength of available evidence. Topic keywords alone do not justify a remote review. Apply the [review model selection through Convorel](convorel.md#resolve-installation-and-private-state) using existing account/project authorization; do not silently fall back to another model or expand the material allowed to leave the machine.
 
 ## Trigger at decision points
 
@@ -21,11 +21,11 @@ Do not automatically review routine copy/style changes, small features following
 
 ## Send a reviewable decision
 
-Prepare a concrete draft before requesting review. Include the goal and constraints, relevant code/revision, alternatives and recommendation, verified evidence, assumptions and unresolved questions. Use only authorized, task-relevant material and omit secrets. For acceptance, supply actual test evidence and its limits; the remote reviewer must not claim to have run the local tests.
+Prepare a concrete draft before requesting review. Include the goal and constraints, exact project path and known revision, a small map of relevant files, alternatives and recommendation, verified result summaries, assumptions and unresolved questions. Include focused code blocks that carry the essence of the decision and explain their significance; the reviewer can retrieve surrounding implementation through the configured read-only MCP. Prefer a useful excerpt over a whole-file dump, without imposing a fixed line quota or requiring separate permission for relevant code already in scope. Use only authorized, task-relevant material and omit secrets. For acceptance, supply actual test evidence and its limits; the remote reviewer must not claim to have run the local tests.
 
 Ask for failure-causing assumptions, concrete counterexamples, simpler established alternatives, and a distinction between verified defects and hypotheses. Request decision-blocking issues separately from optional improvements and ask what experiment would resolve a disagreement. Avoid a generic request for approval.
 
-Use [conversation.md](conversation.md) to reuse the requirement session and verify the project/model, then [commands.md](commands.md) to bind the submitted turn and its background watcher. Briefly tell the user which decision warrants review. Continue independent work while the watcher checks every 60 seconds.
+Use the [Convorel conversation service](convorel.md) to create/reuse the session and manage its lifecycle. Prepare the complete message using [review-prompt.md](review-prompt.md); the service does not own the review strategy. Briefly tell the user which decision warrants review. Continue independent work while the watcher checks every 60 seconds.
 
 ## Close the gate without a review loop
 
