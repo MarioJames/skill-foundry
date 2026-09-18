@@ -1,4 +1,4 @@
 interface:
   display_name: "TDD"
-  short_description: "Decide whether TDD applies and how to write a valid test"
-  default_prompt: "Use $tdd before writing or changing any production code or tests."
+  short_description: "写代码或测试前判断验证方式，针对有效契约选择测试并避免无用断言"
+  default_prompt: "使用 $tdd 在编写或修改代码、测试前判断需要哪些验证，并选择合适的测试方式。"

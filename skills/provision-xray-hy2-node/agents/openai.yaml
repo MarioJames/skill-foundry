@@ -1,4 +1,4 @@
 interface:
-  display_name: "Provision Xray + HY2 Node"
-  short_description: "Deploy and verify mixed Xray and HY2 nodes"
-  default_prompt: "Use $provision-xray-hy2-node to provision and verify an Xray Vision plus Hysteria 2 server without exposing credentials."
+  display_name: "Provision Xray HY2 Node"
+  short_description: "部署与验证 Xray 和 Hysteria 2 混合节点，检查证书、网络及客户端配置"
+  default_prompt: "使用 $provision-xray-hy2-node 部署并验证 Xray Vision 与 Hysteria 2 混合节点，妥善保护生成的凭据。"

@@ -1,4 +1,4 @@
 interface:
   display_name: "Trigger Build Workflow"
-  short_description: "Commit, push, or build within authorized scope"
-  default_prompt: "Use $trigger-build-workflow to perform only the commit, push, or GitHub Actions build/release operations authorized in this request; workflow compatibility does not authorize additional actions."
+  short_description: "在用户已授权的范围内提交、推送代码，或触发 GitHub Actions 构建与发布"
+  default_prompt: "使用 $trigger-build-workflow 仅执行本次请求已授权的提交、推送或 GitHub Actions 构建发布操作。"

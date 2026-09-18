@@ -1,6 +1,6 @@
 ---
 name: changelog-writing
-description: Draft or review release notes for users or engineering teams from release evidence, including structured output for release workflows.
+description: 根据发布证据撰写或审查面向用户、工程团队的更新说明；用于编写变更日志、发布说明和工程交接，支持发布流程所需的结构化输出。
 ---
 
 # Changelog Writing

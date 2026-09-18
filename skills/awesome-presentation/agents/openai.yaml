@@ -1,4 +1,4 @@
 interface:
   display_name: "Awesome Presentation"
-  short_description: "用 awesome-presentation 将材料落成可运行演示，按需讨论内容"
-  default_prompt: "用 $awesome-presentation 根据我的材料和目标完成演示文稿、构建与浏览器验收；信息足够或已授权自行决定时直接完成，只澄清影响正确性的关键缺口。"
+  short_description: "使用 React 演示脚手架将材料制作成可运行的演示文稿并完成验收"
+  default_prompt: "使用 $awesome-presentation 根据我的材料和目标完成演示文稿、构建与浏览器验收；信息足够时直接完成，按需讨论内容。"

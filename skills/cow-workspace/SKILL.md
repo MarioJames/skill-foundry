@@ -1,6 +1,6 @@
 ---
 name: cow-workspace
-description: Create, inspect, export, and remove copy-on-write Git workspaces for local development or parallel agents on Linux. Use when worktrees duplicate source or dependencies, or when isolated edits should reuse a prepared environment. Agent and terminal routing stays with Herdr.
+description: 在 Linux 上创建、检查、导出和回收写时复制 Git 工作区。用于工作树重复占用源码或依赖，或隔离编辑需要复用已准备环境的场景；Agent 与终端调度交由 Herdr。
 ---
 
 # CoW Workspace

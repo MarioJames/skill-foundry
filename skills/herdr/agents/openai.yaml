@@ -1,7 +1,7 @@
 interface:
   display_name: "Herdr"
-  short_description: "Name tabs at task start, even for read-only or solo work"
-  default_prompt: "Use $herdr at conversation start or a main-task change to name your own tab, including for read-only questions without parallel work, then coordinate useful parallel work and clean up task-owned resources."
+  short_description: "在会话开始或主任务变化时命名标签页，并协调有收益的并行工作和任务资源清理"
+  default_prompt: "使用 $herdr 在会话开始或主任务变化时命名当前标签页，包括只读问答和单任务工作；按需协调并行工作并清理任务自有资源。"
 
 policy:
   allow_implicit_invocation: true

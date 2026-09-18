@@ -1,6 +1,6 @@
 ---
 name: provision-xray-hy2-node
-description: Deploy, troubleshoot, or audit Xray Vision/REALITY and Hysteria 2 mixed nodes, including certificates, network paths, and client configuration.
+description: 部署、排查或审计 Xray Vision/REALITY 与 Hysteria 2 混合节点，包括证书、网络链路和客户端配置。
 ---
 
 # Xray and Hysteria 2 nodes

@@ -1,6 +1,6 @@
 ---
 name: herdr
-description: Use at the start of a conversation or when the main task changes to name the current Herdr tab, including read-only Q&A and evaluations without parallel work. No explicit Herdr mention is needed. Also use for useful parallel work and Herdr agent or terminal management.
+description: 在会话开始或主任务变化时命名当前 Herdr 标签页，包括只读问答和无并行工作的评估，无需显式提及 Herdr。也用于有收益的并行工作，以及 Herdr Agent 和终端管理。
 ---
 
 # Herdr

@@ -1,6 +1,6 @@
 ---
 name: persistent-ssh-ops
-description: Operate remote servers through reusable TTY SSH sessions; initialize local named-host profiles when requested.
+description: 通过可复用的 TTY SSH 会话操作远程服务器；用于远程维护、部署、排障和多步验证，按请求初始化本地命名主机配置。
 ---
 
 # Persistent SSH Ops

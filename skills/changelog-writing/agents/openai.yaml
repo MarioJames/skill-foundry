@@ -1,4 +1,4 @@
 interface:
   display_name: "Changelog Writing"
-  short_description: "Write customer or engineering release notes"
-  default_prompt: "Use $changelog-writing to draft release notes for the appropriate audience."
+  short_description: "根据发布证据撰写面向用户或工程团队的更新说明，支持发布流程的结构化输出"
+  default_prompt: "使用 $changelog-writing 根据发布证据，为目标受众撰写更新说明。"

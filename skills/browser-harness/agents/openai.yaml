@@ -1,0 +1,4 @@
+interface:
+  display_name: "Browser Harness"
+  short_description: "准备前端服务与登录态，通过浏览器交互验收页面并采集截图、控制台和网络证据"
+  default_prompt: "使用 $browser-harness 准备服务和登录态，通过浏览器验收关键页面，采集证据并清理本任务资源。"

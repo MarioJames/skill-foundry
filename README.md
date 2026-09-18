@@ -382,6 +382,13 @@ Installable skill packages:
 
 ## Verify
 
+### Skill metadata convention
+
+- Keep the skill directory and `SKILL.md` frontmatter `name` as the same lowercase, hyphenated identifier, such as `browser-harness`. Installation selectors and `$skill-name` references use this identifier.
+- Set `agents/openai.yaml` → `interface.display_name` to an English title with spaces, such as `Browser Harness` or `ChatGPT Review`. Preserve product names and acronyms such as `ChatGPT`, `CoW`, `SSH`, and `TDD`.
+- Write frontmatter `description`, `interface.short_description`, and `interface.default_prompt` in Chinese. Describe when the skill applies and retain meaningful exclusions; keep technical names and the `$skill-name` identifier unchanged.
+- Include `agents/openai.yaml` in every skill package and preserve existing invocation policy and dependencies when updating metadata.
+
 Useful local checks before publishing changes:
 
 ```bash

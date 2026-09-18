@@ -1,6 +1,6 @@
 ---
 name: trigger-build-workflow
-description: Commit, push, or dispatch GitHub Actions builds and releases within the user's authorized scope. Local packaging does not trigger this skill.
+description: 在用户授权范围内提交、推送代码，或触发 GitHub Actions 构建与发布。本地打包不触发本技能。
 ---
 
 # Trigger Build Workflow

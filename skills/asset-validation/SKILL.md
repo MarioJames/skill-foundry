@@ -1,6 +1,6 @@
 ---
 name: asset-validation
-description: Review reusable skills, plugins, rules, and agents; run real CLI acceptance when behavioral validation is requested. Not for ordinary application tests.
+description: 审查可复用技能、插件、规则和 Agent；需要行为验证时运行真实 CLI 验收。不用于普通应用测试。
 ---
 
 # Asset Validation

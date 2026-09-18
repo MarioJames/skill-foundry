@@ -1,4 +1,4 @@
 interface:
   display_name: "Persistent SSH Ops"
-  short_description: "Initialize SSH profiles and reuse secure TTY sessions"
-  default_prompt: "Use $persistent-ssh-ops to operate this remote server through one reusable SSH session."
+  short_description: "通过可复用的 TTY SSH 会话操作远程服务器，并按需初始化主机配置"
+  default_prompt: "使用 $persistent-ssh-ops 通过一个可复用的 SSH 会话操作远程服务器，验证结果并关闭本任务会话。"

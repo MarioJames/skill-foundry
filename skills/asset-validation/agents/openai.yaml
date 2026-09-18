@@ -1,0 +1,4 @@
+interface:
+  display_name: "Asset Validation"
+  short_description: "审查可复用技能、插件、规则与 Agent，并按需运行真实 CLI 行为验收"
+  default_prompt: "使用 $asset-validation 审查这项可复用资产；需要行为验证时运行真实 CLI 验收。"

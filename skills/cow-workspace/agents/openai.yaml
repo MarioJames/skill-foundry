@@ -1,7 +1,7 @@
 interface:
   display_name: "CoW Workspace"
-  short_description: "Reuse prepared files while isolating each task's writes"
-  default_prompt: "Use $cow-workspace to create a copy-on-write development workspace, reuse prepared dependencies and shared environment configuration, then export the task commits and clean up its resources."
+  short_description: "复用已准备的源码与依赖，隔离每个任务的写入，并支持提交导出和资源回收"
+  default_prompt: "使用 $cow-workspace 创建写时复制开发工作区，复用已准备的依赖和共享环境配置，完成后导出任务提交并按条件回收资源。"
 
 policy:
   allow_implicit_invocation: true
