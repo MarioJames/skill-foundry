@@ -8,3 +8,8 @@
 skills/asset-validation/tests/*
 !skills/asset-validation/tests/cli-default.test.ts
 !skills/asset-validation/tests/docs.test.ts
+
+# Ship the Jev scheduling contract without unrelated local Herdr fixtures.
+!skills/herdr/tests/
+skills/herdr/tests/*
+!skills/herdr/tests/jev-decision.test.ts

@@ -1,0 +1,47 @@
+{
+  "goal": "Implement two independent formatters, then integrate and verify both.",
+  "constraints": ["Preserve the agreed public interfaces", "Prefer the least expensive capable model", "Workers author only their owned source and test files; the main Agent runs checks and owns Git, dependency installation and shared build/cache writes"],
+  "max_concurrency": 2,
+  "models": [
+    {"id": "gpt-5.6-luna", "agent": "codex", "description": "Local, well-specified implementation with direct tests"},
+    {"id": "gpt-6-astra", "agent": "codex", "description": "Cross-module reasoning, ambiguous requirements and integration"}
+  ],
+  "tasks": [
+    {
+      "id": "date", "status": "pending", "cwd": "/workspace/project",
+      "summary": "Implement the agreed date formatter",
+      "inputs": "Date format contract is fixed; input is an ISO date string",
+      "deliverable": "Date formatter and focused tests",
+      "acceptance": "Specified valid and invalid date examples pass",
+      "uncertainties": [], "depends_on": [],
+      "reads": ["repo/project/contracts/date"], "writes": ["repo/project/src/date", "repo/project/tests/date"],
+      "allowed_models": ["gpt-5.6-luna", "gpt-6-astra"]
+    },
+    {
+      "id": "money", "status": "pending", "cwd": "/workspace/project",
+      "summary": "Implement the agreed money formatter",
+      "inputs": "Currency and rounding contract is fixed",
+      "deliverable": "Money formatter and focused tests",
+      "acceptance": "Specified currency and rounding examples pass",
+      "uncertainties": [], "depends_on": [],
+      "reads": ["repo/project/contracts/money"], "writes": ["repo/project/src/money", "repo/project/tests/money"],
+      "allowed_models": ["gpt-5.6-luna", "gpt-6-astra"]
+    },
+    {
+      "id": "integrate", "status": "pending", "cwd": "/workspace/project",
+      "summary": "Integrate the two formatters and verify the public API",
+      "inputs": "Use the accepted date and money task artifacts",
+      "deliverable": "Integrated public API and validation report",
+      "acceptance": "Public API examples and relevant existing checks pass",
+      "uncertainties": [], "depends_on": ["date", "money"],
+      "reads": ["repo/project/src/date", "repo/project/src/money"],
+      "writes": ["repo/project/src/index", "git/project"],
+      "allowed_models": ["gpt-6-astra"]
+    }
+  ],
+  "plans": [
+    {"id": "parallel_luna", "description": "Both contracts are fixed and writes are disjoint; run both small implementations concurrently", "assignments": [{"task_id": "date", "model_id": "gpt-5.6-luna"}, {"task_id": "money", "model_id": "gpt-5.6-luna"}]},
+    {"id": "date_first", "description": "Run only the date task when the proposed parallel split is not semantically independent", "assignments": [{"task_id": "date", "model_id": "gpt-5.6-luna"}]},
+    {"id": "integrate_result", "description": "Integrate only after both implementations have been accepted", "assignments": [{"task_id": "integrate", "model_id": "gpt-6-astra"}]}
+  ]
+}

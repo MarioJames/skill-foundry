@@ -47,6 +47,8 @@ The existing Bun CLI owns anonymous tunnel start / status / stop / cleanup with 
 
 After the task decision, the bundled Bun/TypeScript resource router can split the caller tab, create a tab in an existing directory-matched workspace, or create a new workspace when no safe match exists. It matches target directories using cwd and Git roots, preserves focus, returns an explicit cleanup contract, and rolls back newly created resources when verification fails.
 
+For multi-task model selection, the optional [Jev scheduling flow](skills/herdr/references/jev-scheduling.md) selects a bounded next-wave proposal through OpenRouter, returning parallelism and exact worker models together. Declared dependencies, resource conflicts and capacity are checked locally; the main Agent dispatches through Herdr, accepts results and advances the next wave. The decision helper supports an offline dry run and requires `OPENROUTER_API_KEY` for live choices.
+
 **Reach for it when** independent commands or Agent deliverables can overlap with a net time benefit, or Herdr runtime resources need coordination.
 
 ### `cow-workspace` — copy-on-write development workspaces
@@ -405,6 +407,7 @@ bun test skills/asset-validation/tests
 bun test skills/browser-harness/tests
 bun test skills/public-acceptance/tests
 bun test skills/cow-workspace/tests # Requires Linux, fuse-overlayfs and /dev/fuse
+bun test skills/herdr/tests
 bun test skills/trigger-build-workflow/tests
 bun test skills/persistent-ssh-ops/tests
 ```
@@ -424,6 +427,7 @@ the affected scenarios again.
 
 ```bash
 bun skills/herdr/scripts/route-lane.ts --help
+bun skills/herdr/scripts/decide-tasks.ts --input skills/herdr/examples/jev-batch.json --dry-run
 bun skills/cow-workspace/scripts/cow.ts --help
 bun skills/herdr/scripts/probe-workspace.ts --help
 bun skills/trigger-build-workflow/scripts/detect-build-workflow.ts --help

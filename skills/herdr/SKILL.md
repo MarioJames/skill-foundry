@@ -1,6 +1,6 @@
 ---
 name: herdr
-description: 在会话开始或主任务变化时命名当前 Herdr 标签页，包括只读问答和无并行工作的评估，无需显式提及 Herdr。也用于有收益的并行工作，以及 Herdr Agent 和终端管理。
+description: 在会话开始或主任务变化时命名当前 Herdr 标签页，包括只读问答和无并行工作的评估，无需显式提及 Herdr。也用于有收益的并行工作、Jev 多任务调度与模型选择，以及 Herdr Agent 和终端管理。
 ---
 
 # Herdr
@@ -8,6 +8,14 @@ description: 在会话开始或主任务变化时命名当前 Herdr 标签页，
 At conversation start or a main-task change, resolve the caller and name its tab as soon as the task is clear, before substantive task work or a final answer. This applies to read-only questions and evaluations as well as implementation; neither an explicit Herdr request nor a need for parallel work is required. Use the CLI result to establish availability, not inherited environment variables; if the caller cannot be resolved, continue the task without naming.
 
 Naming and delegation are independent. After the naming check, use Herdr as the first choice for useful parallel work, including independent subtasks of the same deliverable.
+
+## Decompose, decide, dispatch
+
+For multi-task work that benefits from model selection, read [Jev task scheduling](references/jev-scheduling.md). The main Agent defines bounded tasks, dependencies, acceptance criteria and resource ownership; [`scripts/decide-tasks.ts`](scripts/decide-tasks.ts) calls OpenRouter `~typesafe/jev-latest` to select a candidate wave with explicit execution models. Keep ordinary single-owner work direct.
+
+Supply only the current scheduling context and a few concrete candidate plans. The script excludes plans with declared dependency, resource, model or capacity violations, bounds the complete request, and returns parallelism together with task/model assignments. It does not discover hidden dependencies or replace runtime checks. Missing context, low confidence and API failure return control to the main Agent without dispatch or silent model substitution.
+
+Before dispatch, recheck task state, actual available models and remaining capacity; only `ok=true` with `status=selected` supplies a dispatchable proposal. Follow the existing lane router, explicitly start each Agent with its selected model, record returned IDs, and mark it running before starting another wave. Use `cow-workspace` when independent writes need filesystem isolation; database and shared-service ownership remain separate. Accept and integrate artifacts before marking dependencies done, then decide the next wave. Failed work is inspected before a bounded retry or model escalation; the main Agent retains final integration and validation.
 
 ## Name your own tab
 
