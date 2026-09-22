@@ -1,47 +1,109 @@
 {
   "goal": "Implement two independent formatters, then integrate and verify both.",
-  "constraints": ["Preserve the agreed public interfaces", "Prefer the least expensive capable model", "Workers author only their owned source and test files; the main Agent runs checks and owns Git, dependency installation and shared build/cache writes"],
-  "max_concurrency": 2,
-  "models": [
-    {"id": "gpt-5.6-luna", "agent": "codex", "description": "Local, well-specified implementation with direct tests"},
-    {"id": "gpt-6-astra", "agent": "codex", "description": "Cross-module reasoning, ambiguous requirements and integration"}
+  "constraints": [
+    "Preserve the agreed public interfaces",
+    "Use low effort for ordinary tasks, medium for moderate tasks, high for complex tasks; keep the execution model fixed",
+    "Workers author only their owned source and test files; the main Agent runs checks and owns Git, dependency installation and shared build/cache writes"
   ],
+  "max_concurrency": 2,
   "tasks": [
     {
-      "id": "date", "status": "pending", "cwd": "/workspace/project",
+      "id": "date",
+      "status": "pending",
+      "cwd": "/workspace/project",
       "summary": "Implement the agreed date formatter",
       "inputs": "Date format contract is fixed; input is an ISO date string",
       "deliverable": "Date formatter and focused tests",
       "acceptance": "Specified valid and invalid date examples pass",
-      "uncertainties": [], "depends_on": [],
-      "reads": ["repo/project/contracts/date"], "writes": ["repo/project/src/date", "repo/project/tests/date"],
-      "allowed_models": ["gpt-5.6-luna", "gpt-6-astra"]
+      "uncertainties": [],
+      "depends_on": [],
+      "reads": [
+        "repo/project/contracts/date"
+      ],
+      "writes": [
+        "repo/project/src/date",
+        "repo/project/tests/date"
+      ]
     },
     {
-      "id": "money", "status": "pending", "cwd": "/workspace/project",
-      "summary": "Implement the agreed money formatter",
-      "inputs": "Currency and rounding contract is fixed",
+      "id": "money",
+      "status": "pending",
+      "cwd": "/workspace/project",
+      "summary": "Implement currency rounding with multiple established rounding modes and boundary cases",
+      "inputs": "Currency and rounding contracts are fixed; reconcile precision and negative-value edge cases across the supported modes",
       "deliverable": "Money formatter and focused tests",
       "acceptance": "Specified currency and rounding examples pass",
-      "uncertainties": [], "depends_on": [],
-      "reads": ["repo/project/contracts/money"], "writes": ["repo/project/src/money", "repo/project/tests/money"],
-      "allowed_models": ["gpt-5.6-luna", "gpt-6-astra"]
+      "uncertainties": [],
+      "depends_on": [],
+      "reads": [
+        "repo/project/contracts/money"
+      ],
+      "writes": [
+        "repo/project/src/money",
+        "repo/project/tests/money"
+      ]
     },
     {
-      "id": "integrate", "status": "pending", "cwd": "/workspace/project",
-      "summary": "Integrate the two formatters and verify the public API",
-      "inputs": "Use the accepted date and money task artifacts",
+      "id": "integrate",
+      "status": "pending",
+      "cwd": "/workspace/project",
+      "summary": "Integrate formatters with locale fallback and cross-module error guarantees",
+      "inputs": "Fixed locale fallback and public error contracts; accepted date and money artifacts; verify interactions across both modules",
       "deliverable": "Integrated public API and validation report",
       "acceptance": "Public API examples and relevant existing checks pass",
-      "uncertainties": [], "depends_on": ["date", "money"],
-      "reads": ["repo/project/src/date", "repo/project/src/money"],
-      "writes": ["repo/project/src/index", "git/project"],
-      "allowed_models": ["gpt-6-astra"]
+      "uncertainties": [],
+      "depends_on": [
+        "date",
+        "money"
+      ],
+      "reads": [
+        "repo/project/src/date",
+        "repo/project/src/money"
+      ],
+      "writes": [
+        "repo/project/src/index",
+        "git/project"
+      ]
     }
   ],
   "plans": [
-    {"id": "parallel_luna", "description": "Both contracts are fixed and writes are disjoint; run both small implementations concurrently", "assignments": [{"task_id": "date", "model_id": "gpt-5.6-luna"}, {"task_id": "money", "model_id": "gpt-5.6-luna"}]},
-    {"id": "date_first", "description": "Run only the date task when the proposed parallel split is not semantically independent", "assignments": [{"task_id": "date", "model_id": "gpt-5.6-luna"}]},
-    {"id": "integrate_result", "description": "Integrate only after both implementations have been accepted", "assignments": [{"task_id": "integrate", "model_id": "gpt-6-astra"}]}
-  ]
+    {
+      "id": "parallel_mixed_effort",
+      "description": "Independent writes: ordinary date implementation uses low effort; moderate multi-case currency logic uses medium",
+      "assignments": [
+        {
+          "task_id": "date",
+          "reasoning_effort": "low"
+        },
+        {
+          "task_id": "money",
+          "reasoning_effort": "medium"
+        }
+      ]
+    },
+    {
+      "id": "date_first",
+      "description": "Run the ordinary date task first at low effort when parallel execution is not semantically appropriate",
+      "assignments": [
+        {
+          "task_id": "date",
+          "reasoning_effort": "low"
+        }
+      ]
+    },
+    {
+      "id": "integrate_result",
+      "description": "After both artifacts are accepted, use high effort for complex cross-module fallback and error consistency",
+      "assignments": [
+        {
+          "task_id": "integrate",
+          "reasoning_effort": "high"
+        }
+      ]
+    }
+  ],
+  "executor": {
+    "agent": "codex",
+    "model_id": "gpt-6-astra"
+  }
 }

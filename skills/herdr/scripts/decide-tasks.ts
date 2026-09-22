@@ -7,7 +7,8 @@ import { prepareDecision, requestDecision } from "./lib/jev-decision";
 const usage = `Usage:
   bun decide-tasks.ts --input BATCH.json [--dry-run] [options]
 
-Select the next task wave and its execution models with OpenRouter Jev.
+Select the next task wave and low/medium/high reasoning efforts with OpenRouter Jev.
+All tasks use the fixed executor model supplied by the main Agent.
 This script returns a decision; the main Agent owns Herdr dispatch and verification.
 
 Options:

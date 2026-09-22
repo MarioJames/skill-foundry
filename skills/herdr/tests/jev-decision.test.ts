@@ -5,22 +5,22 @@ import { join } from "node:path";
 import { prepareDecision, resolveDecision, requestDecision } from "../scripts/lib/jev-decision";
 
 const fixture = () => JSON.parse(readFileSync(new URL("../examples/jev-batch.json", import.meta.url), "utf8"));
-const reply = (choice = "parallel_luna", confidence: unknown = 0.95) => ({
+const reply = (choice = "parallel_mixed_effort", confidence: unknown = 0.95) => ({
   model: "typesafe/jev-1.13", answers: { schedule: { type: "choice", choice, confidence } },
   usage: { input_tokens: 1000, output_tokens: 0, cost: 0.000042 },
 });
 
-test("one typed choice returns parallelism and exact task/model assignments together", () => {
+test("one typed choice returns parallelism and task/effort assignments on one fixed model together", () => {
   const prepared = prepareDecision(fixture());
-  expect(prepared.plans.map(p => p.id)).toEqual(["parallel_luna", "date_first"]);
+  expect(prepared.plans.map(p => p.id)).toEqual(["parallel_mixed_effort", "date_first"]);
   expect(prepared.rejected).toEqual([{ plan_id: "integrate_result", reason: "dependency_not_done:integrate" }]);
   expect(prepared.request.model).toBe("~typesafe/jev-latest");
   const result = resolveDecision(prepared, reply());
   expect(result.status).toBe("selected");
   expect(result.can_parallel).toBe(true);
   expect(result.usage).toEqual({ input_tokens: 1000, output_tokens: 0, cost: 0.000042 });
-  expect(result.assignments.map(a => [a.task_id, a.model_id, a.agent])).toEqual([
-    ["date", "gpt-5.6-luna", "codex"], ["money", "gpt-5.6-luna", "codex"],
+  expect(result.assignments.map(a => [a.task_id, a.model_id, a.reasoning_effort, a.agent])).toEqual([
+    ["date", "gpt-6-astra", "low", "codex"], ["money", "gpt-6-astra", "medium", "codex"],
   ]);
 });
 
@@ -52,12 +52,19 @@ test("integration becomes eligible only after accepted results; failures do not 
   expect(prepareDecision(input).local_status).toBe("escalate");
 });
 
-test("model availability and task-specific permission are hard constraints", () => {
-  const input = fixture();
-  input.tasks[0].allowed_models = ["gpt-6-astra"];
-  expect(prepareDecision(input).plans).toEqual([]);
-  input.plans[0].assignments[0].model_id = "unavailable";
-  expect(() => prepareDecision(input)).toThrow("unknown model");
+test("only supported reasoning efforts are accepted", () => {
+  for (const effort of ["none", "xhigh", "max", "", null]) {
+    const input = fixture(); input.plans[0].assignments[0].reasoning_effort = effort;
+    expect(() => prepareDecision(input)).toThrow("reasoning_effort");
+  }
+});
+
+test("every selected unit inherits the one explicitly supplied executor", () => {
+  const input = fixture(); input.executor.model_id = "gpt-5.6-sol";
+  const result = resolveDecision(prepareDecision(input), reply());
+  expect(result.assignments.map(a => [a.model_id, a.reasoning_effort])).toEqual([
+    ["gpt-5.6-sol", "low"], ["gpt-5.6-sol", "medium"],
+  ]);
 });
 
 test("invalid graph and ambiguous resource names fail before a network call", () => {
@@ -79,10 +86,10 @@ test("context overflow rejects instead of truncating task constraints", () => {
 
 test("unknown or filtered choices and malformed confidence never produce assignments", () => {
   const prepared = prepareDecision(fixture());
-  for (const response of [reply("invented"), reply("integrate_result"), reply("parallel_luna", null), reply("parallel_luna", 1.1), { answers: {} }]) {
+  for (const response of [reply("invented"), reply("integrate_result"), reply("parallel_mixed_effort", null), reply("parallel_mixed_effort", 1.1), { answers: {} }]) {
     expect(() => resolveDecision(prepared, response)).toThrow();
   }
-  const low = resolveDecision(prepared, reply("parallel_luna", 0.3));
+  const low = resolveDecision(prepared, reply("parallel_mixed_effort", 0.3));
   expect(low.status).toBe("escalate"); expect(low.assignments).toEqual([]);
   for (const choice of ["need_context", "escalate"]) {
     const result = resolveDecision(prepared, reply(choice));
@@ -185,7 +192,7 @@ test("real CLI dispatch proposal progresses from parallel work to accepted integ
     expect(req.headers.get("authorization")).toBe("Bearer private-test-key");
     const body = await req.json();
     expect(body.model).toBe("~typesafe/jev-latest");
-    expect(body.questions.schedule.criteria.parallel_luna).toBeString();
+    expect(body.questions.schedule.criteria.parallel_mixed_effort).toBeString();
     return Response.json(reply());
   });
   expect(first.exit).toBe(0); expect(first.calls).toBe(1);
@@ -197,6 +204,7 @@ test("real CLI dispatch proposal progresses from parallel work to accepted integ
   const second = await cli(input, [], () => Response.json(reply("integrate_result")));
   expect(second.output.status).toBe("selected"); expect(second.output.can_parallel).toBe(false);
   expect(second.output.assignments[0].model_id).toBe("gpt-6-astra");
+  expect(second.output.assignments[0].reasoning_effort).toBe("high");
   expect(second.output.snapshot_id).not.toBe(first.output.snapshot_id);
   input.tasks[2].status = "done";
   const complete = await cli(input, []);

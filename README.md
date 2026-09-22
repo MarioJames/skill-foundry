@@ -47,7 +47,7 @@ The existing Bun CLI owns anonymous tunnel start / status / stop / cleanup with 
 
 After the task decision, the bundled Bun/TypeScript resource router can split the caller tab, create a tab in an existing directory-matched workspace, or create a new workspace when no safe match exists. It matches target directories using cwd and Git roots, preserves focus, returns an explicit cleanup contract, and rolls back newly created resources when verification fails.
 
-For multi-task model selection, the optional [Jev scheduling flow](skills/herdr/references/jev-scheduling.md) selects a bounded next-wave proposal through OpenRouter, returning parallelism and exact worker models together. Declared dependencies, resource conflicts and capacity are checked locally; the main Agent dispatches through Herdr, accepts results and advances the next wave. The decision helper supports an offline dry run and requires `OPENROUTER_API_KEY` for live choices.
+For multi-task reasoning-effort selection, the optional [Jev scheduling flow](skills/herdr/references/jev-scheduling.md) selects a bounded next-wave proposal through OpenRouter, returning parallelism and low/medium/high worker efforts together on the main Agent's fixed model. Declared dependencies, resource conflicts and capacity are checked locally; the main Agent dispatches through Herdr, accepts results and advances the next wave. The decision helper supports an offline dry run and requires `OPENROUTER_API_KEY` for live choices.
 
 **Reach for it when** independent commands or Agent deliverables can overlap with a net time benefit, or Herdr runtime resources need coordination.
 

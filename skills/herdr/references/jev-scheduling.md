@@ -1,23 +1,33 @@
 # Jev task scheduling
 
-Use this route for a concrete multi-task workload where selecting task waves and execution models helps. The main Agent plans and integrates; Jev chooses among bounded proposals; Herdr owns Agent resources. A status question, small coupled edit, or already determined assignment does not need an extra model call.
+Use this route for a concrete multi-task workload where selecting task waves and reasoning effort helps. The main Agent plans and integrates; Jev chooses among bounded proposals; Herdr owns Agent resources. A status question, small coupled edit, or already determined assignment does not need an extra model call.
 
 ## Branch the workflow
 
 1. **Prepare task units.** Give each unit an outcome, available inputs, artifact, acceptance condition, dependency IDs and read/write ownership. Keep interfaces and architecture decisions with their owner until downstream tasks have sufficient inputs. Split only when execution savings exceed handoff and integration cost; do not split merely to fill all slots.
 2. **Resolve unknowns.** Read the needed evidence. Record remaining uncertainty explicitly. Unknown write ownership is not an empty write set: set that unit to `blocked` until ownership is established. Units without sufficient inputs also remain `blocked`; a failed attempt stays `failed` until its evidence has been inspected. Nonblocking uncertainties may remain on a pending task for Jev to evaluate; the free-text uncertainty list does not mechanically block every task.
-3. **Offer the next wave.** Use the runtime's current model inventory and remaining capacity. Provide a small set of materially different plans, such as two independent units on Luna, a mixed-model pair, or one unit first. Include stronger-model alternatives where their capability is warranted. Do not enumerate every task/model permutation. Plans describe immediate dispatches, not a whole future sequence.
-4. **Select.** Run the script below. Dependencies must be `done`; running tasks consume capacity and reserve resources. Known conflicts eliminate a plan before Jev sees its option. Jev judges semantic independence and capability against the supplied facts. A serial plan can win even when a parallel plan passes mechanical checks.
-5. **Dispatch and record.** Recheck the snapshot against live state. Route each selected task to an existing suitable Agent or a new lane, explicitly use its model, and record task ID, actual model, pane/Agent IDs, cwd, revision and cleanup command in the existing private task record. No new global registry is needed. Start independent units before waiting on one; respect runtime capacity, including the main Agent and unrelated active work.
+3. **Offer the next wave.** Fix `executor` to the main Agent's actual execution model and Agent kind; Jev does not select or switch models. Check that this executor supports low, medium and high effort, and determine remaining capacity. Provide a few materially different plans combining task groups with reasoning effort: ordinary tasks use `low`, moderate tasks use `medium`, complex tasks use `high`. Where complexity is genuinely uncertain, offer alternative effort assignments for Jev to compare. Do not enumerate every task/effort permutation. Plans describe immediate dispatches, not a whole future sequence.
+4. **Select.** Run the script below. Dependencies must be `done`; running tasks consume capacity and reserve resources. Known conflicts eliminate a plan before Jev sees its option. Jev judges semantic independence and the required reasoning effort against the supplied facts. A serial plan can win even when a parallel plan passes mechanical checks.
+5. **Dispatch and record.** Recheck the snapshot against live state. Route each selected task to an existing suitable Agent or a new lane, explicitly use the fixed model and selected effort, and record task ID, actual model/effort, pane/Agent IDs, cwd, revision and cleanup command in the existing private task record. No new global registry is needed. Start independent units before waiting on one; respect runtime capacity, including the main Agent and unrelated active work.
 6. **Accept, integrate, repeat.** Inspect the artifact and relevant checks; Agent completion alone is not acceptance. Integrate results or provide a verified artifact in the dependent task's cwd before changing status to `done`. Refresh the batch and select the next wave. The main Agent performs final integrated verification and releases only task-owned resources.
 
 One main Agent owns scheduling for a batch. The script is stateless: it does not reserve slots, start Agents or lock a shared queue. Do not run concurrent decision/dispatch loops for the same batch. A second scheduler requires coordination outside this script.
 
 For isolated code changes, prepare/reuse a baseline and create views through `cow-workspace`, then pass their actual `cwd` to the lane router. Directory isolation does not settle interface dependencies, integration conflicts, migrations or shared database writes. In a shared cwd, serialize Git/index operations, dependency installation and shared build outputs, or keep them with the main Agent; disjoint source files alone do not isolate these operations.
 
+## Reasoning-effort policy
+
+| Task complexity | Effort | Decision evidence |
+| --- | --- | --- |
+| Ordinary | `low` | Clear local change, fixed interface, direct verification |
+| Moderate | `medium` | Several reasoning steps or interacting edge cases within established boundaries |
+| Complex | `high` | Substantial cross-module interactions, architectural tradeoffs, or difficult diagnosis |
+
+Use the level supported by the task evidence. High effort does not supply missing requirements or make dependent tasks parallelizable. A missing suitable candidate goes to `escalate`; missing material evidence goes to `need_context`. Complexity classification is a model judgment; the script enforces only the supported values and the mechanical scheduling constraints. The current route has no per-task execution-model choice.
+
 ## Input and context budget
 
-Start from [`examples/jev-batch.json`](../examples/jev-batch.json). Its paths and model inventory are illustrative: replace them with actual paths and models available and authorized in the current runtime. Model IDs are the exact IDs used to launch the execution Agent, not aliases such as `cheap` or provider guesses. The Jev decision model is separate and fixed to the requested OpenRouter alias.
+Start from [`examples/jev-batch.json`](../examples/jev-batch.json). Its paths and fixed executor are illustrative: use actual paths and the main Agent's current model/Agent kind. `executor.model_id` is the exact launch ID, not a model-selection candidate; it is echoed into every selected assignment. Explicitly pass it at launch so a separate CLI default cannot silently pick another model. The Jev decision model remains separate and fixed to the requested OpenRouter alias.
 
 Required fields:
 
@@ -25,14 +35,13 @@ Required fields:
 | --- | --- |
 | `goal`, `constraints` | Current outcome and concise hard requirements; exclude unrelated history |
 | `max_concurrency` | Total allowed simultaneous task units in this batch, including its running tasks; account for other runtime usage before setting it |
-| `models[]` | At most 8 available models with `id`, Herdr `agent` kind and task-relevant capability/cost `description` |
+| `executor` | One fixed `model_id` and Herdr `agent` kind, taken from the main Agent; its supported effort levels must cover low/medium/high |
 | `tasks[]` | At most 32 relevant tasks, including dependency and running-task context |
 | task `id`, `status`, `cwd` | Stable identifier, `pending/running/done/failed/blocked`, absolute execution directory |
 | task `summary`, `inputs`, `deliverable`, `acceptance` | The bounded work, supplied facts, expected artifact and observable success criteria |
 | task `uncertainties`, `depends_on` | Explicit unknowns and dependency IDs present in this batch; cycles are rejected |
 | task `reads`, `writes` | Canonical resource keys; empty arrays explicitly mean no such access |
-| task `allowed_models` | The subset of declared models permitted for this unit; do not override a user-specified model |
-| `plans[]` | At most 12 proposals, each with `id`, `description`, and unique `{task_id, model_id}` assignments |
+| `plans[]` | At most 12 proposals, each with `id`, `description`, and unique `{task_id, reasoning_effort}` assignments |
 
 Resource keys are case-sensitive, slash-separated identifiers with no globs, empty segments, `.` or `..`. A parent key overlaps its descendants: `repo/project/src` covers `repo/project/src/date`. Write/write and write/read intersections conflict; read/read does not. Use the same canonical key for the same actual resource across all tasks, including aliases, symlinks and differently cased paths on insensitive filesystems. Include running work outside the batch as resource reservations in your planning or exclude affected tasks; this script cannot inspect external schedulers.
 
@@ -51,15 +60,15 @@ bun <skill-dir>/scripts/decide-tasks.ts --input /private/task/batch.json --dry-r
 bun <skill-dir>/scripts/decide-tasks.ts --input /private/task/batch.json
 ```
 
-Dry run prints the exact provider payload for review and never calls the API. Its output contains task context; keep it in private task evidence. Live mode makes one POST to `https://openrouter.ai/api/alpha/decisions`, using `model: "~typesafe/jev-latest"`, `state` and a typed `choice` question named `schedule`. It does not use chat completions. Each candidate binds task grouping to exact model assignments; reserved choices `need_context` and `escalate` provide explicit exits.
+Dry run prints the exact provider payload for review and never calls the API. Its output contains task context; keep it in private task evidence. Live mode makes one POST to `https://openrouter.ai/api/alpha/decisions`, using `model: "~typesafe/jev-latest"`, `state` and a typed `choice` question named `schedule`. It does not use chat completions. Each candidate binds task grouping to exact low/medium/high effort assignments on the fixed executor; reserved choices `need_context` and `escalate` provide explicit exits.
 
-Successful output contains `snapshot_id`, `status`, `plan_id`, `can_parallel`, `assignments`, and `rejected_plans`. Each selected assignment includes `task_id`, `model_id`, `agent`, and `cwd`. `can_parallel` means this proposal contains multiple simultaneous new assignments; running tasks are still counted separately. The snapshot hash identifies the supplied input, not the actual live workspace or an execution reservation. Refresh input and rerun if state, ownership, constraints or availability changed before dispatch. Reformatting JSON keys can also change the hash; there is no decision cache.
+Successful output contains `snapshot_id`, `status`, `plan_id`, `can_parallel`, `assignments`, and `rejected_plans`. Each selected assignment includes `task_id`, `reasoning_effort`, the fixed `model_id`, `agent`, and `cwd`. `can_parallel` means this proposal contains multiple simultaneous new assignments; running tasks are still counted separately. The snapshot hash identifies the supplied input, not the actual live workspace or an execution reservation. Refresh input and rerun if state, ownership, constraints or availability changed before dispatch. Reformatting JSON keys can also change the hash; there is no decision cache.
 
 | Status | Branch |
 | --- | --- |
 | `selected` | Recheck live state and execute the offered proposal within existing authorization |
 | `need_context` | Main Agent gathers the missing facts or clarifies material user intent; do not start assignments |
-| `escalate` | Main Agent revises decomposition/model choices or handles the work itself |
+| `escalate` | Main Agent revises decomposition/effort choices or handles the work itself |
 | `wait` | No feasible offered plan while tasks are running; collect their results and continue independent work |
 | `complete` | Every supplied task is marked done; still verify full-goal coverage and final integration |
 | `dry_run` | Inspection only; not a scheduling decision |
@@ -70,15 +79,17 @@ The default `--min-confidence 0.8` is an **uncalibrated local escalation policy*
 
 ## Herdr handoff and failure branches
 
-Use the existing lane router for new resources, with the assigned cwd and normal naming rules. Consult `herdr agent start --help` for the installed runtime; use the chosen Agent's documented model flag. For Codex, a typical launch after receiving the pane ID is:
+Use the existing lane router for new resources, with the assigned cwd and normal naming rules. Consult `herdr agent start --help` for the installed runtime; use the chosen Agent's documented model and reasoning-effort flags. For Codex, a typical launch after receiving the pane ID is:
 
 ```bash
-herdr agent start TASK_NAME --kind codex --pane PANE_ID -- --model MODEL_ID
+herdr agent start TASK_NAME --kind codex --pane PANE_ID -- --model MODEL_ID -c 'model_reasoning_effort="medium"'
 ```
 
-For a reused Agent, verify its actual model and state before sending a new task. The decision is not permission to interrupt unrelated work or silently change a model. Give each delegate the task's full execution context and artifact references; the compact Jev batch is not a substitute for a usable worker prompt. Include write ownership, validation, caller/destination IDs, naming ownership and handoff requirements.
+Replace `medium` in the example with the selected assignment's `reasoning_effort`; do not omit the setting and inherit an unrelated CLI default. This uses Codex's documented [`model_reasoning_effort` override](https://learn.chatgpt.com/docs/config-file/config-reference). For another runtime, verify its actual equivalent before dispatch; unsupported effort control returns to the main Agent rather than silently ignoring the choice.
 
-Mark a successfully started and submitted task `running` before dispatching another wave. If only part of a wave starts, keep those units running, record the failed launch and recompute remaining capacity; do not replay the entire wave. Unknown submission status requires inspecting the same Agent, not creating a duplicate. If a worker fails, retain its useful evidence and mark `failed`; the main Agent decides whether to unblock a corrected retry, propose a stronger model, or revise dependencies. Do not add an unbounded retry/escalation loop.
+For a reused Agent, verify its actual model, effective effort and state before sending a new task. If the effort differs, apply a verified runtime-supported change or create a new task-owned Agent. The decision is not permission to interrupt unrelated work or change the fixed model. Give each delegate the task's full execution context and artifact references; the compact Jev batch is not a substitute for a usable worker prompt. Include write ownership, validation, caller/destination IDs, naming ownership and handoff requirements.
+
+Mark a successfully started and submitted task `running` before dispatching another wave. If only part of a wave starts, keep those units running, record the failed launch and recompute remaining capacity; do not replay the entire wave. Unknown submission status requires inspecting the same Agent, not creating a duplicate. If a worker fails, retain its useful evidence and mark `failed`; the main Agent decides whether to unblock a corrected retry, reassess complexity and propose an appropriate effort on the same model, or revise dependencies. Do not add an unbounded retry/escalation loop.
 
 After acceptance, record artifacts and validation, then clean lanes through their returned cleanup commands. Export/integrate CoW changes before workspace removal and follow its persistent-data rules. Keep existing task records and required data; closing a lane does not remove a CoW workspace.
 
@@ -89,6 +100,6 @@ bun test <skill-dir>/tests
 bun <skill-dir>/scripts/decide-tasks.ts --input <skill-dir>/examples/jev-batch.json --dry-run
 ```
 
-The tests exercise policy branches and the real CLI with the HTTP boundary replaced. They do not establish Jev routing accuracy or runtime availability of the example models. An authenticated smoke call is separate evidence.
+The tests exercise policy branches and the real CLI with the HTTP boundary replaced. They do not establish Jev routing accuracy or runtime availability or effort support of the fixed executor. An authenticated smoke call is separate evidence.
 
 Protocol checked against [OpenRouter's Decisions implementation](https://github.com/OpenRouterTeam/typescript-sdk/blob/main/src/funcs/alphaDecisionsCreate.ts), [request schema](https://github.com/OpenRouterTeam/typescript-sdk/blob/main/src/models/decisionsrequest.ts), [choice answer schema](https://github.com/OpenRouterTeam/typescript-sdk/blob/main/src/models/decisionschoiceanswer.ts), and [Jev model alias](https://openrouter.ai/~typesafe/jev-latest). The endpoint is alpha; incompatible responses fail explicitly instead of being parsed as chat text.
