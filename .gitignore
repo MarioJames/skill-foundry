@@ -13,3 +13,8 @@ skills/asset-validation/tests/*
 !skills/herdr/tests/
 skills/herdr/tests/*
 !skills/herdr/tests/jev-decision.test.ts
+
+# Ship the public DEV discovery and foreground lifecycle contract.
+!skills/public-acceptance/tests/
+skills/public-acceptance/tests/*
+!skills/public-acceptance/tests/dev-process.test.ts
