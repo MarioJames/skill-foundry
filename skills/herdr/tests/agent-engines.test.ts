@@ -7,6 +7,7 @@ import {
   loadRoutingConfig,
   probeProfile,
   validateRoutingConfig,
+  executionProfile,
   type ProbeRunner,
 } from "../scripts/lib/agent-engines";
 import { CliError } from "../scripts/lib/herdr-route";
@@ -37,6 +38,25 @@ const fixture = () => ({
   limits: { max_parallel: 3 },
 });
 const now = () => new Date("2026-09-23T08:00:00Z");
+
+test("manual override accepts a route or complete profile and can restore automatic routing", () => {
+  for (const override of [{ route: "ordinary" }, fixture().routes.ordinary]) {
+    const c = validateRoutingConfig({ ...fixture(), manual_override: override });
+    for (const difficulty of ["ordinary", "moderate", "complex"] as const)
+      expect(executionProfile(c, difficulty)).toEqual(c.routes.ordinary);
+    expect(executionProfile(validateRoutingConfig({ ...c, manual_override: null }), "complex"))
+      .toEqual(c.routes.complex);
+  }
+  expect(executionProfile(validateRoutingConfig(fixture()), "moderate"))
+    .toEqual(fixture().routes.moderate);
+  for (const manual_override of [
+    {}, "ordinary", { route: "missing" },
+    { route: "ordinary", ...fixture().routes.ordinary },
+    { engine_id: "qoder", model: "Qwen3.8-Flash" },
+    { ...fixture().routes.ordinary, engine_id: "missing" },
+    { ...fixture().routes.ordinary, reasoning: { mode: "effort", value: "Extra High" } },
+  ]) expect(() => validateRoutingConfig({ ...fixture(), manual_override })).toThrow(CliError);
+});
 const runner: ProbeRunner = async (argv) => ({
   status: 0,
   stderr: "",

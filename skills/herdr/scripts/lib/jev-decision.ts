@@ -1,5 +1,5 @@
 import { CliError } from "./herdr-route";
-import { buildLaunch } from "./agent-engines";
+import { buildLaunch, executionProfile } from "./agent-engines";
 import {
   hash,
   eligibility,
@@ -296,7 +296,7 @@ export function prepareWave(
       continue;
     }
     const complexity = a.outcome as "ordinary" | "moderate" | "complex",
-      profile = config.routes[complexity],
+      profile = executionProfile(config, complexity),
       probe = runtime.probes[complexity],
       launch = buildLaunch(config, profile);
     if (

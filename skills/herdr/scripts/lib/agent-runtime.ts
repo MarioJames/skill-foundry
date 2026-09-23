@@ -3,7 +3,11 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CliError } from "./herdr-route";
-import { probeProfile, type RoutingConfig } from "./agent-engines";
+import {
+  probeProfile,
+  executionProfile,
+  type RoutingConfig,
+} from "./agent-engines";
 import { readJson, type Transport } from "./dispatch-state";
 import {
   fields,
@@ -61,7 +65,7 @@ export async function observeRuntime(
   const entries = await Promise.all(
     (["ordinary", "moderate", "complex"] as const).map(async (k) => [
       k,
-      await probeProfile(config, config.routes[k]),
+      await probeProfile(config, executionProfile(config, k)),
     ]),
   );
   const data = await run(["herdr", "agent", "list"]),

@@ -19,6 +19,7 @@ export type RoutingConfig = {
     { adapter: "codex" | "qodercli"; max_parallel: number }
   >;
   routes: Record<Complexity, ExecutionProfile>;
+  manual_override?: { route: Complexity } | ExecutionProfile | null;
   limits: { max_parallel: number };
 };
 export type LaunchSpec = { kind: "codex" | "qodercli"; argv: string[] };
@@ -178,7 +179,12 @@ function validateProfile(
 
 export function validateRoutingConfig(value: unknown): RoutingConfig {
   const c = object(value, "config");
-  exact(c, ["version", "engines", "routes", "limits"], "config");
+  exact(
+    c,
+    ["version", "engines", "routes", "limits",
+      ...(Object.hasOwn(c, "manual_override") ? ["manual_override"] : [])],
+    "config",
+  );
   if (c.version !== 1) invalid("config.version must be 1");
   const rawEngines = object(c.engines, "engines");
   if (!Object.keys(rawEngines).length) invalid("engines must not be empty");
@@ -206,8 +212,22 @@ export function validateRoutingConfig(value: unknown): RoutingConfig {
   exact(routes, COMPLEXITIES, "routes");
   const limits = object(c.limits, "limits");
   exact(limits, ["max_parallel"], "limits");
+  let manual_override: RoutingConfig["manual_override"];
+  if (Object.hasOwn(c, "manual_override")) {
+    if (c.manual_override === null) manual_override = null;
+    else {
+      const override = object(c.manual_override, "manual_override");
+      if (Object.hasOwn(override, "route")) {
+        exact(override, ["route"], "manual_override");
+        if (!COMPLEXITIES.includes(override.route as Complexity))
+          invalid("manual_override.route must be ordinary, moderate or complex");
+        manual_override = { route: override.route as Complexity };
+      } else manual_override = validateProfile(engines, override);
+    }
+  }
   return {
     version: 1,
+    ...(manual_override !== undefined ? { manual_override } : {}),
     engines,
     routes: Object.fromEntries(
       COMPLEXITIES.map((k) => [k, validateProfile(engines, routes[k])]),
@@ -216,6 +236,16 @@ export function validateRoutingConfig(value: unknown): RoutingConfig {
       max_parallel: positive(limits.max_parallel, "limits.max_parallel"),
     },
   };
+}
+
+/** Resolve execution without changing the task's difficulty or safety assessment. */
+export function executionProfile(
+  config: RoutingConfig,
+  complexity: Complexity,
+): ExecutionProfile {
+  const override = config.manual_override;
+  if (!override) return config.routes[complexity];
+  return "route" in override ? config.routes[override.route] : override;
 }
 
 export function loadRoutingConfig(

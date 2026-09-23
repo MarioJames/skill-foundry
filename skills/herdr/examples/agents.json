@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "manual_override": null,
   "engines": {
     "example-qoder": { "adapter": "qodercli", "max_parallel": 1 },
     "example-codex": { "adapter": "codex", "max_parallel": 2 }

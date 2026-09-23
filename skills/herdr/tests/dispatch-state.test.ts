@@ -109,6 +109,7 @@ test("config/task drift and fresh unknown capability invalidate before reservati
   sandbox(async (s) => {
     for (const mutate of [
       (f: any) => f.c.limits.max_parallel++,
+      (f: any) => (f.c.manual_override = { route: "ordinary" }),
       (f: any) => f.b.tasks[0].revision++,
       (f: any) => (f.r.probes.moderate.status = "unknown"),
     ]) {

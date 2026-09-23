@@ -135,6 +135,36 @@ test("native difficulty never upgrades just to escape an unavailable engine", ()
   ).toBe(true);
 });
 
+test("manual routing wins over all difficulty levels while preserving guards and engine capacity", () => {
+  const b = validateBatch(fixture()), c: any = config();
+  b.tasks[0].owner_assessment = { complexity: "complex", evidence: "cross-module reasoning" };
+  const a = classified(b);
+  expect(a.date.outcome).toBe("complex");
+  expect(a.money.outcome).toBe("moderate");
+  for (const override of [{ route: "ordinary" }, c.routes.ordinary]) {
+    c.manual_override = override;
+    const r: any = runtime(c);
+    r.probes.moderate = r.probes.complex = structuredClone(r.probes.ordinary);
+    const p = prepareWave(b, c, a, r, []);
+    expect(p.waves[0].assignments.map(x => x.binding.launch)).toEqual([
+      { kind: "qodercli", argv: ["--model", "Qwen3.8-Flash", "--reasoning-effort", "xhigh"] },
+      { kind: "qodercli", argv: ["--model", "Qwen3.8-Flash", "--reasoning-effort", "xhigh"] },
+    ]);
+    expect(p.assessments.date.outcome).toBe("complex");
+    expect(p.blocked.some(x => x.task_id === "integrate")).toBe(true);
+    c.engines.qoder.max_parallel = 1;
+    expect(prepareWave(b, c, a, r, []).waves.every(w => w.assignments.length === 1)).toBe(true);
+    c.engines.qoder.max_parallel = 2;
+    const exits = { ...a, date: { ...a.date, outcome: "owner_required" }, money: { ...a.money, outcome: "need_context" } };
+    expect(prepareWave(b, c, exits, r, []).waves).toHaveLength(0);
+    r.probes.moderate.status = r.probes.complex.status = "unknown";
+    expect(prepareWave(b, c, a, r, []).waves).toHaveLength(0);
+  }
+  c.manual_override = { route: "ordinary" };
+  // Old automatic probes must not authorize the new target profile.
+  expect(prepareWave(b, c, a, runtime(c) as any, []).waves).toHaveLength(0);
+});
+
 test("unknown ownership, cycles, duplicate IDs and malformed declarations are not empty access", () => {
   const b = fixture();
   b.tasks[0].resources = { status: "unknown", reason: "not inspected" };

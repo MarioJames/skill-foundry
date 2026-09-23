@@ -8,10 +8,29 @@ Copy and edit [`examples/agents.json`](../examples/agents.json) to `~/.config/he
 
 - `engines`: stable IDs, canonical `codex` or `qodercli` adapter, and `max_parallel`. V1 permits one instance per adapter. Renaming an ID does not reset old adapter reservations.
 - `routes`: exactly `ordinary`, `moderate`, `complex`; each embeds `engine_id`, `model` and native `reasoning`. No profile registry or separate effort ladder.
+- `manual_override`: optional, null for automatic routing; otherwise either `{"route":"ordinary"}` (any declared route) or a complete `engine_id` / `model` / `reasoning` profile. These forms are mutually exclusive. The override takes precedence over every task's complexity, including owner assessments, without changing the assessment itself.
 - Reasoning is `{ "mode": "effort", "value": "native-value" }` or `{ "mode": "engine_default" }`. Display labels are not native values. No cross-engine normalization.
 - `limits.max_parallel` bounds activity units, including the caller and unrelated active/blocked/unknown Agents. It is not a process count or provider quota.
 
 The shipped example routes ordinary work to Qoder `Qwen3.8-Flash / xhigh` (Extra High), moderate work to Codex `gpt-6-astra / medium`, and complex work to Codex `gpt-6-astra / high`. These are explicit configuration values, not an implicit fallback.
+
+For quota pressure, set this top-level field in the selected config to force all dispatched tasks through the existing ordinary profile:
+
+```json
+"manual_override": { "route": "ordinary" }
+```
+
+Or specify a complete execution profile independently of the difficulty routes (engine IDs must exist in `engines`):
+
+```json
+"manual_override": {
+  "engine_id": "example-qoder",
+  "model": "Qwen3.8-Flash",
+  "reasoning": { "mode": "effort", "value": "xhigh" }
+}
+```
+
+Set `manual_override` to null or remove it to restore automatic routing. The shipped example leaves it null; adding this feature does not enable a user-wide override. Apply the same effective profile to direct delegation. Probes and capacity use the effective execution profile. Jev A/B still run where required: manual routing does not bypass owner-required/need-context outcomes, confidence policy, dependencies, ownership, capability or resource guards. It does not switch the caller's current session or Jev's decision model. A config change invalidates an unreserved decision; decide again before dispatch. Already reserved attempts retain their frozen bindings.
 
 `agent-engines.ts` separately validates native syntax and probes exact runtime contracts. Probe is read-only: CLI version, Qoder model listing, and Codex's active `CODEX_HOME/models_cache.json` (24h freshness and matching CLI version). `supported` requires a specifically accepted CLI-version/model/effort combination. New versions, untested combinations and `engine_default` stay `unknown`. Unsupported syntax is rejected before execution. A valid config or model name alone is not support.
 
