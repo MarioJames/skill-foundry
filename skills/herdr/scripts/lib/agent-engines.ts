@@ -43,7 +43,7 @@ export type ProbeOptions = {
   readCodexCatalog?: () => string;
 };
 
-const ADAPTER_VERSION = "1";
+const ADAPTER_VERSION = "2";
 const COMPLEXITIES: Complexity[] = ["ordinary", "moderate", "complex"];
 // Native syntax only. A valid token does NOT establish model support.
 // Qoder auto is explicit CLI auto selection; engine_default omits the flag.
@@ -52,55 +52,6 @@ const NATIVE_EFFORTS = {
   codex: ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
   qodercli: ["auto", "none", "low", "medium", "high", "xhigh", "max"],
 };
-// Observed in codex-cli 0.156.0 model metadata on 2026-09-23. Unknown
-// models remain syntactically valid and require a model-specific runtime probe.
-const CODEX_MODEL_EFFORTS: Record<string, readonly string[]> = {
-  "gpt-6-astra": ["low", "medium", "high", "xhigh", "max", "ultra"],
-  "gpt-6-sol": ["low", "medium", "high", "xhigh", "max", "ultra"],
-};
-// Deliberately exact versions and combinations, not an engine-wide allowlist.
-// 2026-09-23: no-tool real CLI samples in task-owned /tmp directories.
-// Codex exec --ephemeral --sandbox read-only: startup read back model and effort;
-// gpt-6-astra/medium, /high and gpt-6-sol/high returned ENGINE_OK, exit 0.
-// Qoder --no-session-persistence --tools '' --strict-mcp-config: Flash/xhigh
-// stdin prompt returned ENGINE_OK, stream-json init read back Qwen3.8-Flash,
-// tools=[] and mcp_servers=[], exit 0. Its UI maps xhigh to "Extra High";
-// no authoritative effort readback: only launch_only compatibility is asserted.
-const ACCEPTED = [
-  {
-    kind: "codex",
-    version: "0.156.0",
-    model: "gpt-6-sol",
-    effort: "high",
-    evidence:
-      "2026-09-23 codex exec --ignore-user-config --ephemeral --sandbox read-only sample: model=gpt-6-sol; reasoning effort=high; ENGINE_OK; exit=0; no tool calls",
-  },
-  {
-    kind: "codex",
-    version: "0.156.0",
-    model: "gpt-6-astra",
-    effort: "medium",
-    evidence:
-      "2026-09-23 codex exec sample: model=gpt-6-astra; reasoning effort=medium; ENGINE_OK; exit=0",
-  },
-  {
-    kind: "codex",
-    version: "0.156.0",
-    model: "gpt-6-astra",
-    effort: "high",
-    evidence:
-      "2026-09-23 codex exec sample: model=gpt-6-astra; reasoning effort=high; ENGINE_OK; exit=0",
-  },
-  {
-    kind: "qodercli",
-    version: "1.1.61",
-    model: "Qwen3.8-Flash",
-    effort: "xhigh",
-    evidence:
-      "2026-09-23 qodercli print sample: init.model=Qwen3.8-Flash; --reasoning-effort xhigh; ENGINE_OK; exit=0; installed UI labels xhigh as Extra High; effort readback unavailable",
-  },
-] as const;
-
 function invalid(message: string): never {
   throw new CliError("invalid_config", message, 2);
 }
@@ -168,12 +119,6 @@ function validateProfile(
     invalid(
       "profile.reasoning.value is not a native effort supported by this adapter",
     );
-  const known =
-    adapter === "codex" && Object.hasOwn(CODEX_MODEL_EFFORTS, model)
-      ? CODEX_MODEL_EFFORTS[model]
-      : undefined;
-  if (known && !known.includes(effort))
-    invalid("profile.reasoning.value is unsupported for this model");
   return { engine_id, model, reasoning: { mode: "effort", value: effort } };
 }
 
@@ -351,12 +296,6 @@ export async function probeProfile(
     if (!match) return finish("unknown", "cli_version_unrecognized");
     result.cli_version = match[1]!;
     result.evidence.push(`${launch.kind} --version: ${result.cli_version}`);
-    if (
-      !ACCEPTED.some(
-        (a) => a.kind === launch.kind && a.version === result.cli_version,
-      )
-    )
-      return finish("unknown", "cli_version_not_verified");
     if (launch.kind === "qodercli") {
       const models = await run(["qodercli", "--list-models"]);
       if (models.status !== 0) return finish("unknown", "model_listing_failed");
@@ -431,22 +370,10 @@ export async function probeProfile(
         "Codex model cache: requested model and native effort metadata; CLI version matched; age <= 24h; cached availability does not verify current account authorization",
       );
     }
-    if (p.reasoning.mode === "engine_default")
-      return finish("unknown", "engine_default_unresolved");
-    const accepted = ACCEPTED.find(
-      (a) =>
-        a.kind === launch.kind &&
-        a.version === result.cli_version &&
-        a.model === p.model &&
-        a.effort === (p.reasoning as { value: string }).value,
-    );
-    if (!accepted)
-      return finish("unknown", "model_effort_combination_not_verified");
     result.evidence.push(
-      accepted.evidence,
-      "launch_only: version/model/effort compatibility; no current session readback, tool-context or authorization guarantee",
+      "catalog_only: requested model listed; Codex effort checked against metadata, Qoder effort checked against adapter syntax only; no launch, session readback, tool-context or authorization guarantee",
     );
-    return finish("supported", "tested_cli_model_effort_contract");
+    return finish("supported", "current_model_catalog");
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === "ENOENT")
       return finish("unsupported", "cli_not_found");

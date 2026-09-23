@@ -135,7 +135,7 @@ test("native effort validation never translates display labels or silently suppl
   }
   const c = fixture();
   c.routes.complex.reasoning.value = "minimal";
-  expect(() => validateRoutingConfig(c)).toThrow("model");
+  expect(validateRoutingConfig(c).routes.complex.reasoning).toEqual({ mode: "effort", value: "minimal" });
 });
 
 test("launch uses literal argv and preserves engine_default as omitted effort", () => {
@@ -209,7 +209,7 @@ test("default config path is HOME/.config/herdr/agents.json, not cwd or a merged
   }
 });
 
-test("read-only probe binds exact profile, tested CLI and authenticated Qoder model listing", async () => {
+test("read-only probe binds exact profile, current CLI and authenticated Qoder model listing", async () => {
   const c = validateRoutingConfig(fixture());
   const calls: string[][] = [];
   const result = await probeProfile(c, c.routes.ordinary, {
@@ -222,59 +222,28 @@ test("read-only probe binds exact profile, tested CLI and authenticated Qoder mo
   expect(result.status).toBe("supported");
   expect(result.profile).toEqual(c.routes.ordinary);
   expect(result.cli_version).toBe("1.1.61");
-  expect(result.evidence.join(" ")).toContain("launch_only");
+  expect(result.evidence.join(" ")).toContain("catalog_only");
   expect(calls).toEqual([
     ["qodercli", "--version"],
     ["qodercli", "--list-models"],
   ]);
 });
 
-test("unknown version, model and default effort stay unknown despite valid help/native syntax", async () => {
+test("Qoder accepts listed new models, CLI versions and explicit engine defaults", async () => {
   const c = validateRoutingConfig(fixture());
-  const unknownVersion: ProbeRunner = async () => ({
-    status: 0,
-    stdout: "9.9.9",
-    stderr: "",
+  const futureRunner: ProbeRunner = async (args) => ({
+    status: 0, stderr: "",
+    stdout: args[1] === "--version" ? "9.9.9" : "MODEL\nfuture model",
   });
-  expect(
-    (await probeProfile(c, c.routes.ordinary, { runner: unknownVersion, now }))
-      .status,
-  ).toBe("unknown");
-  const unknownModel = { ...c.routes.ordinary, model: "future model" };
-  const futureRunner: ProbeRunner = async (args) =>
-    args[1] === "--list-models"
-      ? { status: 0, stdout: "MODEL\nfuture model", stderr: "" }
-      : runner(args);
-  expect(
-    (await probeProfile(c, unknownModel, { runner: futureRunner, now })).status,
-  ).toBe("unknown");
-  expect(
-    (
-      await probeProfile(
-        c,
-        { ...c.routes.ordinary, reasoning: { mode: "engine_default" } },
-        { runner, now },
-      )
-    ).status,
-  ).toBe("unknown");
-  expect(
-    (
-      await probeProfile(
-        c,
-        { ...c.routes.ordinary, reasoning: { mode: "effort", value: "high" } },
-        { runner, now },
-      )
-    ).status,
-  ).toBe("unknown");
-  expect(
-    (
-      await probeProfile(
-        c,
-        { ...c.routes.ordinary, model: "absent model" },
-        { runner, now },
-      )
-    ).status,
-  ).toBe("unsupported");
+  for (const reasoning of [
+    { mode: "effort" as const, value: "high" },
+    { mode: "engine_default" as const },
+  ]) {
+    expect((await probeProfile(c, { ...c.routes.ordinary, model: "future model", reasoning },
+      { runner: futureRunner, now })).status).toBe("supported");
+  }
+  expect((await probeProfile(c, c.routes.ordinary,
+    { runner: futureRunner, now })).status).toBe("unsupported");
 });
 
 test("Codex catalog is model-specific; compatibility requires fresh version-matched metadata", async () => {
@@ -331,33 +300,24 @@ test("CLI failures and malformed metadata never leak raw stdout, stderr or excep
   expect(missing.status).toBe("unsupported");
 });
 
-test("Sol high compatibility is exact and does not approve other Sol efforts or versions", async () => {
+test("Codex uses current catalog for new models, efforts and CLI versions", async () => {
   const c = validateRoutingConfig(fixture());
-  const profile = { ...c.routes.complex, model: "gpt-6-sol" };
-  const readCodexCatalog = () => catalog().replace("gpt-6-astra", "gpt-6-sol");
-  expect(
-    (await probeProfile(c, profile, { runner, now, readCodexCatalog })).status,
-  ).toBe("supported");
-  expect(
-    (
-      await probeProfile(
-        c,
-        { ...profile, reasoning: { mode: "effort", value: "medium" } },
-        { runner, now, readCodexCatalog },
-      )
-    ).status,
-  ).toBe("unknown");
-  expect(
-    (
-      await probeProfile(c, profile, {
-        runner: async () => ({
-          status: 0,
-          stdout: "codex-cli 0.157.0",
-          stderr: "",
-        }),
-        now,
-        readCodexCatalog,
-      })
-    ).status,
-  ).toBe("unknown");
+  const profile = { ...c.routes.complex, model: "gpt-6-luna",
+    reasoning: { mode: "effort" as const, value: "max" } };
+  for (const version of ["0.156.0", "0.157.0"]) {
+    const options = {
+      runner: async () => ({ status: 0, stdout: `codex-cli ${version}`, stderr: "" }),
+      now,
+      readCodexCatalog: () => catalog(["low", "max"])
+        .replace("gpt-6-astra", "gpt-6-luna").replace("0.156.0", version),
+    };
+    expect((await probeProfile(c, profile, options)).status).toBe("supported");
+    expect((await probeProfile(c, { ...profile,
+      reasoning: { mode: "engine_default" } }, options)).status).toBe("supported");
+    expect((await probeProfile(c, { ...profile,
+      reasoning: { mode: "effort", value: "ultra" } }, options)).reason)
+      .toBe("model_effort_not_supported");
+    expect((await probeProfile(c, { ...profile, model: "missing" }, options)).status)
+      .toBe("unknown");
+  }
 });
