@@ -310,3 +310,34 @@ test("CLI failures and malformed metadata never leak raw stdout, stderr or excep
   });
   expect(missing.status).toBe("unsupported");
 });
+
+test("Sol high compatibility is exact and does not approve other Sol efforts or versions", async () => {
+  const c = validateRoutingConfig(fixture());
+  const profile = { ...c.routes.complex, model: "gpt-6-sol" };
+  const readCodexCatalog = () => catalog().replace("gpt-6-astra", "gpt-6-sol");
+  expect(
+    (await probeProfile(c, profile, { runner, now, readCodexCatalog })).status,
+  ).toBe("supported");
+  expect(
+    (
+      await probeProfile(
+        c,
+        { ...profile, reasoning: { mode: "effort", value: "medium" } },
+        { runner, now, readCodexCatalog },
+      )
+    ).status,
+  ).toBe("unknown");
+  expect(
+    (
+      await probeProfile(c, profile, {
+        runner: async () => ({
+          status: 0,
+          stdout: "codex-cli 0.157.0",
+          stderr: "",
+        }),
+        now,
+        readCodexCatalog,
+      })
+    ).status,
+  ).toBe("unknown");
+});

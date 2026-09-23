@@ -60,12 +60,20 @@ const CODEX_MODEL_EFFORTS: Record<string, readonly string[]> = {
 // Deliberately exact versions and combinations, not an engine-wide allowlist.
 // 2026-09-23: no-tool real CLI samples in task-owned /tmp directories.
 // Codex exec --ephemeral --sandbox read-only: startup read back model and effort;
-// both gpt-6-astra/medium and /high returned ENGINE_OK, exit 0.
+// gpt-6-astra/medium, /high and gpt-6-sol/high returned ENGINE_OK, exit 0.
 // Qoder --no-session-persistence --tools '' --strict-mcp-config: Flash/xhigh
 // stdin prompt returned ENGINE_OK, stream-json init read back Qwen3.8-Flash,
 // tools=[] and mcp_servers=[], exit 0. Its UI maps xhigh to "Extra High";
 // no authoritative effort readback: only launch_only compatibility is asserted.
 const ACCEPTED = [
+  {
+    kind: "codex",
+    version: "0.156.0",
+    model: "gpt-6-sol",
+    effort: "high",
+    evidence:
+      "2026-09-23 codex exec --ignore-user-config --ephemeral --sandbox read-only sample: model=gpt-6-sol; reasoning effort=high; ENGINE_OK; exit=0; no tool calls",
+  },
   {
     kind: "codex",
     version: "0.156.0",
