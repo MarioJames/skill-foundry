@@ -1,105 +1,85 @@
-# Jev task scheduling
+# Configured heterogeneous scheduling
 
-Use this route for a concrete multi-task workload where selecting task waves and reasoning effort helps. The main Agent plans and integrates; Jev chooses among bounded proposals; Herdr owns Agent resources. A status question, small coupled edit, or already determined assignment does not need an extra model call.
+Use this workflow when independently deliverable tasks make delegation worthwhile. Keep tightly coupled or ordinary single-owner work direct. The main Agent owns decomposition, authorization, evidence, acceptance and integration; Jev supplies bounded decisions.
 
-## Branch the workflow
+## One configuration
 
-1. **Prepare task units.** Give each unit an outcome, available inputs, artifact, acceptance condition, dependency IDs and read/write ownership. Keep interfaces and architecture decisions with their owner until downstream tasks have sufficient inputs. Split only when execution savings exceed handoff and integration cost; do not split merely to fill all slots.
-2. **Resolve unknowns.** Read the needed evidence. Record remaining uncertainty explicitly. Unknown write ownership is not an empty write set: set that unit to `blocked` until ownership is established. Units without sufficient inputs also remain `blocked`; a failed attempt stays `failed` until its evidence has been inspected. Nonblocking uncertainties may remain on a pending task for Jev to evaluate; the free-text uncertainty list does not mechanically block every task.
-3. **Offer the next wave.** Fix `executor` to the main Agent's actual execution model and Agent kind; Jev does not select or switch models. Check that this executor supports low, medium and high effort, and determine remaining capacity. Provide a few materially different plans combining task groups with reasoning effort: ordinary tasks use `low`, moderate tasks use `medium`, complex tasks use `high`. Where complexity is genuinely uncertain, offer alternative effort assignments for Jev to compare. Do not enumerate every task/effort permutation. Plans describe immediate dispatches, not a whole future sequence.
-4. **Select.** Run the script below. Dependencies must be `done`; running tasks consume capacity and reserve resources. Known conflicts eliminate a plan before Jev sees its option. Jev judges semantic independence and the required reasoning effort against the supplied facts. A serial plan can win even when a parallel plan passes mechanical checks.
-5. **Dispatch and record.** Recheck the snapshot against live state. Route each selected task to an existing suitable Agent or a new lane, explicitly use the fixed model and selected effort, and record task ID, actual model/effort, pane/Agent IDs, cwd, revision and cleanup command in the existing private task record. No new global registry is needed. Start independent units before waiting on one; respect runtime capacity, including the main Agent and unrelated active work.
-6. **Accept, integrate, repeat.** Inspect the artifact and relevant checks; Agent completion alone is not acceptance. Integrate results or provide a verified artifact in the dependent task's cwd before changing status to `done`. Refresh the batch and select the next wave. The main Agent performs final integrated verification and releases only task-owned resources.
+Copy and edit [`examples/agents.json`](../examples/agents.json) to `~/.config/herdr/agents.json`, or pass `--config PATH`. This is one complete file, with no merging, environment overrides or inferred model fallback. Creating a user-wide config requires authorization; using an explicit task-local file does not.
 
-One main Agent owns scheduling for a batch. The script is stateless: it does not reserve slots, start Agents or lock a shared queue. Do not run concurrent decision/dispatch loops for the same batch. A second scheduler requires coordination outside this script.
+- `engines`: stable IDs, canonical `codex` or `qodercli` adapter, and `max_parallel`. V1 permits one instance per adapter. Renaming an ID does not reset old adapter reservations.
+- `routes`: exactly `ordinary`, `moderate`, `complex`; each embeds `engine_id`, `model` and native `reasoning`. No profile registry or separate effort ladder.
+- Reasoning is `{ "mode": "effort", "value": "native-value" }` or `{ "mode": "engine_default" }`. Display labels are not native values. No cross-engine normalization.
+- `limits.max_parallel` bounds activity units, including the caller and unrelated active/blocked/unknown Agents. It is not a process count or provider quota.
 
-For isolated code changes, prepare/reuse a baseline and create views through `cow-workspace`, then pass their actual `cwd` to the lane router. Directory isolation does not settle interface dependencies, integration conflicts, migrations or shared database writes. In a shared cwd, serialize Git/index operations, dependency installation and shared build outputs, or keep them with the main Agent; disjoint source files alone do not isolate these operations.
+The shipped example routes ordinary work to Qoder `Qwen3.8-Flash / xhigh` (Extra High), moderate work to Codex `gpt-6-astra / medium`, and complex work to Codex `gpt-6-astra / high`. These are explicit configuration values, not an implicit fallback.
 
-## Reasoning-effort policy
+`agent-engines.ts` separately validates native syntax and probes exact runtime contracts. Probe is read-only: CLI version, Qoder model listing, and Codex's active `CODEX_HOME/models_cache.json` (24h freshness and matching CLI version). `supported` requires a specifically accepted CLI-version/model/effort combination. New versions, untested combinations and `engine_default` stay `unknown`. Unsupported syntax is rejected before execution. A valid config or model name alone is not support.
 
-| Task complexity | Effort | Decision evidence |
-| --- | --- | --- |
-| Ordinary | `low` | Clear local change, fixed interface, direct verification |
-| Moderate | `medium` | Several reasoning steps or interacting edge cases within established boundaries |
-| Complex | `high` | Substantial cross-module interactions, architectural tradeoffs, or difficult diagnosis |
+Evidence is **launch_only** compatibility. Codex cache is not real-time account authorization; Qoder's accepted xhigh flag and local Extra High mapping do not establish effort readback. Each field's readback remains null unless separately observed. Probe does not guarantee account quota, cwd tools or task-specific capabilities. V1 blocks nonempty task capability requirements until the owner resolves them in decomposition; it does not invent a generic tool-capability registry.
 
-Use the level supported by the task evidence. High effort does not supply missing requirements or make dependent tasks parallelizable. A missing suitable candidate goes to `escalate`; missing material evidence goes to `need_context`. Complexity classification is a model judgment; the script enforces only the supported values and the mechanical scheduling constraints. The current route has no per-task execution-model choice.
+## Task facts and Jev questions
 
-## Input and context budget
+Start from [`examples/jev-batch.json`](../examples/jev-batch.json). Supply real absolute cwd values and canonical resource keys shared by every participant. Prefixes overlap: `repo/app/src` conflicts with `repo/app/src/a.ts`; globs and `..` are rejected. Filesystem isolation does not isolate databases or services. Use `cow-workspace` when independent writes need isolated filesystems.
 
-Start from [`examples/jev-batch.json`](../examples/jev-batch.json). Its paths and fixed executor are illustrative: use actual paths and the main Agent's current model/Agent kind. `executor.model_id` is the exact launch ID, not a model-selection candidate; it is echoed into every selected assignment. Explicitly pass it at launch so a separate CLI default cannot silently pick another model. The Jev decision model remains separate and fixed to the requested OpenRouter alias.
+A task has a stable ID and revision, inputs/evidence, deliverable, acceptance criteria, dependencies, known read/write ownership (or explicit unknown), uncertainties, requirements, delegated/reserved decisions and execution context. Increase revision when its definition changes. Missing root cause within an authorized investigation is not missing pre-dispatch context. A dependency requires an accepted revision, delivered artifacts and owner evidence; a worker being idle or saying done is insufficient.
 
-Required fields:
+Every active external Agent needs an explicit entry in `external_resources` whose `id` is its Herdr pane ID and whose reads/writes describe the actual scope, including the main Agent. Empty arrays mean positively known empty access, not uninspected access. Uncovered active Agents block dispatch. Update this snapshot from actual ownership handoffs; the script cannot discover undeclared semantic or external-service conflicts.
 
-| Field | Meaning |
-| --- | --- |
-| `goal`, `constraints` | Current outcome and concise hard requirements; exclude unrelated history |
-| `max_concurrency` | Total allowed simultaneous task units in this batch, including its running tasks; account for other runtime usage before setting it |
-| `executor` | One fixed `model_id` and Herdr `agent` kind, taken from the main Agent; its supported effort levels must cover low/medium/high |
-| `tasks[]` | At most 32 relevant tasks, including dependency and running-task context |
-| task `id`, `status`, `cwd` | Stable identifier, `pending/running/done/failed/blocked`, absolute execution directory |
-| task `summary`, `inputs`, `deliverable`, `acceptance` | The bounded work, supplied facts, expected artifact and observable success criteria |
-| task `uncertainties`, `depends_on` | Explicit unknowns and dependency IDs present in this batch; cycles are rejected |
-| task `reads`, `writes` | Canonical resource keys; empty arrays explicitly mean no such access |
-| `plans[]` | At most 12 proposals, each with `id`, `description`, and unique `{task_id, reasoning_effort}` assignments |
+Jev A classifies eligible tasks independently: first `owner_required` when a necessary decision exceeds delegation, then `need_context` for unavailable pre-dispatch facts, then `complex / moderate / ordinary`. No engine names or capacity affect difficulty. Matching assessments are reused; owner assessments require evidence. Raw Jev answers are retained and re-adopted under the current 0.8 confidence policy. This threshold is a conservative local policy, not a quality guarantee.
 
-Resource keys are case-sensitive, slash-separated identifiers with no globs, empty segments, `.` or `..`. A parent key overlaps its descendants: `repo/project/src` covers `repo/project/src/date`. Write/write and write/read intersections conflict; read/read does not. Use the same canonical key for the same actual resource across all tasks, including aliases, symlinks and differently cased paths on insensitive filesystems. Include running work outside the batch as resource reservations in your planning or exclude affected tasks; this script cannot inspect external schedulers.
+Local code maps difficulty through config and checks dependencies, same-task revisions, resource conflicts, engine/global capacity and exact capability probes. It constructs at most 12 deterministic greedy/singleton waves, not a Cartesian product. Tasks omitted by the bound remain for a later decision. Jev B chooses one frozen candidate or `need_context / owner_required`; even a single candidate retains semantic exit choices. If grouping is already explicitly settled by the owner, an optional batch `owner_wave: {"task_ids":["date","money"],"evidence":"specific semantic-independence verification"}` skips B only when it exactly matches a locally valid offered wave. It cannot change profiles or bypass guards; an invalid group returns owner-required. This is recorded owner evidence, never an automatic API-failure fallback. A and B are separate requests: answers within one request never depend on each other.
 
-Examples: `repo/project/src/date`, `git/project`, `build/project`, `db/dev/orders`, `redis/dev/jobs`. Cover all writes produced by the deliverable, including tests and writable caches. The example assigns separate source/test paths and keeps test execution, Git and shared build/cache writes with the main Agent. For independent CoW views, use distinct filesystem keys; use the same external-service keys if they share a database or Redis namespace. Do not rename a shared resource simply to make a plan pass. Mechanical checks only cover declared facts.
+Requests use `https://openrouter.ai/api/alpha/decisions`, `~typesafe/jev-latest`, and `OPENROUTER_API_KEY` from the caller environment. Full requests are limited to 24,000 UTF-8 bytes, responses to 64,000 bytes, with no truncation, automatic retries or model substitution. Missing confidence is owner-required; confidence/probabilities are optional protocol fields and validated when present. HTTP errors omit provider bodies and credentials.
 
-Keep the current batch and directly relevant facts. Condense old completed tasks to evidence needed by dependents, without removing referenced dependency IDs. Keep raw files/logs and artifact locations in the existing task record; Jev does not retrieve referenced files. Unknown fields are rejected to catch schema mistakes and discourage dumping arbitrary context.
+## Decide and dispatch
 
-The script checks both the input and the full generated request, including instructions and options, against **24,000 UTF-8 bytes**. This is a deliberately conservative operational budget under the model's advertised 32K context, not an exact tokenizer count or a claim that every provider serializes identically. Oversized input is rejected intact: reduce the wave or summarize evidence, retaining constraints and uncertainty. The JSON file itself is capped at 64,000 bytes. No silent truncation, automatic summarization model or tokenizer dependency is added.
-
-## Call and consume
-
-Set `OPENROUTER_API_KEY` through the existing private environment mechanism. Do not put credentials in the JSON, command-line arguments, Git or task descriptions. The script reads this environment variable; it does not search private files. Bun's usual environment loading still applies unless invoked with `--no-env-file`.
-
-```bash
-bun <skill-dir>/scripts/decide-tasks.ts --input /private/task/batch.json --dry-run
-bun <skill-dir>/scripts/decide-tasks.ts --input /private/task/batch.json
+```sh
+bun scripts/decide-tasks.ts --input /private/batch.json --config /private/agents.json --dry-run
+bun scripts/decide-tasks.ts --input /private/batch.json --config /private/agents.json --state /private/task/scheduling.json
+bun scripts/dispatch-tasks.ts --action dispatch --input /private/batch.json --config /private/agents.json --state /private/task/scheduling.json --decision DECISION_ID --caller-pane PANE_ID --label '0923｜FEA｜具体任务'
 ```
 
-Dry run prints the exact provider payload for review and never calls the API. Its output contains task context; keep it in private task evidence. Live mode makes one POST to `https://openrouter.ai/api/alpha/decisions`, using `model: "~typesafe/jev-latest"`, `state` and a typed `choice` question named `schedule`. It does not use chat completions. Each candidate binds task grouping to exact low/medium/high effort assignments on the fixed executor; reserved choices `need_context` and `escalate` provide explicit exits.
+Dry-run validates config and shows classification inputs; it performs no probes, API calls, writes or side effects and does not imply dispatchability. Live decide persists exact requests, responses, assessments, candidates, runtime facts and frozen bindings. Only `status=selected` is dispatchable.
 
-Successful output contains `snapshot_id`, `status`, `plan_id`, `can_parallel`, `assignments`, and `rejected_plans`. Each selected assignment includes `task_id`, `reasoning_effort`, the fixed `model_id`, `agent`, and `cwd`. `can_parallel` means this proposal contains multiple simultaneous new assignments; running tasks are still counted separately. The snapshot hash identifies the supplied input, not the actual live workspace or an execution reservation. Refresh input and rerun if state, ownership, constraints or availability changed before dispatch. Reformatting JSON keys can also change the hash; there is no decision cache.
+Keep one durable state path for this batch and all its controllers. Do not create a second state file to bypass reservations or to retry unknown effects. Writes use an exclusive local lock, atomic replacement and fsync. A lock is never stolen automatically; after a crash, inspect its PID and prove the writer has exited before manually removing only that lock. State is private (0600), contains task context, and must not be committed or copied to public artifacts. New decisions stop at 12 MB; atomic writes reject over 16 MB while retaining the previous readable state, reserving headroom for recovery. Keep batches bounded; retain completed records when moving to a separate new batch.
 
-| Status | Branch |
-| --- | --- |
-| `selected` | Recheck live state and execute the offered proposal within existing authorization |
-| `need_context` | Main Agent gathers the missing facts or clarifies material user intent; do not start assignments |
-| `escalate` | Main Agent revises decomposition/effort choices or handles the work itself |
-| `wait` | No feasible offered plan while tasks are running; collect their results and continue independent work |
-| `complete` | Every supplied task is marked done; still verify full-goal coverage and final integration |
-| `dry_run` | Inspection only; not a scheduling decision |
+Dispatch reloads input/config, probes and inventories under the lock, then atomically reserves the whole wave. This reservation is the commit point; later config edits do not change in-flight bindings. Task cancellation or changed authorization stops subsequent effects. The sequence is `create_lane → start_agent → submit`: persist intent before each effect and confirmation after it. Canonical `herdr --kind` plus an argv array prevents configurable executable injection. Returned IDs and exact cleanup commands are recorded. V1 creates owned independent lanes; it does not transfer native sessions or claim borrowed lanes as owned.
 
-Only `ok=true` **and** `status=selected` carries executable assignments. `wait`, `complete`, and locally determined `escalate` need no API key or remote call. Invalid input, missing credentials, invalid replies and network/provider errors produce `ok=false`, a structured error, and a nonzero exit. They never dispatch, retry or silently substitute a model. Provider error bodies are omitted so they cannot echo secrets or task text. The default network deadline is 20 seconds; `--timeout-ms` supports 1–120000.
+A timeout or unreadable reply is `unknown`, not failure-to-execute. The attempt retains its slot and writes. Neither restarting the CLI nor selecting a new task revision replays the effect. Observe the known pane; if the creation reply was lost and the handle is unknown, return to the owner for inventory/evidence. V1 does not automatically resume a partially started attempt; the owner reconciles and stops it before a fresh decision. Local UUIDs are correlation only, not remote idempotency keys.
 
-The default `--min-confidence 0.8` is an **uncalibrated local escalation policy**, not a correctness probability. Below it, output has no assignments and status `escalate`. Missing or invalid confidence is a response error. Tune the policy only with labeled task outcomes; do not lower it merely to obtain a desired decision. Actual API `resolved_model`, confidence and validated token/cost `usage` are returned for evaluation because the `latest` alias can change. Missing or malformed required token accounting is treated as an incompatible response.
+## Observe, accept and release
 
-## Herdr handoff and failure branches
-
-Use the existing lane router for new resources, with the assigned cwd and normal naming rules. Consult `herdr agent start --help` for the installed runtime; use the chosen Agent's documented model and reasoning-effort flags. For Codex, a typical launch after receiving the pane ID is:
-
-```bash
-herdr agent start TASK_NAME --kind codex --pane PANE_ID -- --model MODEL_ID -c 'model_reasoning_effort="medium"'
+```sh
+bun scripts/dispatch-tasks.ts --action observe --state /private/task/scheduling.json
+bun scripts/dispatch-tasks.ts --action accept --state /private/task/scheduling.json --attempt ATTEMPT_ID --evidence /private/acceptance.json
+bun scripts/dispatch-tasks.ts --action cleanup --state /private/task/scheduling.json --attempt ATTEMPT_ID --caller-pane MAIN_PANE
 ```
 
-Replace `medium` in the example with the selected assignment's `reasoning_effort`; do not omit the setting and inherit an unrelated CLI default. This uses Codex's documented [`model_reasoning_effort` override](https://learn.chatgpt.com/docs/config-file/config-reference). For another runtime, verify its actual equivalent before dispatch; unsupported effort control returns to the main Agent rather than silently ignoring the choice.
+Workers receive a unique result file path in `STATE.results/ATTEMPT.json` and the exact result schema in their prompt. Observe requires the same known native session, idle/done state and matching attempt/task/revision result. No native session identity means owner reconciliation. A completed or failed worker releases its activity slot but retains write ownership until accepted or explicitly resolved. Result paths are bounded regular JSON files; symlinks and mismatches are rejected.
 
-For a reused Agent, verify its actual model, effective effort and state before sending a new task. If the effort differs, apply a verified runtime-supported change or create a new task-owned Agent. The decision is not permission to interrupt unrelated work or change the fixed model. Give each delegate the task's full execution context and artifact references; the compact Jev batch is not a substitute for a usable worker prompt. Include write ownership, validation, caller/destination IDs, naming ownership and handoff requirements.
+Acceptance JSON:
 
-Mark a successfully started and submitted task `running` before dispatching another wave. If only part of a wave starts, keep those units running, record the failed launch and recompute remaining capacity; do not replay the entire wave. Unknown submission status requires inspecting the same Agent, not creating a duplicate. If a worker fails, retain its useful evidence and mark `failed`; the main Agent decides whether to unblock a corrected retry, reassess complexity and propose an appropriate effort on the same model, or revise dependencies. Do not add an unbounded retry/escalation loop.
-
-After acceptance, record artifacts and validation, then clean lanes through their returned cleanup commands. Export/integrate CoW changes before workspace removal and follow its persistent-data rules. Keep existing task records and required data; closing a lane does not remove a CoW workspace.
-
-## Validation and protocol sources
-
-```bash
-bun test <skill-dir>/tests
-bun <skill-dir>/scripts/decide-tasks.ts --input <skill-dir>/examples/jev-batch.json --dry-run
+```json
+{"task_revision":1,"attempt_id":"ATTEMPT_ID","artifact_refs":["delivered/path"],"delivery_evidence_ref":"verification-log-or-commit","owner_evidence_ref":"owner-review-record"}
 ```
 
-The tests exercise policy branches and the real CLI with the HTTP boundary replaced. They do not establish Jev routing accuracy or runtime availability or effort support of the fixed executor. An authenticated smoke call is separate evidence.
+Owner verification must cover actual artifacts and task criteria; the script checks bindings, not artifact truth. Acceptance is overlaid onto the next batch read, unlocking dependencies only for the exact delivered revision. Whole-goal completion also requires `goal_accepted=true` and every task accepted. Cancelled tasks are not success.
 
-Protocol checked against [OpenRouter's Decisions implementation](https://github.com/OpenRouterTeam/typescript-sdk/blob/main/src/funcs/alphaDecisionsCreate.ts), [request schema](https://github.com/OpenRouterTeam/typescript-sdk/blob/main/src/models/decisionsrequest.ts), [choice answer schema](https://github.com/OpenRouterTeam/typescript-sdk/blob/main/src/models/decisionschoiceanswer.ts), and [Jev model alias](https://openrouter.ai/~typesafe/jev-latest). The endpoint is alpha; incompatible responses fail explicitly instead of being parsed as chat text.
+For an uncertain or failed attempt, first inspect the actual pane/session, stop any live work, and account for partial writes. Then use:
+
+```sh
+bun scripts/dispatch-tasks.ts --action resolve --state /private/task/scheduling.json --attempt ATTEMPT_ID --outcome failed_stopped --evidence /private/resolution.json
+```
+
+Proof is `{"evidence":"specific owner observation and write-disposition record"}`. Outcomes are `not_performed`, `failed_stopped`, or `cancelled_stopped`. This is an explicit owner assertion, not autonomous proof. It releases reservations without retrying or undoing filesystem/data changes. A new decision is necessary to retry.
+
+Cleanup only closes a resolved, owned idle lane with matching session identity, current pane/container membership and actual caller identity; additional panes/tabs are rejected and removal is read back. Cleanup intent/outcome is recorded; unknown cleanup is inspected, not retried blindly. The caller pane, borrowed resources, working directories, results, state, configuration and persistent data are never deleted by these commands. Release task-owned processes separately from retaining data and evidence.
+
+## Practical limits
+
+- Reservations are atomic within the shared state file. Herdr has no global admission-control transaction: independently managed schedulers/state files can race after inventory. Use one main dispatcher per ownership/capacity scope; external starts still require coordination.
+- Probes and inventory are snapshots. Session startup can still fail or time out; this does not justify a fallback or another start.
+- Resource declarations and acceptance are owner evidence, not filesystem or authorization enforcement. Agents may execute tools within their own configured permissions.
+- Unknown intent requires human/main-Agent reconciliation. No exactly-once remote execution, cross-engine session restoration or automated retry is claimed.
+
+The reviewed design and rationale are in [heterogeneous-agent-design.md](heterogeneous-agent-design.md).

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "engines": {
+    "example-qoder": { "adapter": "qodercli", "max_parallel": 1 },
+    "example-codex": { "adapter": "codex", "max_parallel": 2 }
+  },
+  "routes": {
+    "ordinary": {
+      "engine_id": "example-qoder",
+      "model": "Qwen3.8-Flash",
+      "reasoning": { "mode": "effort", "value": "xhigh" }
+    },
+    "moderate": {
+      "engine_id": "example-codex",
+      "model": "gpt-6-astra",
+      "reasoning": { "mode": "effort", "value": "medium" }
+    },
+    "complex": {
+      "engine_id": "example-codex",
+      "model": "gpt-6-astra",
+      "reasoning": { "mode": "effort", "value": "high" }
+    }
+  },
+  "limits": { "max_parallel": 3 }
+}

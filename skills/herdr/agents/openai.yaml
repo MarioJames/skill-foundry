@@ -1,7 +1,7 @@
 interface:
   display_name: "Herdr"
   short_description: "命名当前标签页，结合 Jev 选择多任务并行方案与思考力度，并管理任务资源"
-  default_prompt: "使用 $herdr 命名当前标签页；对有收益的多任务工作拆分依赖和写入范围，按需通过 Jev 选择并行方案及 low/medium/high 思考力度，沿用主 Agent 模型，验收集成结果并清理任务自有资源。"
+  default_prompt: "使用 $herdr 命名当前标签页；对有收益的多任务工作拆分依赖和写入范围，通过 Jev 判断复杂度并选择执行波次，从单份 agents.json 自动选择 engine、模型与原生思考力度，持久化派发和未知状态，验收集成结果并清理任务自有资源。"
 
 policy:
   allow_implicit_invocation: true

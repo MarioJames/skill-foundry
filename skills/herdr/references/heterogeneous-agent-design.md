@@ -1,6 +1,6 @@
 # 异构 Agent 配置、执行契约与 Jev 问题模型
 
-状态：经 GPT-6 Pro 审查后修订的建议稿；具体策略尚待用户定稿，不改变现行技能行为。2026-09-23。
+状态：2026-09-23 经 GPT-6 Pro 审查后修订的设计基线；用户随后授权实现。当前入口、实际能力和保守限制见 [Jev 调度使用说明](jev-scheduling.md)。下文保留设计时的论证。
 
 ## 目标与边界
 
@@ -8,7 +8,7 @@
 
 本稿建议：配置定义执行策略，主 Agent 定义任务与验收，Jev 判断有限的语义问题，程序执行确定性约束检查，Herdr 管理运行资源。首版保持单主 Agent 调度，不构建分布式队列、全局注册中心或通用工作流平台。
 
-现有 `jev-decision.ts` 将一个固定 executor 放在 batch 中，每个候选 wave 同时绑定任务和 low/medium/high effort。异构路由会改变这个输入契约；属于非数据库变更，不保留旧 batch 的兼容分支。现有依赖、资源冲突、容量、上下文预算、显式退出和响应校验逻辑继续复用。
+设计前的 `jev-decision.ts` 将一个固定 executor 放在 batch 中，每个候选 wave 同时绑定任务和 low/medium/high effort。异构路由会改变这个输入契约；属于非数据库变更，不保留旧 batch 的兼容分支。现有依赖、资源冲突、容量、上下文预算、显式退出和响应校验逻辑继续复用。
 
 ## 数据对象及其权威来源
 
@@ -399,3 +399,14 @@ date=ordinary → routes.ordinary 的执行组合，money=moderate → routes.mo
 - [Choice answer](https://github.com/OpenRouterTeam/typescript-sdk/blob/main/src/models/decisionschoiceanswer.ts)：choice/type 必需，confidence/probabilities 可选。
 - [Decisions response](https://github.com/OpenRouterTeam/typescript-sdk/blob/main/src/models/decisionsresponse.ts)：model 与 usage 必需，usage 的 input/output tokens 必需，cost 可选。
 - [Jev latest](https://openrouter.ai/~typesafe/jev-latest)：别名可能变化，决策记录须保留实际解析模型。
+
+
+## 2026-09-23 实现结果核对
+
+已实现单配置/native adapter、条件式 A/B 决策、冻结任务与批次约束、同 state 原子预留、逐 effect 意图与未知状态、结果归属检查、验收与自有资源清理。主 Agent 已确认分组时可提供 `owner_wave` 与具体证据；只匹配已过本地门槛的波次，不在 API 失败后自动启用。
+
+[GPT-6 Pro 结果校验](https://chatgpt.com/g/g-p-6aa94760a174819191d12fd6fef4aee6-lobe-agent/c/6ab32741-b984-83ea-9753-b1c61a0f51b6) 认可主要职责与数据流，并指出执行约束漏传、人工终态重开及清理成员身份风险。本地已补冻结 goal/constraints 的实际 prompt 传递、终态及同 revision 竞争验收保护、当前 caller/容器成员核对与删除读回，并加入回归测试。状态写入有预算保护，保留恢复余量。
+
+验证范围：Bun 契约/进程边界测试、严格 TypeScript 检查、技能结构与 Bun runtime contract；实际 Codex 0.156.0 Astra medium/high 和 Qoder 1.1.61 Flash/xhigh 小样本成功；实际 Jev A 返回 ordinary/moderate，B 曾选择双 engine 波次。Herdr 实机创建/失败对账发现并修正了 Agent 名称 32 字符限制。
+
+限制：完整双 engine 从 Jev 到交付验收的成功闭环尚未通过。后续现场出现 Jev B 超时、Qoder 列表探测超时、共享 Codex catalog 被其他客户端版本刷新，均保持 unknown/阻断而未伪装支持；这不能计作端到端 PASS。已创建的失败验收 lane 经主 Agent 核对仅有原始 shell、没有 Agent/任务写入后精确关闭，私有状态与诊断证据保留。当前交付是仓库实现，未同步个人安装或创建全局配置。具体运行边界以上述使用说明为准。

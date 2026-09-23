@@ -1,109 +1,152 @@
 {
+  "version": 1,
+  "id": "formatters",
   "goal": "Implement two independent formatters, then integrate and verify both.",
   "constraints": [
-    "Preserve the agreed public interfaces",
-    "Use low effort for ordinary tasks, medium for moderate tasks, high for complex tasks; keep the execution model fixed",
-    "Workers author only their owned source and test files; the main Agent runs checks and owns Git, dependency installation and shared build/cache writes"
+    "Preserve agreed public interfaces",
+    "Main Agent owns Git, dependency installation and shared build outputs"
   ],
-  "max_concurrency": 2,
+  "goal_accepted": false,
   "tasks": [
     {
       "id": "date",
+      "revision": 1,
       "status": "pending",
-      "cwd": "/workspace/project",
       "summary": "Implement the agreed date formatter",
-      "inputs": "Date format contract is fixed; input is an ISO date string",
-      "deliverable": "Date formatter and focused tests",
-      "acceptance": "Specified valid and invalid date examples pass",
-      "uncertainties": [],
-      "depends_on": [],
-      "reads": [
-        "repo/project/contracts/date"
+      "inputs": [
+        {
+          "summary": "Date format contract is fixed; input is an ISO date string",
+          "evidence_refs": []
+        }
       ],
-      "writes": [
-        "repo/project/src/date",
-        "repo/project/tests/date"
-      ]
+      "deliverable": "Date formatter and focused tests",
+      "acceptance": [
+        "Specified valid and invalid date examples pass"
+      ],
+      "depends_on": [],
+      "resources": {
+        "status": "known",
+        "reads": [
+          "repo/project/contracts/date"
+        ],
+        "writes": [
+          "repo/project/src/date",
+          "repo/project/tests/date"
+        ]
+      },
+      "uncertainties": [],
+      "requirements": {
+        "capabilities": [],
+        "owner_only": false
+      },
+      "decision_boundary": {
+        "delegated": [
+          "Implementation within the agreed contract"
+        ],
+        "reserved_for_owner": [
+          "Public interface changes and final integration"
+        ],
+        "authorization_refs": []
+      },
+      "execution": {
+        "cwd": "/workspace/project",
+        "workspace_ref": "formatter-workspace"
+      }
     },
     {
       "id": "money",
+      "revision": 1,
       "status": "pending",
-      "cwd": "/workspace/project",
       "summary": "Implement currency rounding with multiple established rounding modes and boundary cases",
-      "inputs": "Currency and rounding contracts are fixed; reconcile precision and negative-value edge cases across the supported modes",
-      "deliverable": "Money formatter and focused tests",
-      "acceptance": "Specified currency and rounding examples pass",
-      "uncertainties": [],
-      "depends_on": [],
-      "reads": [
-        "repo/project/contracts/money"
+      "inputs": [
+        {
+          "summary": "Currency and rounding contracts are fixed; reconcile precision and negative-value edge cases across the supported modes",
+          "evidence_refs": []
+        }
       ],
-      "writes": [
-        "repo/project/src/money",
-        "repo/project/tests/money"
-      ]
+      "deliverable": "Money formatter and focused tests",
+      "acceptance": [
+        "Specified currency and rounding examples pass"
+      ],
+      "depends_on": [],
+      "resources": {
+        "status": "known",
+        "reads": [
+          "repo/project/contracts/money"
+        ],
+        "writes": [
+          "repo/project/src/money",
+          "repo/project/tests/money"
+        ]
+      },
+      "uncertainties": [],
+      "requirements": {
+        "capabilities": [],
+        "owner_only": false
+      },
+      "decision_boundary": {
+        "delegated": [
+          "Implementation within the agreed contract"
+        ],
+        "reserved_for_owner": [
+          "Public interface changes and final integration"
+        ],
+        "authorization_refs": []
+      },
+      "execution": {
+        "cwd": "/workspace/project",
+        "workspace_ref": "formatter-workspace"
+      }
     },
     {
       "id": "integrate",
+      "revision": 1,
       "status": "pending",
-      "cwd": "/workspace/project",
       "summary": "Integrate formatters with locale fallback and cross-module error guarantees",
-      "inputs": "Fixed locale fallback and public error contracts; accepted date and money artifacts; verify interactions across both modules",
+      "inputs": [
+        {
+          "summary": "Fixed locale fallback and public error contracts; accepted date and money artifacts; verify interactions across both modules",
+          "evidence_refs": []
+        }
+      ],
       "deliverable": "Integrated public API and validation report",
-      "acceptance": "Public API examples and relevant existing checks pass",
-      "uncertainties": [],
+      "acceptance": [
+        "Public API examples and relevant existing checks pass"
+      ],
       "depends_on": [
         "date",
         "money"
       ],
-      "reads": [
-        "repo/project/src/date",
-        "repo/project/src/money"
-      ],
-      "writes": [
-        "repo/project/src/index",
-        "git/project"
-      ]
+      "resources": {
+        "status": "known",
+        "reads": [
+          "repo/project/src/date",
+          "repo/project/src/money"
+        ],
+        "writes": [
+          "repo/project/src/index",
+          "git/project"
+        ]
+      },
+      "uncertainties": [],
+      "requirements": {
+        "capabilities": [],
+        "owner_only": false
+      },
+      "decision_boundary": {
+        "delegated": [
+          "Implementation within the agreed contract"
+        ],
+        "reserved_for_owner": [
+          "Public interface changes and final integration"
+        ],
+        "authorization_refs": []
+      },
+      "execution": {
+        "cwd": "/workspace/project",
+        "workspace_ref": "formatter-workspace"
+      }
     }
   ],
-  "plans": [
-    {
-      "id": "parallel_mixed_effort",
-      "description": "Independent writes: ordinary date implementation uses low effort; moderate multi-case currency logic uses medium",
-      "assignments": [
-        {
-          "task_id": "date",
-          "reasoning_effort": "low"
-        },
-        {
-          "task_id": "money",
-          "reasoning_effort": "medium"
-        }
-      ]
-    },
-    {
-      "id": "date_first",
-      "description": "Run the ordinary date task first at low effort when parallel execution is not semantically appropriate",
-      "assignments": [
-        {
-          "task_id": "date",
-          "reasoning_effort": "low"
-        }
-      ]
-    },
-    {
-      "id": "integrate_result",
-      "description": "After both artifacts are accepted, use high effort for complex cross-module fallback and error consistency",
-      "assignments": [
-        {
-          "task_id": "integrate",
-          "reasoning_effort": "high"
-        }
-      ]
-    }
-  ],
-  "executor": {
-    "agent": "codex",
-    "model_id": "gpt-6-astra"
-  }
+  "external_resources": []
 }

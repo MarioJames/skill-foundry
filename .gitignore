@@ -18,3 +18,7 @@ skills/herdr/tests/*
 !skills/public-acceptance/tests/
 skills/public-acceptance/tests/*
 !skills/public-acceptance/tests/dev-process.test.ts
+
+!skills/herdr/tests/agent-engines.test.ts
+!skills/herdr/tests/dispatch-state.test.ts
+!skills/herdr/tests/agent-runtime.test.ts
