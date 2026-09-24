@@ -17,29 +17,10 @@ command -v cloudflared >/dev/null || {
 }
 ```
 
-将 `PUBLIC_ACCEPTANCE_SKILL_DIR` 设为宿主加载本 `SKILL.md` 时提供的实际技能目录，再解析脚本目录；独立安装位置只作为兼容兜底：
+将 `PUBLIC_ACCEPTANCE_SKILL_DIR` 设为本轮加载的技能目录，直接使用其中的脚本：
 
 ```bash
-CQT_DIR="${PUBLIC_ACCEPTANCE_SKILL_DIR:+$PUBLIC_ACCEPTANCE_SKILL_DIR/scripts}"
-if [ -z "$CQT_DIR" ] && [ -n "${ACCEPTANCE_SANDBOX:-}" ]; then
-  CQT_DIR="$(find "$ACCEPTANCE_SANDBOX/.iso" -path '*/skills/public-acceptance/scripts' -type d 2>/dev/null | head -1)"
-fi
-for candidate in \
-  "$HOME/.agents/skills/public-acceptance/scripts" \
-  "$HOME/.codex/skills/public-acceptance/scripts" \
-  "$HOME/.claude/skills/public-acceptance/scripts" \
-  "$HOME/.cc-switch/skills/public-acceptance/scripts"
-do
-  if [ -z "$CQT_DIR" ] && [ -f "$candidate/cqt.ts" ]; then
-    CQT_DIR="$candidate"
-    break
-  fi
-done
-
-if [ -z "$CQT_DIR" ] || [ ! -f "$CQT_DIR/cqt.ts" ]; then
-  echo "无法定位当前加载的 public-acceptance scripts 目录" >&2
-  exit 1
-fi
+CQT_DIR="$PUBLIC_ACCEPTANCE_SKILL_DIR/scripts"
 ```
 
 ## Lifecycle
@@ -55,7 +36,7 @@ eval "$TUNNEL_ENV"
 printf '公网地址：%s\nPID：%s\n日志：%s\n' "$PUBLIC_URL" "$TUNNEL_PID" "$TUNNEL_LOG"
 ```
 
-`start` 会先停止同一状态目录中仍存活的旧 tunnel，再按收到的 origin 启动新实例。`PUBLIC_URL` 始终是 cloudflared 生成的 Quick Tunnel 根地址，不附加项目路径。stdout 包含：
+已有本轮地址时直接复用，不再调用 `start`；它会先停止同一状态目录中仍存活的旧 tunnel，再按收到的 origin 启动新实例。`PUBLIC_URL` 始终是 cloudflared 生成的 Quick Tunnel 根地址，不附加项目路径。stdout 包含：
 
 - `ORIGIN_URL`
 - `PUBLIC_URL`
@@ -63,7 +44,7 @@ printf '公网地址：%s\nPID：%s\n日志：%s\n' "$PUBLIC_URL" "$TUNNEL_PID" 
 - `TUNNEL_LOG`
 - `TUNNEL_STATE_DIR`
 
-`start` 只等待 cloudflared 在日志中生成 `*.trycloudflare.com` 地址，解析成功后立即写入状态并输出上述变量。它不会请求公网 URL，也不会把 HTTP/TLS 可达性作为启动条件。地址刚生成时可能短暂返回 Cloudflare 5xx 或出现 TLS/传输错误；先交付生成的地址，不因此重建或停止本轮 tunnel；公网验收在地址交付后独立执行，暂时错误按主流程限时复查并如实报告。
+`start` 只等待 cloudflared 在日志中生成 `*.trycloudflare.com` 地址，解析成功后立即写入状态并输出上述变量。它不会请求公网 URL，也不会把 HTTP/TLS 可达性作为启动条件。地址刚生成时可能短暂返回 Cloudflare 5xx 或出现 TLS/传输错误；先交付生成的地址，不因此重建或停止本轮 tunnel；公网验收在地址交付后独立执行，使用一次浏览器验证结果如实报告，不另做 HTTP 轮询。
 
 只读检查不创建进程：
 

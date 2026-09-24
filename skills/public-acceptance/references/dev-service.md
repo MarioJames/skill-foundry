@@ -1,6 +1,6 @@
 # DEV 进程、端口与终端
 
-启动公网验收、复用已有服务或补日志可见性时读取。Agent 根据项目实际开发脚本与 HTTP 响应确认应用；脚本只提供进程证据和前台日志，不自动把任意监听端口当成 DEV。
+没有本轮准备记录、需要启动或排查 DEV 服务时读取。已有确认的 APP_URL、PID 和日志直接复用；以下扫描用于发现未知服务，不在各阶段重复执行。
 
 ## 先探测，不先启动
 
@@ -29,7 +29,7 @@ bun "$PUBLIC_ACCEPTANCE_SKILL_DIR/scripts/dev.ts" inspect --project "$PROJECT_DI
 Herdr 实际调用可用时加载 `herdr` 技能，按如下分支执行。保留当前焦点，不移动正在工作的 pane。
 
 - 已有服务且唯一匹配原 pane：直接复用，不新建 tab、不重启服务。
-- 已有服务但无 pane：stdout/stderr 指向可读普通文件时，在新的日志 pane 中 `tail -n 100 -F -- <实际日志文件>`；两个流写不同文件则同时追踪，路径作为独立参数安全引用。有本轮 `dev-process.json` 时也可使用其 `log_path`，但先核对 runner PID 与 identity。不能读取 `/proc/<pid>/fd/1` 管道或 TTY 来“接管”输出。没有日志、原终端不受 Herdr 管理或 pane 清单不完整时如实说明，不能为展示而重启。
+- 已有服务但无 pane：直接记录已有可读日志位置，不为展示创建日志追踪 pane；没有可读日志时如实说明，不擅自重启。
 - 无 DEV 进程：创建新 tab 的单个 pane，运行下一节的前台 runner。
 
 新建时使用已加载 herdr 的 router，显式 `--scope independent` 以创建独立 tab，不能沿用 service 默认的同 tab split。`TAB_LABEL` 遵循当前会话的命名规则：
@@ -54,20 +54,20 @@ bun "$PUBLIC_ACCEPTANCE_SKILL_DIR/scripts/dev-run.ts" \
 
 `dev-run.ts` 同时向 pane 和私有 `dev.log` 写 stdout/stderr，在 `dev-process.json` 记录 runner PID/identity、child PID、项目路径、日志和退出状态。不保存命令或环境。状态文件独占创建，防止重复启动覆盖现场；文件存在时先核对已有进程，不能盲目删文件重跑。
 
-读取启动记录后用 runner PID 限定监听进程的整棵子树：
+从启动日志取得就绪地址后确认实际监听端口；需要定位监听者时，用 runner PID 限定子树，不重新扫描整个项目：
 
 ```bash
 bun "$PUBLIC_ACCEPTANCE_SKILL_DIR/scripts/dev.ts" inspect \
   --project "$PROJECT_DIR" --root-pid "$DEV_RUNNER_PID"
 ```
 
-未出监听端口时检查 runner 的存活 identity、退出状态与日志，在项目合理启动时限内复查。失败或超时停止依赖步骤并清理本轮新资源。不能拿 shell、bun/pnpm 启动器 PID 没有监听端口当成失败，实际监听者常为孙进程。
+服务仍在启动时，根据日志在项目合理启动时限内等待就绪；没有进展时检查 runner 退出状态与错误。失败或超时停止依赖步骤并清理本轮新资源。不能拿 shell、bun/pnpm 启动器 PID 没有监听端口当成失败，实际监听者常为孙进程。
 
 ## 确认 APP_URL 与发布
 
 从同一候选的实际端口及监听 hosts 生成本地候选地址；`0.0.0.0` 转 `127.0.0.1`，`::` 使用 `[::1]`（仅在验证 IPv4 也能连接时使用 `127.0.0.1`）。多个端口逐一结合日志、协议和实际响应区分应用与调试端口，不机械使用最小值。HTTPS、base path、Host 要按项目事实处理。
 
-限时请求候选地址，例如 `curl --noproxy '*' --connect-timeout 2 --max-time 5 -i "$CANDIDATE_URL"`；核对应用特征及预期鉴权响应。连接成功或状态码 200 本身不是应用身份验证。最终使用前再次确认 PID identity、端口归属和存活状态没有变化。只有归属与本地响应都确认后才确定 `APP_URL`。
+启动记录与监听证据一致即可确定 `APP_URL`，不额外进行本地 HTTP 探活。仅归属或协议有歧义时补做一次限时请求，结合应用特征消歧；连接成功或状态码 200 本身不能证明应用身份。页面可达性统一在公网浏览器验证中确认。
 
 本流程启动或发现的 DEV：直接 `cqt start <已核实的 origin>`；browser-harness 使用 **APP_URL 这个 URL target** 做 prepare/采证，不调用项目目录 prepare/publish/share。那些目录命令维护另一套 DEV PID 生命周期，可能停止并重启服务。若入场前已经由 browser-harness 管理，则保留原 target 和 share/cleanup 流程，不把服务登记到第二套状态。
 
@@ -75,7 +75,7 @@ tunnel 继续后台托管，默认没有 tunnel pane。需要排障或用户要�
 
 ## 保留与清理
 
-手动验收期间保留新 DEV pane、必要的日志追踪 pane 与 tunnel，交付 APP_URL、公网地址、PID/实际端口、日志、pane/tab ID、状态目录、归属和清理命令。清理顺序：
+手动验收期间保留新 DEV pane 与 tunnel，交付 APP_URL、公网地址、PID/实际端口、日志、pane/tab ID、状态目录、归属和清理命令。清理顺序：
 
 1. 使用本轮 tunnel 的原 state-dir（或原 browser-harness target）清理隧道。
 2. 新 DEV runner：核对状态中的 runner PID/identity 仍匹配后，仅向 runner PID 发送 SIGTERM；runner 转发终止信号至自己的子进程，超时后只对已记录且 identity 未变化的子进程强制退出。确认 runner、child 和发现的监听 PID/端口已经退出。没有确认则报告具体残留，不能宽泛杀进程。

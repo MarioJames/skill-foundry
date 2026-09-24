@@ -1,4 +1,4 @@
 interface:
   display_name: "Public Acceptance"
-  short_description: "启动 DEV 服务、探测实际端口、生成公网验收地址并交付登录账号密码"
-  default_prompt: "使用 $public-acceptance 启动当前项目的 DEV 服务，探测实际端口并生成公网验收地址；有登录时查找并输出可用用户名和密码，验证页面并保留服务供我验收。"
+  short_description: "启动或复用 DEV 服务、创建隧道并交付地址和登录信息"
+  default_prompt: "使用 $public-acceptance 启动或复用当前项目的 DEV 服务，创建临时隧道并交付公网地址和登录信息；只打开一次公网地址确认目标页面，不验证登录或业务流程，保留服务供我验收，不反复探活。"
