@@ -25,7 +25,7 @@
 bun scripts/run-task.ts --input /private/task.json --state /private/scope.json --sandbox workspace-write
 ```
 
-默认 sandbox 为 read-only；写代码显式传 workspace-write。不会提供 YOLO 开关。默认任务预算 30 分钟，可用 `--timeout-ms` 调整为 1 秒至 24 小时；单 RPC 响应预算 60 秒，清理各阶段宽限 3 秒。Jev 请求默认 60 秒，可用 `--jev-timeout-ms` 在 1–120 秒之间调整；超时保留失败决策，不自动重试。无输出不代表失败。
+默认 sandbox 为 read-only；写代码显式传 workspace-write。不会提供 YOLO 开关。默认任务预算 30 分钟，可用 `--timeout-ms` 调整为 1 秒至 24 小时；单 RPC 响应预算 60 秒，清理各阶段宽限 3 秒。Jev 每次请求默认 60 秒，可用 `--jev-timeout-ms` 在 1–120 秒之间调整；暂态请求最多尝试三次，耗尽后保留失败决策，不重放执行 attempt。无输出不代表失败。
 
 命令先输出 `attempt_id/runner_pid/state/result`；父宿主后台句柄可能更早返回。父 Agent 继续原工作；runner 自行读取双向 JSONL，按精确 thread/turn 收取结果并关闭独占 app-server。RPC 执行路径返回成功需要 completed 且 cleanup stopped；派发前的 serial 也正常退出 0，但未创建 worker。应结合结构化结果判断，退出码 0 本身不代表任务已经验收。2 表示未成功完成；参数/准入/基础设施错误非零。私有结果路径为 `STATE.results/ATTEMPT.json.rpc.json`，stderr 有界保留 64 KB。
 

@@ -301,7 +301,7 @@ test("complete needs accepted results plus owner goal coverage; cancelled is not
   );
 });
 
-test("Jev uses bounded Decisions requests and redacts provider failures without retry", async () => {
+test("Jev retries transient failures with the same bounded request", async () => {
   const p = prepareAssessment(validateBatch(fixture()), {});
   let calls = 0;
   const data = await callJev(p.request!, {
@@ -317,13 +317,61 @@ test("Jev uses bounded Decisions requests and redacts provider failures without 
   });
   expect(data.model).toBe("typesafe/jev-1.13");
   expect(calls).toBe(1);
+  const bodies: string[] = [];
+  let transientCalls = 0;
+  const recovered = await callJev(p.request!, {
+    apiKey: "secret",
+    fetch: (async (_url, init) => {
+      bodies.push(String(init!.body));
+      transientCalls++;
+      if (transientCalls === 1) throw new Error("socket closed");
+      if (transientCalls === 2) return new Response("busy", { status: 503 });
+      return Response.json(reply(p.request!.questions));
+    }) as typeof fetch,
+  });
+  expect(recovered.model).toBe("typesafe/jev-1.13");
+  expect(transientCalls).toBe(3);
+  expect(new Set(bodies).size).toBe(1);
+  let timeoutCalls = 0;
+  const timedOutThenRecovered = await callJev(p.request!, {
+    apiKey: "secret", timeoutMs: 1,
+    fetch: (async (_url, init) => {
+      timeoutCalls++;
+      if (timeoutCalls === 1) {
+        await new Promise((_, reject) => init!.signal!.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+      }
+      return Response.json(reply(p.request!.questions));
+    }) as typeof fetch,
+  });
+  expect(timedOutThenRecovered.model).toBe("typesafe/jev-1.13");
+  expect(timeoutCalls).toBe(2);
+  let rateLimitCalls = 0;
+  await callJev(p.request!, {
+    apiKey: "secret",
+    fetch: (async () => {
+      rateLimitCalls++;
+      return rateLimitCalls === 1 ? new Response("slow down", { status: 429 }) : Response.json(reply(p.request!.questions));
+    }) as typeof fetch,
+  });
+  expect(rateLimitCalls).toBe(2);
+});
+
+test("Jev stops after three transient attempts and does not retry permanent errors", async () => {
+  const p = prepareAssessment(validateBatch(fixture()), {});
+  let exhaustedCalls = 0;
+  await expect(callJev(p.request!, {
+    apiKey: "secret",
+    fetch: (async () => { exhaustedCalls++; throw new Error("offline"); }) as typeof fetch,
+  })).rejects.toMatchObject({ code: "network_error" });
+  expect(exhaustedCalls).toBe(3);
+  let permanentCalls = 0;
   await expect(
     callJev(p.request!, {
       apiKey: "secret",
-      fetch: (async () =>
-        new Response("secret", { status: 429 })) as unknown as typeof fetch,
+      fetch: (async () => { permanentCalls++; return new Response("secret", { status: 400 }); }) as typeof fetch,
     }),
-  ).rejects.toThrow("429");
+  ).rejects.toThrow("400");
+  expect(permanentCalls).toBe(1);
   const b = fixture();
   b.constraints = ["约束".repeat(20000)];
   expect(() => prepareAssessment(validateBatch(b), {})).toThrow();

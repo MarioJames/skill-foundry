@@ -52,6 +52,8 @@ JSON
 
 `status` 默认观察精确 attempt，并分别报告执行、交付、父任务验收和资源清理状态；`--cached` 只读数据库。父任务核对产物与验收标准后才能 `accept`。`accept` 从已存记录填入 attempt、task 和 revision 身份，不能仅复制 worker 自评。已验收依赖在下次 `run` 解锁。`check` 读取已有事实但不保存输入，`check --live` 再探测配置与能力；它和 `run/start` 使用同一模型探测路径。`plan` 保存一次冻结决策，`start --decision ID` 对当前事实、配置、依赖和容量重新准入，但不再请求 Jev。首次 `check` 或 `plan` 也需要 `--input`。
 
+Jev 超时、网络中断及 HTTP 408/429/5xx 会以相同请求最多尝试三次，间隔 0.5 秒、1.5 秒；`--jev-timeout-ms` 控制每次尝试的 1–120 秒预算，默认 60 秒。暂态失败耗尽后，错误与未启动的决策保存在 SQLite；网络恢复时同一 scope 直接重跑 `run` 或 `plan`，无需重传长输入。永久的请求、鉴权或响应格式错误不会自动重试。Jev 请求重试不重放已启动的 worker。
+
 `cancel --task KEY` 撤销尚未启动的任务；`cancel --attempt ID` 对精确自有 runner/session 请求停止。随后执行 `status`，检查部分产物。对于失败、取消或未知执行，证实停止并核对写入后用 `resolve --attempt ID --outcome failed_stopped|cancelled_stopped|not_performed --evidence TEXT` 明确处置。`cleanup --attempt ID --caller-pane PANE` 仅关闭已可安全回收的自有 Herdr lane。未知结果仍占用写入权；不要重跑同一 attempt、换 scope/database、自动降级模型或清除持久数据。
 
 错误输出含阶段、字段路径、预期类型和修正方式；能力阻塞与 Jev `serial` 不混淆。`status` 能读回有界执行结果；scope 锁残留时先根据锁文件 PID、记录的 attempt 与实际进程确认原执行已退出，再精确处理锁。数据库、执行结果和诊断默认保留。

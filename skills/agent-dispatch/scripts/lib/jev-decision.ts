@@ -517,50 +517,42 @@ export function resolveWave(
     selection: { choice: answer.choice, confidence: answer.confidence ?? null, min_confidence: min },
   };
 }
-export async function callJev(
-  request: DecisionRequest,
-  options: { apiKey?: string; timeoutMs?: number; fetch?: typeof fetch } = {},
-) {
-  bound(request);
-  if (!options.apiKey?.trim())
-    throw new CliError(
-      "missing_api_key",
-      "Set OPENROUTER_API_KEY in the calling environment",
-      2,
-    );
-  const timeout = options.timeoutMs ?? 20_000;
-  if (!Number.isInteger(timeout) || timeout < 1 || timeout > 120_000)
-    throw new CliError("invalid_argument", "timeout-ms must be 1..120000", 2);
+const JEV_RETRY_DELAYS_MS = [500, 1500] as const;
+export const retryableJevCode = (code: string) =>
+  code === "request_timeout" || code === "network_error" || code === "provider_retryable";
+
+async function callJevOnce(request: DecisionRequest, body: string, apiKey: string, timeout: number, requestFetch: typeof fetch) {
   const signal = AbortSignal.timeout(timeout);
   let response: Response;
   try {
-    response = await (options.fetch ?? fetch)(JEV_ENDPOINT, {
+    response = await requestFetch(JEV_ENDPOINT, {
       method: "POST",
       redirect: "error",
       signal,
       headers: {
-        Authorization: `Bearer ${options.apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(request),
+      body,
     });
   } catch {
     throw new CliError(
       signal.aborted ? "request_timeout" : "network_error",
-      "Jev request failed; no automatic retry or model fallback",
+      "Jev request failed before a complete response",
     );
   }
   if (!response.ok) {
-    await response.body?.cancel();
+    try { await response.body?.cancel(); } catch {}
+    const retryable = response.status === 408 || response.status === 429 || response.status >= 500;
     throw new CliError(
-      "provider_error",
-      `OpenRouter returned HTTP ${response.status}; return to the main Agent`,
+      retryable ? "provider_retryable" : "provider_error",
+      `OpenRouter returned HTTP ${response.status}`,
     );
   }
   let parsed: unknown;
   try {
     const reader = response.body?.getReader();
-    if (!reader) throw new Error();
+    if (!reader) throw new CliError("invalid_response", "Jev response body is missing");
     const chunks: Uint8Array[] = [];
     let size = 0;
     try {
@@ -568,19 +560,43 @@ export async function callJev(
         const chunk = await reader.read();
         if (chunk.done) break;
         size += chunk.value.length;
-        if (size > 64_000) throw new Error();
+        if (size > 64_000) throw new CliError("invalid_response", "Jev response exceeds 64 KB");
         chunks.push(chunk.value);
       }
     } finally {
-      await reader.cancel();
+      try { await reader.cancel(); } catch {}
     }
     parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  } catch {
+  } catch (error) {
+    if (error instanceof CliError) throw error;
     throw new CliError(
-      signal.aborted ? "request_timeout" : "invalid_response",
-      "Jev response was unreadable, oversized or not JSON",
+      signal.aborted ? "request_timeout" : error instanceof SyntaxError ? "invalid_response" : "network_error",
+      "Jev response was interrupted or invalid",
     );
   }
   validateResponse(request, parsed);
   return parsed as any;
+}
+
+export async function callJev(
+  request: DecisionRequest,
+  options: { apiKey?: string; timeoutMs?: number; fetch?: typeof fetch } = {},
+) {
+  bound(request);
+  if (!options.apiKey?.trim())
+    throw new CliError("missing_api_key", "Set OPENROUTER_API_KEY in the calling environment", 2);
+  const timeout = options.timeoutMs ?? 20_000;
+  if (!Number.isInteger(timeout) || timeout < 1 || timeout > 120_000)
+    throw new CliError("invalid_argument", "timeout-ms must be 1..120000", 2);
+  const body = JSON.stringify(request);
+  for (let attempt = 0; attempt <= JEV_RETRY_DELAYS_MS.length; attempt++) {
+    try { return await callJevOnce(request, body, options.apiKey, timeout, options.fetch ?? fetch); }
+    catch (error) {
+      if (!(error instanceof CliError) || !retryableJevCode(error.code)) throw error;
+      if (attempt === JEV_RETRY_DELAYS_MS.length)
+        throw new CliError(error.code, `Jev request failed after ${attempt + 1} attempts: ${error.message}`);
+      await Bun.sleep(JEV_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+  throw new CliError("internal_error", "Jev retry loop ended unexpectedly");
 }

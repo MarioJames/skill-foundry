@@ -7,7 +7,7 @@ import { CliError, emit, parseFlags, runCli } from "./lib/cli";
 import { loadRoutingConfig } from "./lib/agent-engines";
 import { command, cleanupAttempt, observeAttempt, transport } from "./lib/agent-runtime";
 import { acceptAttempt, bindBatch, reserve, resolveAttempt, runAttempt, type Decision, type State } from "./lib/dispatch-state";
-import { callJev, prepareAssessment, prepareWave, resolveAssessment, resolveWave, waveConfidenceThreshold } from "./lib/jev-decision";
+import { callJev, prepareAssessment, prepareWave, resolveAssessment, resolveWave, retryableJevCode, waveConfidenceThreshold } from "./lib/jev-decision";
 import { contextBlockers, expandPublicPatch, mergePublicContext, validatePublicInput, buildPublicBatch, type PublicContext } from "./lib/public-input";
 import { taskRuntime } from "./lib/task-input";
 import { hash, validateBatch, type Attempt, type Batch } from "./lib/scheduling";
@@ -31,7 +31,8 @@ Scope defaults to a verified current Herdr parent session; otherwise pass --scop
 First run supplies task facts once. Later run/check/plan read SQLite directly; --input may contain only changed fields or new tasks.
 Input: {"version":1,"cwd":"/absolute/repo","goal":"goal","owner":{"id":"parent","adapter":"codex","work":"Editing src while contract is frozen","reads":["src"],"writes":["src"]},"external":[],"authorization":{"delegate":true,"basis":"user request"},"tasks":[{"key":"review","prompt":"Review the contract","deliverable":"findings","acceptance":["cite concrete findings"],"reads":["contracts"],"writes":[],"depends_on":[]}]}
 Unknown reads/writes, external inventory, or dependencies use null; [] means confirmed empty. Changed tasks require if_revision. Optional task mode is oneshot|persistent. Resource paths are cwd-relative; db/service/redis/bucket keys identify external resources.
-Selected Herdr work additionally needs --caller-pane and --label MMDD｜TYPE｜Topic. No automatic retry, model fallback, acceptance, or unknown-write release.`;
+Jev request attempts: 3 on timeout, network failure, HTTP 408/429/5xx; each attempt defaults to 60s and may use --jev-timeout-ms 1000..120000. A later run can retry an exhausted transient decision from SQLite.
+Selected Herdr work additionally needs --caller-pane and --label MMDD｜TYPE｜Topic. No worker replay, model fallback, automatic acceptance, or unknown-write release.`;
 
 const script = fileURLToPath(import.meta.url);
 function procTicks(pid: number): string | undefined {
@@ -144,11 +145,13 @@ async function startDecision(store: SQLiteStateStore, decisionId: string, config
 await runCli(async () => {
   const [action, ...argv] = process.argv.slice(2);
   if (!action || ["--help", "help"].includes(action)) { process.stdout.write(HELP + "\n"); return; }
-  const f = parseFlags(argv, ["--scope", "--db", "--config", "--input", "--decision", "--attempt", "--task", "--outcome", "--evidence", "--caller-pane", "--label", "--timeout-ms"], ["--live", "--cached", "--help"]);
+  const f = parseFlags(argv, ["--scope", "--db", "--config", "--input", "--decision", "--attempt", "--task", "--outcome", "--evidence", "--caller-pane", "--label", "--timeout-ms", "--jev-timeout-ms"], ["--live", "--cached", "--help"]);
   if (f.has("--help")) { process.stdout.write(HELP + "\n"); return; }
   const req = (key: string) => { const v = f.get(key); if (typeof v !== "string" || !v) throw new CliError("missing_argument", `${key} is required`, 2); return v; };
   const timeoutMs = Number(f.get("--timeout-ms") ?? 1_800_000);
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 86_400_000) throw new CliError("invalid_argument", "--timeout-ms must be 1000..86400000", 2);
+  const jevTimeoutMs = Number(f.get("--jev-timeout-ms") ?? 60_000);
+  if (!Number.isSafeInteger(jevTimeoutMs) || jevTimeoutMs < 1_000 || jevTimeoutMs > 120_000) throw new CliError("invalid_argument", "--jev-timeout-ms must be 1000..120000", 2);
   let scope = f.get("--scope") as string | undefined;
   if (!scope && action !== "worker") {
     try {
@@ -198,14 +201,14 @@ await runCli(async () => {
       if (missing.length) return { status: "blocked", stage: "preflight", issues: missing, workers_started: 0 };
       const cross = otherActivity(store, buildPublicBatch(store.scope, merged, state), config);
       const batch = cross.batch;
-      if (state.public_failure?.input_hash === hash(batch) && state.public_failure.config_hash === hash(config))
+      if (state.public_failure?.input_hash === hash(batch) && state.public_failure.config_hash === hash(config) && !retryableJevCode(state.public_failure.code))
         return { status: "failed", reason: state.public_failure.code, stage: state.public_failure.stage, workers_started: 0, reused: true };
       const requestHash = hash(merged);
       const repeated = state.public_request?.hash === requestHash && state.public_request.lifecycle_hash === lifecycleHash(state)
         ? state.decisions.find((d) => d.id === state.public_request?.decision_id) : undefined;
       if (repeated) return { status: publicDecisionStatus(repeated), decision_id: repeated.id, reason: repeated.result.reason, selection: repeated.result.selection, blocked: repeated.prepared.blocked, reused: true, workers_started: state.attempts.filter((a) => a.decision_id === repeated.id).length };
       const old = state.decisions.at(-1);
-      if (old?.input_hash === hash(batch) && old.result.status !== "failed")
+      if (old?.input_hash === hash(batch) && old.result.status !== "failed" && old.result.status !== "pending")
         return { status: publicDecisionStatus(old), decision_id: old.id, reason: old.result.reason, selection: old.result.selection, blocked: old.prepared.blocked, reused: true, workers_started: state.attempts.filter((a) => a.decision_id === old.id).length };
       const assessment = prepareAssessment(batch, state.assessments, state.attempts, config);
       Object.assign(state.assessments, assessment.cached);
@@ -213,7 +216,7 @@ await runCli(async () => {
       if (assessment.request) {
         const record = { id: randomUUID(), request: assessment.request, status: "intent", response: undefined as unknown };
         state.classification_runs.push(record); save();
-        try { response = await callJev(assessment.request, { apiKey: process.env.OPENROUTER_API_KEY, timeoutMs: 60_000 }); record.response = response; record.status = "confirmed"; Object.assign(state.assessments, resolveAssessment(assessment, response).assessments); save(); }
+        try { response = await callJev(assessment.request, { apiKey: process.env.OPENROUTER_API_KEY, timeoutMs: jevTimeoutMs }); record.response = response; record.status = "confirmed"; Object.assign(state.assessments, resolveAssessment(assessment, response).assessments); save(); }
         catch (error) { record.status = "failed"; state.public_failure = { input_hash: hash(batch), config_hash: hash(config), stage: "classification", code: error instanceof CliError ? error.code : "jev_failed" }; save(); throw error; }
       }
       const runtime = await taskRuntime(config, [...externalAgents(merged, config), ...cross.agents]);
@@ -221,7 +224,7 @@ await runCli(async () => {
       const d: Decision = { id: randomUUID(), created_at: new Date().toISOString(), input_hash: hash(batch), prepared, result: { status: "pending", assignments: [] }, assessment_request: assessment.request, assessment_response: response, wave_response: null };
       state.decisions.push(d); save();
       try {
-        d.wave_response = prepared.request ? await callJev(prepared.request, { apiKey: process.env.OPENROUTER_API_KEY, timeoutMs: 60_000 }) : null;
+        d.wave_response = prepared.request ? await callJev(prepared.request, { apiKey: process.env.OPENROUTER_API_KEY, timeoutMs: jevTimeoutMs }) : null;
         const selected = prepared.waves.length === 1 && prepared.waves[0].assignments.length === 1;
         const mode = selected ? merged.tasks.find((t) => t.key === prepared.waves[0].assignments[0].task_id)?.mode : undefined;
         d.result = resolveWave(prepared, d.wave_response, selected ? waveConfidenceThreshold(prepared, mode ?? "oneshot") : 0.8); save();

@@ -103,6 +103,19 @@ test("ordinary run uses one Jev decision and identical submission reuses it", as
   expect(failRun().status).not.toBe(0);
   const repeatedFailure = failRun();
   expect(repeatedFailure.status).not.toBe(0);
-  expect(JSON.parse(repeatedFailure.stdout).reused).toBe(true);
-  expect(readFileSync(failedCount, "utf8").trim().split("\n")).toHaveLength(1);
+  expect(JSON.parse(repeatedFailure.stdout).error.code).toBe("network_error");
+  expect(readFileSync(failedCount, "utf8").trim().split("\n")).toHaveLength(6);
+  const recovered = spawnSync(process.execPath, ["--preload", join(import.meta.dir, "fixtures/mock-jev.ts"), cliFile, "run", "--scope", "failed-task", "--db", failedDb, "--config", configFile], { cwd: root, env: { ...env, MOCK_JEV_COUNT_FILE: failedCount }, encoding: "utf8", timeout: 12_000 });
+  expect(recovered.status).toBe(0);
+  expect(recovered.stdout.trim().split("\n").map((line) => JSON.parse(line).status)).toEqual(["selected", "started"]);
+  expect(readFileSync(failedCount, "utf8").trim().split("\n")).toHaveLength(7);
+  let recoveredPhase = "";
+  for (let n = 0; n < 100; n++) {
+    const observed = spawnSync(process.execPath, [cliFile, "status", "--scope", "failed-task", "--db", failedDb], { cwd: root, env, encoding: "utf8" });
+    expect(observed.status).toBe(0);
+    recoveredPhase = JSON.parse(observed.stdout).attempts[0].phase;
+    if (recoveredPhase === "finished") break;
+    await Bun.sleep(50);
+  }
+  expect(recoveredPhase).toBe("finished");
 });
