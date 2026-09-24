@@ -43,7 +43,7 @@ The existing Bun CLI owns anonymous tunnel start / status / stop / cleanup with 
 
 ### `agent-dispatch` — background task dispatch
 
-`agent-dispatch` reconsiders delegation when a parent receives additional work, identifies an independent deliverable, or receives a worker result. Bounded Codex work uses a JSON-RPC background runner; persistent interaction and non-Codex profiles use Herdr. Both paths share configuration, capacity reservations and acceptance rules. A configured `manual_override` skips Jev difficulty routing; Jev still decides whether and how to parallelize. See [single-task usage](skills/agent-dispatch/references/run-task.md) and the optional [Jev batch workflow](skills/agent-dispatch/references/jev-scheduling.md).
+`agent-dispatch` assesses the full pending workload on the first multi-deliverable request, each added or changed instruction, and each worker result. Ready, independently scoped candidates go to Jev before the parent commits to serial execution. Bounded Codex work uses a JSON-RPC background runner; persistent interaction and non-Codex profiles use Herdr. Both paths share configuration, capacity reservations and acceptance rules. A configured `manual_override` skips Jev difficulty routing; Jev still decides whether and how to parallelize. See [single-task usage](skills/agent-dispatch/references/run-task.md) and the optional [Jev batch workflow](skills/agent-dispatch/references/jev-scheduling.md).
 
 The host must deliver the new message and return a background process handle. A skill cannot intercept queued messages or guarantee a host wakeup. The repository [AGENTS.md](AGENTS.md) includes a parent-only trigger bridge; cross-project use requires adopting that bridge in guidance the host actually loads.
 
@@ -301,8 +301,10 @@ Decide whether a change needs a real test:
 Use tdd before implementing this feature or adding a unit test.
 ```
 
-Each skill defines its own activation rules in `SKILL.md`. Use `agent-dispatch` when new independent work can
-shorten the critical path, including within a single deliverable. `tdd` is meant to activate on every
+Each skill defines its own activation rules in `SKILL.md`. Load `agent-dispatch` when a parent receives a
+multi-deliverable request or additional instructions; its first step identifies candidates across pending work.
+For cross-project use, adopt the trigger rule from its single-task reference in the instructions actually loaded
+by that host. Installing a skill alone does not guarantee automatic invocation. `tdd` is meant to activate on every
 production-code or test change; the skill body then chooses TDD vs skip.
 
 ## Repository Layout
