@@ -35,7 +35,7 @@ Frontend acceptance helper around [vercel-labs/agent-browser](https://github.com
 
 ### `public-acceptance` — public DEV acceptance
 
-Prepares a local DEV service, discovers and verifies its actual listening port, creates a temporary Cloudflare review URL, and retrieves the application's development login credentials from effective environment configuration or the development database. Reports available plaintext credentials to the requesting user, verifies login, and explains hash-only or external-auth limitations without inventing passwords. Uses `browser-harness` for frontend interaction and evidence, and retains the service and tunnel for manual review until cleanup.
+Prepares a local DEV service, discovers and verifies its actual listening port, creates a temporary Cloudflare review URL, and retrieves the application's development login credentials from effective environment configuration or the development database. Reports available plaintext credentials to the requesting user and explains hash-only or external-auth limitations without inventing passwords. Opens the public page once with `browser-harness` to confirm reachability; login and business flows are outside this check. Runs the project dev script directly in an interactive pane so users can stop and restart it while the tunnel stays in the background, retaining the same local origin and port.
 
 The existing Bun CLI owns anonymous tunnel start / status / stop / cleanup with isolated configuration and exact process state. It returns the generated root URL immediately; the acceptance workflow verifies reachability and pages afterward.
 

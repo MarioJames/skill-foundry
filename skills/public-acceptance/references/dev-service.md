@@ -18,9 +18,9 @@ bun "$PUBLIC_ACCEPTANCE_SKILL_DIR/scripts/dev.ts" inspect --project "$PROJECT_DI
 
 仅 exact cwd 或路径边界内的 descendant cwd 作为候选；目录匹配仍需结合项目开发脚本核对。monorepo 子应用、同目录测试/生产进程、数据库和调试端口都不能直接复用。多候选时按本轮目标、启动记录、实际命令与响应消歧，不能默认挑第一个。
 
-`none` 只表示当前未找到监听服务。启动前还要定向检查该项目的进程、已记录 runner PID 和相关 pane 输出，排除编译中、启动中或挂起的 DEV。已知启动进程存活时限时等待或排障，不再起第二份。
+`none` 只表示当前未找到监听服务。启动前还要定向检查该项目的进程、已记录的启动进程 和相关 pane 输出，排除编译中、启动中或挂起的 DEV。已知启动进程存活时限时等待或排障，不再起第二份。
 
-没有 strayd 时不自动安装：Linux 用 `ss -ltnp` 或 `lsof -nP -iTCP -sTCP:LISTEN`，macOS 用 lsof，获取 socket/PID；结合 `ps` 父子关系及 Linux `/proc/<pid>/cwd`、macOS `lsof -a -p <pid> -d cwd` 核实 cwd，再按 Herdr `pane list` / `process-info` 的 shell PID、前台 PID、TTY 关联 pane。Windows 须使用宿主原生探测能力；Bun 前台 runner 和本页 Unix 命令不作 Windows 原生支持保证。工具或权限不足时明确报告缺失证据。
+没有 strayd 时不自动安装：Linux 用 `ss -ltnp` 或 `lsof -nP -iTCP -sTCP:LISTEN`，macOS 用 lsof，获取 socket/PID；结合 `ps` 父子关系及 Linux `/proc/<pid>/cwd`、macOS `lsof -a -p <pid> -d cwd` 核实 cwd，再按 Herdr `pane list` / `process-info` 的 shell PID、前台 PID、TTY 关联 pane。Windows 须使用宿主原生探测能力；本页 Unix 命令不作 Windows 原生支持保证。工具或权限不足时明确报告缺失证据。
 
 已有服务可以按本轮明确授权复用，不接管其停止权限。共享的远祖进程（如 Herdr daemon）不是 pane 归属证据；只接受服务的祖先链命中具体 pane shell/前台进程，或确实相同的 TTY。多个 pane 匹配时先消歧。
 
@@ -30,7 +30,7 @@ Herdr 实际调用可用时加载 `herdr` 技能，按如下分支执行。保�
 
 - 已有服务且唯一匹配原 pane：直接复用，不新建 tab、不重启服务。
 - 已有服务但无 pane：直接记录已有可读日志位置，不为展示创建日志追踪 pane；没有可读日志时如实说明，不擅自重启。
-- 无 DEV 进程：创建新 tab 的单个 pane，运行下一节的前台 runner。
+- 无 DEV 进程：创建新 tab 的单个 pane，直接运行下一节的项目开发脚本。
 
 新建时使用已加载 herdr 的 router，显式 `--scope independent` 以创建独立 tab，不能沿用 service 默认的同 tab split。`TAB_LABEL` 遵循当前会话的命名规则：
 
@@ -39,29 +39,23 @@ bun "$HERDR_SKILL_DIR/scripts/route-lane.ts" --type service --scope independent 
   --cwd "$PROJECT_DIR" --label "$TAB_LABEL"
 ```
 
-消费成功 JSON 中的 `result.pane_id`、`result.tab_id` 与 `lane.cleanup_command`，记录资源归属；router 负责目录匹配、无焦点创建、命名回读和就绪检查。已经记录的本轮日志 pane 应复用，不能重复创建追踪器。只在新建且已就绪的 pane 执行命令，不向已有忙碌 pane 发送输入。
+消费成功 JSON 中的 `result.pane_id`、`result.tab_id` 与 `lane.cleanup_command`，记录资源归属；router 负责目录匹配、无焦点创建、命名回读和就绪检查。本任务的服务 pane 在开发脚本退出后继续保留，供手动重启；重启时确认已回到 shell，不向忙碌 pane 发送启动命令。
 
 ## 在 pane 前台启动
 
-沿用项目包管理器和开发脚本，必要环境差异按项目规则传入，不能用生产脚本替代。先分配任务专属状态目录（每次启动使用新的目录，保留失败日志）；runner 必须在 pane 内执行，不在一次性工具 shell 中后台启动。可用 Herdr `pane run` 发送以下形状的命令，各路径和参数必须按目标 shell 正确引用：
+在 pane 的交互 shell 中直接运行项目已有开发脚本，沿用项目包管理器；不加启动包装器、不创建 DEV 状态文件。pane 的 cwd 已由 router 设置为项目目录，例如：
 
 ```bash
-bun "$PUBLIC_ACCEPTANCE_SKILL_DIR/scripts/dev-run.ts" \
-  --project "$PROJECT_DIR" --state-dir "$DEV_STATE_DIR" -- bun run dev
+bun run dev
 ```
 
-末尾 `bun run dev` 仅为示例，替换为项目已有命令。需要 shell 语法时显式用 `-- bash -lc '<项目命令>'`；命令本身必须保持前台，不能内含 nohup、`&` 或自行脱离进程树。新 pane 不自动继承本轮工具 shell 的临时变量；命令中展开已确认的绝对路径，必要环境通过项目加载规则或明确传参传递，不把凭据写入可见命令。
+需要非敏感环境覆盖时直接使用 `env NAME=value <项目命令>`。新 pane 不自动继承工具 shell 的临时变量；必要配置按项目加载规则或明确传参传入，凭据不写入可见命令。不要用 `exec` 替换交互 shell，也不要用 nohup、`&` 或额外后台管理器启动 DEV。
 
-`dev-run.ts` 同时向 pane 和私有 `dev.log` 写 stdout/stderr，在 `dev-process.json` 记录 runner PID/identity、child PID、项目路径、日志和退出状态。不保存命令或环境。状态文件独占创建，防止重复启动覆盖现场；文件存在时先核对已有进程，不能盲目删文件重跑。
+输出直接显示在 pane，已有项目日志文件可一并交付，不强制 tee 或新建落盘日志。记录 pane/tab、项目目录、实际启动命令、监听端口和当时的进程信息。
 
-从启动日志取得就绪地址后确认实际监听端口；需要定位监听者时，用 runner PID 限定子树，不重新扫描整个项目：
+用户可在同一 pane 中 Ctrl+C 停止服务，再重跑同一命令。后台隧道独立存活，停止或重启 DEV 不触发隧道 stop/start，也不因临时不可达自动重建。复用隧道需保持原本地 origin（协议、地址和端口）；按项目支持的方式固定端口，重启后若端口漂移，先恢复原端口，不能把旧公网地址误报为可用。需要公网 origin 配置时，取得地址后在同一 pane 用相应环境覆盖重启 DEV，隧道保持不变。
 
-```bash
-bun "$PUBLIC_ACCEPTANCE_SKILL_DIR/scripts/dev.ts" inspect \
-  --project "$PROJECT_DIR" --root-pid "$DEV_RUNNER_PID"
-```
-
-服务仍在启动时，根据日志在项目合理启动时限内等待就绪；没有进展时检查 runner 退出状态与错误。失败或超时停止依赖步骤并清理本轮新资源。不能拿 shell、bun/pnpm 启动器 PID 没有监听端口当成失败，实际监听者常为孙进程。
+从启动输出和实际监听端口确定就绪地址；需要定位监听者时，使用已确认的项目启动进程 PID 限定 `dev.ts inspect --root-pid` 的子树。服务仍在启动时按项目合理时限等待输出，退出或超时则报告错误。手动重启后 PID 会变化，旧记录仅作线索，清理时重新核对当前进程归属。
 
 ## 确认 APP_URL 与发布
 
@@ -75,11 +69,11 @@ tunnel 继续后台托管，默认没有 tunnel pane。需要排障或用户要�
 
 ## 保留与清理
 
-手动验收期间保留新 DEV pane 与 tunnel，交付 APP_URL、公网地址、PID/实际端口、日志、pane/tab ID、状态目录、归属和清理命令。清理顺序：
+手动验收期间保留新 DEV pane 与 tunnel，交付 APP_URL、公网地址、PID/实际端口、pane 输出或已有日志、pane/tab ID、隧道状态目录、启动命令、归属和清理命令。清理顺序：
 
 1. 使用本轮 tunnel 的原 state-dir（或原 browser-harness target）清理隧道。
-2. 新 DEV runner：核对状态中的 runner PID/identity 仍匹配后，仅向 runner PID 发送 SIGTERM；runner 转发终止信号至自己的子进程，超时后只对已记录且 identity 未变化的子进程强制退出。确认 runner、child 和发现的监听 PID/端口已经退出。没有确认则报告具体残留，不能宽泛杀进程。
+2. 本任务新建的 DEV：核对 pane 当前仍运行该项目开发脚本后，在该 pane 发送 Ctrl+C；确认服务退出并回到 shell。若有残留，只对已核实归属和当前 identity 的进程发送终止信号，不按旧 PID 或名称宽泛杀进程。pane 已被用户用于其他工作时保留并说明。
 3. 使用创建时返回的精确 `lane.cleanup_command` 回收本任务 tab/pane；先确认 tab 没有被用户加入其他 pane/工作，发生变化时只清理自己创建的 pane。已有服务、已有 pane 均不关闭。只追踪日志的 pane 关闭不会停止其外部服务。
 4. 保留有诊断价值的启动日志与状态并报告位置；数据库和项目数据不在清理范围内。没有必要继续保留的浏览器与验证进程及时释放。
 
-没有 Herdr 时明确说明日志展示降级；按宿主平台的已有托管方式启动并记录 PID/日志/停止方法，仍遵守先探测、归属验证、复用和精确清理。`dev-run.ts` 自身不负责跨一次性 shell 存活。
+没有 Herdr 时明确说明日志展示降级；按宿主平台的已有托管方式启动并记录 PID/日志/停止方法，仍遵守先探测、归属验证、复用和精确清理。不在一次性工具 shell 中裸后台启动 DEV。

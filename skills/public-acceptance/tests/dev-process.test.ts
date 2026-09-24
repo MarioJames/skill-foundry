@@ -2,9 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { closeSync, mkdtempSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { ancestry, belongs, identity, inspect, matchingPanes, type ProcessInfo } from "../scripts/lib/dev-process";
+import { ancestry, belongs, inspect, matchingPanes, type ProcessInfo } from "../scripts/lib/dev-process";
 
-const runner = resolve(import.meta.dir, "../scripts/dev-run.ts");
 const roots: string[] = [];
 const children: ReturnType<typeof Bun.spawn>[] = [];
 function scratch() { const path = mkdtempSync(join(tmpdir(), "public-dev-")); roots.push(path); return path; }
@@ -87,40 +86,5 @@ describe("real listener discovery", () => {
     expect(inspect(project, a.info.pid).candidates.map(c => c.pid)).toEqual([a.info.pid]);
     a.child.kill(); await a.child.exited;
     expect(() => inspect(project, a.info.pid)).toThrow("no longer running");
-  });
-});
-
-describe("foreground runner", () => {
-  test("tees output and exposes child port through runner ancestry; stops task-owned children", async () => {
-    const project = scratch(), stateDir = join(project, "state");
-    const ready = join(project, "ready.json");
-    const file = join(project, "app.ts");
-    writeFileSync(file, `const server = Bun.serve({hostname: "127.0.0.1", port: 0, fetch: () => new Response("runner-app")});
-console.log("dev output visible"); console.error("dev error visible");
-await Bun.write(${JSON.stringify(ready)}, JSON.stringify({pid: process.pid, port: server.port}));`);
-    const child = Bun.spawn([process.execPath, runner, "--project", project, "--state-dir", stateDir, "--", "bash", "-c", `${process.execPath} ${file} & wait`], { stdout: "pipe", stderr: "pipe" });
-    children.push(child);
-    const info = await waitFor(() => state(ready), "runner server");
-    const record = await waitFor(() => state(join(stateDir, "dev-process.json")), "runner state");
-    expect(record.runner_pid).toBe(child.pid);
-    expect(record.runner_identity).toBe(identity(child.pid));
-    expect(inspect(project, child.pid).candidates[0].ports).toContain(info.port);
-    await waitFor(() => readFileSync(record.log_path, "utf8").includes("dev error visible") ? true : null, "tee log");
-    const duplicate = Bun.spawn([process.execPath, runner, "--project", project, "--state-dir", stateDir, "--", "false"], { stdout: "pipe", stderr: "pipe" });
-    expect(await duplicate.exited).toBe(1);
-    expect(state(join(stateDir, "dev-process.json")).runner_pid).toBe(child.pid);
-    child.kill("SIGTERM"); await child.exited;
-    expect(identity(info.pid)).toBe(null);
-    expect(state(join(stateDir, "dev-process.json")).running).toBe(false);
-    expect(await new Response(child.stdout).text()).toContain("dev output visible");
-    expect(await new Response(child.stderr).text()).toContain("dev error visible");
-  });
-  test("propagates command failure and retains logs", async () => {
-    const project = scratch(), stateDir = join(project, "state");
-    const child = Bun.spawn([process.execPath, runner, "--project", project, "--state-dir", stateDir, "--", "bash", "-c", "echo startup-failed >&2; exit 7"], { stdout: "pipe", stderr: "pipe" });
-    children.push(child);
-    expect(await child.exited).toBe(7);
-    expect(state(join(stateDir, "dev-process.json")).exit_code).toBe(7);
-    expect(readFileSync(join(stateDir, "dev.log"), "utf8")).toContain("startup-failed");
   });
 });
