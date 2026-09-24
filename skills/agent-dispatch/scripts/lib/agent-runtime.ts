@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CliError } from "./herdr-route";
+import { CliError } from "./cli";
 import {
   probeProfile,
   executionProfile,
@@ -18,6 +18,20 @@ import {
   type Runtime,
 } from "./scheduling";
 export type Runner = (argv: string[]) => Promise<any>;
+type TextReader = (pane: string) => Promise<string>;
+const readTerminal: TextReader = (pane) => new Promise((resolve, reject) => {
+  execFile("herdr", ["agent", "read", pane, "--source", "visible"], { timeout: 5000, maxBuffer: 128_000 }, (error, stdout) => error ? reject(new CliError("terminal_read_failed", "Cannot verify native composer")) : resolve(stdout));
+});
+export async function waitForCodexComposer(pane: string, read: TextReader = readTerminal, budget = 30_000) {
+  const deadline = Date.now() + budget;
+  do {
+    const text = await read(pane);
+    if (/^\s*›\s/mu.test(text) && !/model:\s+loading|Trust this folder\?/iu.test(text)) return;
+    if (Date.now() >= deadline) break;
+    await new Promise((r) => setTimeout(r, 250));
+  } while (Date.now() < deadline);
+  throw new CliError("composer_unconfirmed", "Codex composer not ready; inspect the owned pane, do not submit blindly");
+}
 export const command: Runner = (argv) =>
   new Promise((ok, no) => {
     execFile(
@@ -58,6 +72,18 @@ export const command: Runner = (argv) =>
       },
     );
   });
+export async function waitForNativeSession(pane: string, original: any, expected: string | undefined, run: Runner = command, budget = 30_000): Promise<string> {
+  const deadline = Date.now() + budget;
+  do {
+    const current = (await run(["herdr", "agent", "get", pane]))?.result?.agent;
+    if (!original?.terminal_id || current?.terminal_id !== original.terminal_id || current?.pane_id !== pane || current?.agent !== original.agent || (expected && current?.agent_session?.value !== expected))
+      throw new CliError("submit_unknown", "Native session identity changed after submission");
+    if (current?.agent_session?.value) return current.agent_session.value;
+    if (Date.now() >= deadline) break;
+    await new Promise((r) => setTimeout(r, 250));
+  } while (Date.now() < deadline);
+  throw new CliError("submit_unknown", "Native session identity not available after submission; inspect existing work, do not replay");
+}
 export async function observeRuntime(
   config: RoutingConfig,
   run: Runner = command,
@@ -102,13 +128,14 @@ export function transport(
   callerPane: string,
   label: string,
   run: Runner = command,
+  read: TextReader = readTerminal,
 ): Transport {
   return {
     async create(a) {
       mkdirSync(dirname(a.result_path), { recursive: true, mode: 0o700 });
       const r = await run([
         "bun",
-        fileURLToPath(new URL("../route-lane.ts", import.meta.url)),
+        fileURLToPath(new URL("../../../herdr/scripts/route-lane.ts", import.meta.url)),
         "--type",
         "coding-agent",
         "--scope",
@@ -150,6 +177,7 @@ export function transport(
         "--",
         ...a.binding.launch.argv,
       ]);
+      if (a.binding.launch.kind === "codex") await waitForCodexComposer(a.lane!.pane_id, read);
       const agent = (await run(["herdr", "agent", "get", a.lane!.pane_id]))
         ?.result?.agent;
       if (
@@ -173,8 +201,11 @@ export function transport(
     async submit(a) {
       const agent = (await run(["herdr", "agent", "get", a.lane!.pane_id]))
         ?.result?.agent;
+      const original = a.effects.find((e) => e.operation === "start_agent" && e.state === "confirmed")?.evidence as any;
       if (
         agent?.agent_status !== "idle" ||
+        agent.pane_id !== a.lane!.pane_id ||
+        !original?.terminal_id || agent.terminal_id !== original.terminal_id ||
         agent.agent !== a.binding.launch.kind ||
         (a.session_id && agent.agent_session?.value !== a.session_id)
       )
@@ -182,13 +213,17 @@ export function transport(
           "submit_unknown",
           "Owned Agent is not the verified idle session",
         );
-      return await run([
+      const reply = await run([
         "herdr",
         "agent",
         "prompt",
         a.lane!.pane_id,
         taskPrompt(a),
+        "--wait", "--until", "working", "--timeout", "15000",
       ]);
+      // A native session can be reported only after the first user message starts.
+      a.session_id = await waitForNativeSession(a.lane!.pane_id, agent, a.session_id, run);
+      return reply;
     },
   };
 }
@@ -206,6 +241,20 @@ function sameSession(a: Attempt, agent: any) {
 }
 export async function observeAttempt(a: Attempt, run: Runner = command) {
   if (a.slot !== "held") return;
+  if (a.backend === "rpc") {
+    try {
+      const r = readJson(`${a.result_path}.rpc.json`, 128_000);
+      if (r.attempt_id !== a.id || r.task_id !== a.task.id || r.task_revision !== a.task.revision || r.backend !== "rpc" || r.phase !== "terminal" || r.cleanup !== "stopped" || !["completed", "failed", "needs_owner", "cancelled", "unknown"].includes(r.outcome) || JSON.stringify(r.requested_profile) !== JSON.stringify(a.binding.profile)) throw Error();
+      textValue(r.summary, "summary"); strings(r.artifact_refs, "artifact_refs");
+      a.observed = r; a.cleanup = { state: "confirmed", backend: "rpc", stopped: true };
+      a.slot = "released";
+      a.phase = r.outcome === "completed" ? "finished" : r.outcome === "cancelled" ? "cancelled" : "failed";
+      // Text-only research/probe delivery is still addressable evidence: retain the runner envelope.
+      a.result = { attempt_id: a.id, task_id: a.task.id, task_revision: a.task.revision, status: r.outcome === "completed" ? "completed" : "failed", summary: r.summary, artifact_refs: r.artifact_refs.length ? r.artifact_refs : [`${a.result_path}.rpc.json`] };
+      delete a.observation_error;
+    } catch { a.observation_error = "RPC result/cleanup unconfirmed; reservation retained; do not replay"; }
+    return;
+  }
   if (!a.lane) {
     a.observation_error =
       "No known lane; owner must reconcile create intent without retry";

@@ -1,6 +1,6 @@
 ---
 name: cow-workspace
-description: 在 Linux 上创建、检查、导出和回收写时复制 Git 工作区。用于工作树重复占用源码或依赖，或隔离编辑需要复用已准备环境的场景；Agent 与终端调度交由 Herdr。
+description: 在 Linux 上创建、检查、导出和回收写时复制 Git 工作区。用于工作树重复占用源码或依赖，或隔离编辑需要复用已准备环境的场景；Agent 调度交由 agent-dispatch，持久终端操作交由 Herdr。
 ---
 
 # CoW Workspace

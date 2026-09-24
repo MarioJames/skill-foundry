@@ -7,7 +7,7 @@ import {
   resolveWave,
   callJev,
 } from "../scripts/lib/jev-decision";
-import { buildLaunch } from "../scripts/lib/agent-engines";
+import { buildLaunch, executionProfile } from "../scripts/lib/agent-engines";
 import { hash, validateBatch } from "../scripts/lib/scheduling";
 
 const fixture = () =>
@@ -117,6 +117,34 @@ test("task classification is separate from execution routing and dependency rele
   );
   expect(result.status).toBe("selected");
   expect(result.assignments).toHaveLength(2);
+});
+
+test("override eliminates classification requests but keeps Jev parallel selection and local guards", () => {
+  const b = validateBatch(fixture()), c: any = { ...config(), manual_override: { route: "moderate" } };
+  const a = prepareAssessment(b, {}, [], c);
+  expect(a.request).toBeNull();
+  expect(a.cached.date.source).toBe("config");
+  expect(a.cached.date.outcome).toBe("configured");
+  const r = runtime(c);
+  for (const k of ["ordinary", "moderate", "complex"] as const) {
+    const profile = executionProfile(c, k);
+    r.probes[k] = { ...r.probes[k], profile, launch: buildLaunch(c, profile) };
+  }
+  const w = prepareWave(b, c, a.cached, r as any, []);
+  expect(Object.keys(w.request!.questions)).toEqual(["schedule"]);
+  expect(w.waves[0].assignments).toHaveLength(2);
+  expect(w.waves[0].assignments.every((x) => x.binding.profile.model === c.routes.moderate.model)).toBe(true);
+  expect(w.blocked.some((x) => x.task_id === "integrate")).toBe(true);
+  b.owner_wave = { task_ids: ["date", "money"], evidence: "Owner prefers these independent tasks" };
+  expect(Object.keys(prepareWave(b, c, a.cached, r as any, []).request!.questions)).toEqual(["schedule"]);
+  // Removing override must ask A again rather than reusing a made-up difficulty.
+  expect(prepareAssessment(b, a.cached, [], config() as any).request).not.toBeNull();
+  // An unresolved RPC attempt shares capacity and writes with the Herdr batch.
+  const held: any = { id: "rpc", backend: "rpc", task: { id: "rpc-other", revision: 1 }, slot: "held", writes_held: true, lane: null, binding: { launch: { kind: "codex" }, task: { resources: { status: "known", reads: [], writes: ["repo/date"] } } } };
+  c.limits.max_parallel = 1;
+  const blocked = prepareWave(b, c, a.cached, r as any, [held]);
+  expect(blocked.waves).toHaveLength(0);
+  expect(blocked.blocked.some((x) => x.reason === "capacity")).toBe(true);
 });
 
 test("native difficulty never upgrades just to escape an unavailable engine", () => {

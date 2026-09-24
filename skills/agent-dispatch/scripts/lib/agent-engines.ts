@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { CliError } from "./herdr-route";
+import { CliError } from "./cli";
 
 export type Complexity = "ordinary" | "moderate" | "complex";
 export type Reasoning =

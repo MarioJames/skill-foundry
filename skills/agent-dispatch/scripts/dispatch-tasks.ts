@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { CliError, emit, parseFlags, runCli } from "./lib/herdr-route";
+import { CliError, emit, parseFlags, runCli } from "./lib/cli";
 import { loadRoutingConfig } from "./lib/agent-engines";
 import { validateBatch, hash } from "./lib/scheduling";
 import {

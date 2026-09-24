@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
-import { CliError } from "./herdr-route";
+import { CliError } from "./cli";
 import type {
   Complexity,
   ExecutionProfile,
@@ -63,8 +63,8 @@ export type Assessment = {
   task_revision: number;
   input_hash: string;
   template_version: string;
-  source: "jev" | "owner";
-  outcome: Complexity | "need_context" | "owner_required";
+  source: "jev" | "owner" | "config";
+  outcome: Complexity | "configured" | "need_context" | "owner_required";
   reason: string;
   answer?: unknown;
   evidence?: string;
@@ -114,6 +114,7 @@ export type Effect = {
   evidence?: unknown;
 };
 export type Attempt = {
+  backend?: "rpc" | "herdr";
   id: string;
   task: TaskKey;
   decision_id: string;

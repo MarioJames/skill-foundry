@@ -1,3 +1,5 @@
+> 历史设计记录：下文记录原 Herdr 批次调度的设计与当时验证。当前职责、override 跳过 Jev A 的行为及 RPC 路径以本技能入口和 jev-scheduling.md 为准；历史 revision/路径保留用于追溯。
+
 # 异构 Agent 配置、执行契约与 Jev 问题模型
 
 状态：2026-09-23 经 GPT-6 Pro 审查后修订的设计基线；用户随后授权实现。当前入口、实际能力和保守限制见 [Jev 调度使用说明](jev-scheduling.md)。下文保留设计时的论证。

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { randomUUID } from "node:crypto";
-import { CliError, emit, parseFlags, runCli } from "./lib/herdr-route";
+import { CliError, emit, parseFlags, runCli } from "./lib/cli";
 import { loadRoutingConfig } from "./lib/agent-engines";
 import { validateBatch, hash } from "./lib/scheduling";
 import {
@@ -41,7 +41,7 @@ await runCli(async () => {
     emit({
       ok: true,
       status: "dry_run",
-      classification: prepareAssessment(input, {}),
+      classification: prepareAssessment(input, {}, [], config),
       config,
       wave: "requires accepted assessments and live probes",
     });
@@ -58,7 +58,7 @@ await runCli(async () => {
       );
     bindBatch(state, input);
     const batch = applyAcceptances(input, state),
-      a = prepareAssessment(batch, state.assessments, state.attempts);
+      a = prepareAssessment(batch, state.assessments, state.attempts, config);
     let ar: unknown = null;
     state.assessments = { ...state.assessments, ...a.cached };
     if (a.request) {

@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { CliError } from "./herdr-route";
+import { CliError } from "./cli";
 import {
   hash,
   validateAcceptance,
@@ -344,11 +344,13 @@ export function acceptAttempt(state: State, id: string, value: unknown) {
     a.result?.status !== "completed"
   )
     fail("Only an observed completed attempt can be accepted");
+  const delivered = a.result.artifact_refs.length || a.backend !== "rpc"
+    ? a.result.artifact_refs : [`${a.result_path}.rpc.json`];
   if (
     proof.attempt_id !== id ||
     proof.task_revision !== a.task.revision ||
     !proof.artifact_refs.length ||
-    proof.artifact_refs.some((ref) => !a.result!.artifact_refs.includes(ref))
+    proof.artifact_refs.some((ref) => !delivered.includes(ref))
   )
     fail("Acceptance must bind exact delivered artifacts and task revision");
   if (

@@ -1,0 +1,16 @@
+{
+  "scope_id": "api-change",
+  "id": "client-docs",
+  "revision": 1,
+  "cwd": "/absolute/worktree",
+  "goal": "交付 API 变更及客户端使用文档",
+  "prompt": "根据已经冻结的 API 合同更新客户端文档，核对请求与响应示例。父任务同时实现服务器；不得修改服务器代码。",
+  "deliverable": "docs/client.md",
+  "acceptance": ["示例与冻结合同一致", "说明错误响应与重试边界"],
+  "authorization": "用户已授权本次 API 变更及文档交付",
+  "constraints": ["不安装依赖、不提交 Git、不启动持久服务、不删除数据"],
+  "resources": { "reads": ["repo/api-contract"], "writes": ["repo/docs/client.md"] },
+  "owner": { "id": "parent", "adapter": "codex", "reads": ["repo/api-contract"], "writes": ["repo/server"] },
+  "external_agents": [],
+  "depends_on": []
+}

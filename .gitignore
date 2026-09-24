@@ -9,16 +9,18 @@ skills/asset-validation/tests/*
 !skills/asset-validation/tests/cli-default.test.ts
 !skills/asset-validation/tests/docs.test.ts
 
-# Ship the Jev scheduling contract without unrelated local Herdr fixtures.
+# Keep unrelated local Herdr fixtures private.
 !skills/herdr/tests/
 skills/herdr/tests/*
-!skills/herdr/tests/jev-decision.test.ts
 
 # Ship the public DEV discovery and foreground lifecycle contract.
 !skills/public-acceptance/tests/
 skills/public-acceptance/tests/*
 !skills/public-acceptance/tests/dev-process.test.ts
 
-!skills/herdr/tests/agent-engines.test.ts
-!skills/herdr/tests/dispatch-state.test.ts
-!skills/herdr/tests/agent-runtime.test.ts
+# Ship independent dispatch protocol and admission contracts.
+!skills/agent-dispatch/tests/
+skills/agent-dispatch/tests/*
+!skills/agent-dispatch/tests/*.test.ts
+!skills/agent-dispatch/tests/fixtures/
+!skills/agent-dispatch/tests/fixtures/*.ts

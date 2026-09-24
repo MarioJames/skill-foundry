@@ -1,0 +1,6 @@
+interface:
+  display_name: "Agent Dispatch"
+  short_description: "新任务到达即重新判断并行，使用 RPC 后台交付或 Herdr 持久终端"
+  default_prompt: "使用 $agent-dispatch 处理当前与追加任务，让 Jev 判断是否及如何并行，并派发、验收和收取独立交付。"
+policy:
+  allow_implicit_invocation: true

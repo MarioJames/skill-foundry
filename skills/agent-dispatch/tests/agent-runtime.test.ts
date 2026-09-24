@@ -6,6 +6,8 @@ import {
   observeAttempt,
   cleanupAttempt,
   transport,
+  waitForCodexComposer,
+  waitForNativeSession,
 } from "../scripts/lib/agent-runtime";
 import { runAttempt } from "../scripts/lib/dispatch-state";
 const attempt = (dir: string): any => ({
@@ -93,6 +95,20 @@ test("submission checks the owned idle session and never injects into busy work"
     ).rejects.toThrow();
     expect(calls).toBe(1);
   }));
+
+test("submission refuses a replaced terminal even before its first session id exists", async () =>
+  isolated(async (d) => {
+    const a = attempt(d);
+    delete a.session_id;
+    let calls = 0;
+    await expect(transport("parent", "label", async () => {
+      calls++;
+      const next = info();
+      next.result.agent.terminal_id = "different";
+      return next;
+    }).submit(a)).rejects.toThrow();
+    expect(calls).toBe(1);
+  }));
 test("cleanup refuses caller, additional panes, unknown sessions and unresolved writes", async () =>
   isolated(async (d) => {
     const a = attempt(d);
@@ -166,8 +182,29 @@ test("generated Herdr names fit its 32-character native contract", async () =>
         return {};
       }
       return info();
-    }).start(a);
+    }, async () => "› Ask Codex to do anything").start(a);
   }));
+
+test("a shell prompt or trust screen is not a ready Codex composer", async () => {
+  await expect(waitForCodexComposer("owned", async () => "> codex --model requested", 0)).rejects.toThrow("not ready");
+  await expect(waitForCodexComposer("owned", async () => "Trust this folder?\n› 1. Trust and continue", 0)).rejects.toThrow("not ready");
+  await waitForCodexComposer("owned", async () => "› Ask Codex to do anything", 0);
+});
+
+test("native session identity may arrive after prompt acknowledgment, but cannot change terminals", async () => {
+  let calls = 0;
+  const original = info().result.agent;
+  const result = await waitForNativeSession("owned", original, undefined, async () => {
+    const next = info();
+    if (++calls === 1) delete (next.result.agent as any).agent_session;
+    return next;
+  }, 1000);
+  expect(result).toBe("session");
+  expect(calls).toBe(2);
+  await expect(waitForNativeSession("owned", original, undefined, async () => ({ result: { agent: { ...original, terminal_id: "replaced" } } }), 0)).rejects.toThrow("identity changed");
+  await expect(waitForNativeSession("owned", original, "other", async () => info(), 0)).rejects.toThrow("identity changed");
+  await expect(waitForNativeSession("owned", original, undefined, async () => ({ result: { agent: { ...original, agent_session: undefined } } }), 0)).rejects.toThrow("not available");
+});
 
 test("worker receives global goal and constraints from the frozen binding", async () =>
   isolated(async (d) => {

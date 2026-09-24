@@ -1,6 +1,6 @@
 # Configured heterogeneous scheduling
 
-Use this workflow when independently deliverable tasks make delegation worthwhile. Keep tightly coupled or ordinary single-owner work direct. The main Agent owns decomposition, authorization, evidence, acceptance and integration; Jev supplies bounded decisions.
+This is the optional full batch workflow using the Herdr backend. For a normal single handoff, use `run-task.ts` from the main skill. Use this workflow when several ready tasks require a meaningful grouping decision. Keep tightly coupled or ordinary single-owner work direct. The main Agent owns decomposition, authorization, evidence, acceptance and integration; Jev supplies bounded decisions.
 
 ## One configuration
 
@@ -8,11 +8,11 @@ Copy and edit [`examples/agents.json`](../examples/agents.json) to `~/.config/he
 
 - `engines`: stable IDs, canonical `codex` or `qodercli` adapter, and `max_parallel`. V1 permits one instance per adapter. Renaming an ID does not reset old adapter reservations.
 - `routes`: exactly `ordinary`, `moderate`, `complex`; each embeds `engine_id`, `model` and native `reasoning`. No profile registry or separate effort ladder.
-- `manual_override`: optional, null for automatic routing; otherwise either `{"route":"ordinary"}` (any declared route) or a complete `engine_id` / `model` / `reasoning` profile. These forms are mutually exclusive. The override takes precedence over every task's complexity, including owner assessments, without changing the assessment itself.
+- `manual_override`: optional, null for automatic routing; otherwise either `{"route":"ordinary"}` (any declared route) or a complete `engine_id` / `model` / `reasoning` profile. These forms are mutually exclusive. The override takes precedence over every task's complexity, including owner assessments, without pretending it changes task difficulty.
 - Reasoning is `{ "mode": "effort", "value": "native-value" }` or `{ "mode": "engine_default" }`. Display labels are not native values. No cross-engine normalization.
 - `limits.max_parallel` bounds activity units, including the caller and unrelated active/blocked/unknown Agents. It is not a process count or provider quota.
 
-The shipped example routes ordinary work to Qoder `Qwen3.8-Flash / xhigh` (Extra High), moderate work to Codex `gpt-6-astra / medium`, and complex work to Codex `gpt-6-astra / high`. These are explicit configuration values, not an implicit fallback.
+The shipped example routes ordinary work to Codex `gpt-6-luna / max`, moderate work to Codex `gpt-6-astra / medium`, and complex work to Codex `gpt-6-astra / high`. These are explicit configuration values, not an implicit fallback.
 
 For quota pressure, set this top-level field in the selected config to force all dispatched tasks through the existing ordinary profile:
 
@@ -30,7 +30,7 @@ Or specify a complete execution profile independently of the difficulty routes (
 }
 ```
 
-Set `manual_override` to null or remove it to restore automatic routing. The shipped example leaves it null; adding this feature does not enable a user-wide override. Apply the same effective profile to direct delegation. Probes and capacity use the effective execution profile. Jev A/B still run where required: manual routing does not bypass owner-required/need-context outcomes, confidence policy, dependencies, ownership, capability or resource guards. It does not switch the caller's current session or Jev's decision model. A config change invalidates an unreserved decision; decide again before dispatch. Already reserved attempts retain their frozen bindings.
+Set `manual_override` to null or remove it to restore automatic routing. The shipped example leaves it null; adding this feature does not enable a user-wide override. Apply the same effective profile to direct delegation. Probes and capacity use the effective execution profile. With any manual_override, Jev A is skipped: the assessment is recorded as `source=config, outcome=configured`, not a guessed difficulty. Jev B still decides whether/which work should run in parallel. Without an override, A runs only for tasks without a valid owner assessment. Local authorization, context, dependencies, ownership, capacity and capability checks still apply, and B retains owner_required/need_context exits. It does not switch the caller's current session or Jev's decision model. A config change invalidates an unreserved decision; decide again before dispatch. Already reserved attempts retain their frozen bindings.
 
 `agent-engines.ts` validates adapter-native syntax and reads the current CLI version and model catalog. Codex uses the active `CODEX_HOME/models_cache.json` (24h freshness and matching CLI version) to check the requested model and effort. Qoder uses `--list-models` for model availability and adapter-native syntax for effort; its listing does not expose per-model effort support. `engine_default` deliberately omits the effort flag and does not assert a particular resolved effort. There is no hardcoded CLI-version/model/effort allowlist: changing models or supported efforts only requires editing `agents.json`, and CLI upgrades work when current metadata remains readable.
 
@@ -46,9 +46,9 @@ A task has a stable ID and revision, inputs/evidence, deliverable, acceptance cr
 
 Every active external Agent needs an explicit entry in `external_resources` whose `id` is its Herdr pane ID and whose reads/writes describe the actual scope, including the main Agent. Empty arrays mean positively known empty access, not uninspected access. Uncovered active Agents block dispatch. Update this snapshot from actual ownership handoffs; the script cannot discover undeclared semantic or external-service conflicts.
 
-Jev A classifies eligible tasks independently: first `owner_required` when a necessary decision exceeds delegation, then `need_context` for unavailable pre-dispatch facts, then `complex / moderate / ordinary`. No engine names or capacity affect difficulty. Matching assessments are reused; owner assessments require evidence. Raw Jev answers are retained and re-adopted under the current 0.8 confidence policy. This threshold is a conservative local policy, not a quality guarantee.
+When no manual override fixes routing, Jev A classifies eligible tasks independently: first `owner_required` when a necessary decision exceeds delegation, then `need_context` for unavailable pre-dispatch facts, then `complex / moderate / ordinary`. No engine names or capacity affect difficulty. Matching assessments are reused; owner assessments require evidence. Raw Jev answers are retained and re-adopted under the current 0.8 confidence policy. This threshold is a conservative local policy, not a quality guarantee.
 
-Local code maps difficulty through config and checks dependencies, same-task revisions, resource conflicts, engine/global capacity and exact capability probes. It constructs at most 12 deterministic greedy/singleton waves, not a Cartesian product. Tasks omitted by the bound remain for a later decision. Jev B chooses one frozen candidate or `need_context / owner_required`; even a single candidate retains semantic exit choices. If grouping is already explicitly settled by the owner, an optional batch `owner_wave: {"task_ids":["date","money"],"evidence":"specific semantic-independence verification"}` skips B only when it exactly matches a locally valid offered wave. It cannot change profiles or bypass guards; an invalid group returns owner-required. This is recorded owner evidence, never an automatic API-failure fallback. A and B are separate requests: answers within one request never depend on each other.
+Local code maps difficulty through config and checks dependencies, same-task revisions, resource conflicts, engine/global capacity and exact capability probes. It constructs at most 12 deterministic greedy/singleton waves, not a Cartesian product. Tasks omitted by the bound remain for a later decision. Jev B chooses one frozen candidate or `need_context / owner_required`; even a single candidate retains semantic exit choices. Only without an override and when grouping is already explicitly settled by the user, an optional batch `owner_wave: {"task_ids":["date","money"],"evidence":"specific semantic-independence verification"}` skips B only when there is no manual_override and it exactly matches a locally valid offered wave. It cannot change profiles or bypass guards; an invalid group returns owner-required. This is recorded owner evidence, never an automatic API-failure fallback. A and B are separate requests: answers within one request never depend on each other.
 
 Requests use `https://openrouter.ai/api/alpha/decisions`, `~typesafe/jev-latest`, and `OPENROUTER_API_KEY` from the caller environment. Full requests are limited to 24,000 UTF-8 bytes, responses to 64,000 bytes, with no truncation, automatic retries or model substitution. Missing confidence is owner-required; confidence/probabilities are optional protocol fields and validated when present. HTTP errors omit provider bodies and credentials.
 
@@ -104,3 +104,9 @@ Cleanup only closes a resolved, owned idle lane with matching session identity, 
 - Unknown intent requires human/main-Agent reconciliation. No exactly-once remote execution, cross-engine session restoration or automated retry is claimed.
 
 The reviewed design and rationale are in [heterogeneous-agent-design.md](heterogeneous-agent-design.md).
+
+## Shared scope with RPC tasks
+
+Use the exact same `--state` for `run-task.ts`, decide and dispatch in one parent scope. RPC reservations are ordinary attempts in that state: they consume the same global/engine slots and keep read/write ownership until accepted or resolved. Run observe before another wave to reconcile completed RPC envelopes; no Herdr CLI is used to observe those attempts. Herdr inventory remains live for this batch adapter; declare the actual parent and all relevant external access in `external_resources`. Standalone RPC handoffs supply the parent/external inventory explicitly; this is owner evidence, not a machine-wide discovery or enforcement guarantee. Never start a second state file to obtain more capacity.
+
+The historical `~/.config/herdr/agents.json` location remains the sole default so existing overrides keep applying. Both backends use the exact same file, or the same explicit `--config`; there is no second config search or merge.

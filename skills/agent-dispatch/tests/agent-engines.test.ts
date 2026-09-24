@@ -10,7 +10,7 @@ import {
   executionProfile,
   type ProbeRunner,
 } from "../scripts/lib/agent-engines";
-import { CliError } from "../scripts/lib/herdr-route";
+import { CliError } from "../scripts/lib/cli";
 
 const fixture = () => ({
   version: 1,
@@ -190,7 +190,7 @@ test("default config path is HOME/.config/herdr/agents.json, not cwd or a merged
         [
           process.execPath,
           "-e",
-          "import {loadRoutingConfig} from './skills/herdr/scripts/lib/agent-engines.ts'; try { console.log(JSON.stringify(loadRoutingConfig())); } catch(e) { console.log(e.code); }",
+          "import {loadRoutingConfig} from './skills/agent-dispatch/scripts/lib/agent-engines.ts'; try { console.log(JSON.stringify(loadRoutingConfig())); } catch(e) { console.log(e.code); }",
         ],
         {
           cwd: join(import.meta.dir, "../../.."),

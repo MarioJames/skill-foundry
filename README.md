@@ -41,15 +41,15 @@ The existing Bun CLI owns anonymous tunnel start / status / stop / cleanup with 
 
 **Reach for it when** preparing a project for public acceptance, handing over a temporary review URL with login details, or inspecting and cleaning up an existing Quick Tunnel.
 
-### `herdr` — parallel work and resource ownership
+### `agent-dispatch` — background task dispatch
 
-`herdr` is the preferred path when parallel work can shorten the critical path, including independent subtasks of one deliverable. The skill gives principles for task boundaries, write ownership, result integration, and resource cleanup, leaving the Agent to choose a useful split and continue work toward the complete result.
+`agent-dispatch` reconsiders delegation when a parent receives additional work, identifies an independent deliverable, or receives a worker result. Bounded Codex work uses a JSON-RPC background runner; persistent interaction and non-Codex profiles use Herdr. Both paths share configuration, capacity reservations and acceptance rules. A configured `manual_override` skips Jev difficulty routing; Jev still decides whether and how to parallelize. See [single-task usage](skills/agent-dispatch/references/run-task.md) and the optional [Jev batch workflow](skills/agent-dispatch/references/jev-scheduling.md).
 
-After the task decision, the bundled Bun/TypeScript resource router can split the caller tab, create a tab in an existing directory-matched workspace, or create a new workspace when no safe match exists. It matches target directories using cwd and Git roots, preserves focus, returns an explicit cleanup contract, and rolls back newly created resources when verification fails.
+The host must deliver the new message and return a background process handle. A skill cannot intercept queued messages or guarantee a host wakeup. The repository [AGENTS.md](AGENTS.md) includes a parent-only trigger bridge; cross-project use requires adopting that bridge in guidance the host actually loads.
 
-The optional [Jev scheduling flow](skills/herdr/references/jev-scheduling.md) classifies tasks and selects bounded execution waves. One `agents.json` maps complexity to native engine/model/reasoning combinations. Local checks enforce declared dependencies, ownership, capacity and verified launch contracts; durable attempts prevent unknown effects from being retried. The main Agent accepts delivered results and cleans up owned lanes. Offline dry run needs no API key; live choices use `OPENROUTER_API_KEY`.
+### `herdr` — terminal operations and resource ownership
 
-**Reach for it when** independent commands or Agent deliverables can overlap with a net time benefit, or Herdr runtime resources need coordination.
+`herdr` names the current tab and manages persistent terminals, native Agent operations and precise cleanup. Scheduling policy belongs to `agent-dispatch`. Herdr remains optional for the pure Codex RPC path; installing both skills in the same skill root enables the persistent backend.
 
 ### `cow-workspace` — copy-on-write development workspaces
 
@@ -118,6 +118,7 @@ bunx skills add MarioJames/skill-foundry --all
 bunx skills add MarioJames/skill-foundry --skill asset-validation
 bunx skills add MarioJames/skill-foundry --skill browser-harness
 bunx skills add MarioJames/skill-foundry --skill public-acceptance
+bunx skills add MarioJames/skill-foundry --skill agent-dispatch
 bunx skills add MarioJames/skill-foundry --skill herdr
 bunx skills add MarioJames/skill-foundry --skill cow-workspace
 bunx skills add MarioJames/skill-foundry --skill trigger-build-workflow
@@ -164,7 +165,7 @@ cd skill-foundry
 mkdir -p ~/.agents/skills
 cp -R skills/asset-validation skills/browser-harness \
   skills/public-acceptance \
-  skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
+  skills/agent-dispatch skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
   skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.agents/skills/
 ```
@@ -177,7 +178,7 @@ cd skill-foundry
 mkdir -p ~/.claude/skills
 cp -R skills/asset-validation skills/browser-harness \
   skills/public-acceptance \
-  skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
+  skills/agent-dispatch skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
   skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.claude/skills/
 ```
@@ -188,6 +189,7 @@ Verify the installation:
 test -f ~/.agents/skills/asset-validation/scripts/acc.ts
 test -f ~/.agents/skills/browser-harness/scripts/bh.ts
 test -f ~/.agents/skills/public-acceptance/scripts/cqt.ts
+test -f ~/.agents/skills/agent-dispatch/scripts/run-task.ts
 test -f ~/.agents/skills/herdr/scripts/route-lane.ts
 test -f ~/.agents/skills/cow-workspace/scripts/cow.ts
 test -f ~/.agents/skills/trigger-build-workflow/scripts/detect-build-workflow.ts
@@ -208,13 +210,13 @@ cd skill-foundry
 git pull
 rm -rf ~/.agents/skills/asset-validation \
   ~/.agents/skills/browser-harness ~/.agents/skills/public-acceptance \
-  ~/.agents/skills/herdr ~/.agents/skills/cow-workspace ~/.agents/skills/trigger-build-workflow \
+  ~/.agents/skills/agent-dispatch ~/.agents/skills/herdr ~/.agents/skills/cow-workspace ~/.agents/skills/trigger-build-workflow \
   ~/.agents/skills/persistent-ssh-ops ~/.agents/skills/provision-xray-hy2-node \
   ~/.agents/skills/changelog-writing ~/.agents/skills/awesome-presentation \
   ~/.agents/skills/repo-knowledge-graph ~/.agents/skills/tdd
 cp -R skills/asset-validation skills/browser-harness \
   skills/public-acceptance \
-  skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
+  skills/agent-dispatch skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
   skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.agents/skills/
 ```
@@ -241,10 +243,10 @@ Expose a local HTTP service temporarily:
 Use public-acceptance to start this project in DEV, discover its actual port, create a public acceptance URL, and provide the configured login username and password. Verify the page and keep the service available until I finish.
 ```
 
-Parallelize useful work through Herdr:
+Dispatch useful parallel work:
 
 ```text
-Use herdr to parallelize independent parts of this task where it saves time, integrate the results, and clean up task-owned resources.
+Use agent-dispatch to handle independent work while the current task continues, then verify and integrate the results. Use Herdr for persistent terminal work.
 ```
 
 Prepare an isolated development directory with existing dependencies:
@@ -299,7 +301,7 @@ Decide whether a change needs a real test:
 Use tdd before implementing this feature or adding a unit test.
 ```
 
-Each skill defines its own activation rules in `SKILL.md`. Prefer `herdr` implicitly when parallel work can
+Each skill defines its own activation rules in `SKILL.md`. Use `agent-dispatch` when new independent work can
 shorten the critical path, including within a single deliverable. `tdd` is meant to activate on every
 production-code or test change; the skill body then chooses TDD vs skip.
 
@@ -323,6 +325,7 @@ skill-foundry/
 │   │   ├── agents/
 │   │   ├── scripts/
 │   │   └── tests/
+│   ├── agent-dispatch/      # RPC background workers and parallel decisions
 │   ├── herdr/
 │   │   ├── SKILL.md
 │   │   ├── agents/
@@ -372,6 +375,7 @@ Installable skill packages:
 - `skills/asset-validation/`
 - `skills/browser-harness/`
 - `skills/public-acceptance/`
+- `skills/agent-dispatch/`
 - `skills/herdr/`
 - `skills/cow-workspace/`
 - `skills/trigger-build-workflow/`
@@ -407,7 +411,7 @@ bun test skills/asset-validation/tests
 bun test skills/browser-harness/tests
 bun test skills/public-acceptance/tests
 bun test skills/cow-workspace/tests # Requires Linux, fuse-overlayfs and /dev/fuse
-bun test skills/herdr/tests
+bun test skills/herdr/tests skills/agent-dispatch/tests
 bun test skills/trigger-build-workflow/tests
 bun test skills/persistent-ssh-ops/tests
 ```
@@ -427,7 +431,7 @@ the affected scenarios again.
 
 ```bash
 bun skills/herdr/scripts/route-lane.ts --help
-bun skills/herdr/scripts/decide-tasks.ts --input skills/herdr/examples/jev-batch.json --config skills/herdr/examples/agents.json --dry-run
+bun skills/agent-dispatch/scripts/decide-tasks.ts --input skills/agent-dispatch/examples/jev-batch.json --config skills/agent-dispatch/examples/agents.json --dry-run
 bun skills/cow-workspace/scripts/cow.ts --help
 bun skills/herdr/scripts/probe-workspace.ts --help
 bun skills/trigger-build-workflow/scripts/detect-build-workflow.ts --help

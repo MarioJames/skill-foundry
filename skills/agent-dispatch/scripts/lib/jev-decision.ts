@@ -1,4 +1,4 @@
-import { CliError } from "./herdr-route";
+import { CliError } from "./cli";
 import { buildLaunch, executionProfile } from "./agent-engines";
 import {
   hash,
@@ -54,6 +54,7 @@ export function prepareAssessment(
   value: Batch,
   cache: Record<string, Assessment>,
   attempts: Attempt[] = [],
+  config?: RoutingConfig,
 ) {
   const batch = validateBatch(value),
     cached: Record<string, Assessment> = {},
@@ -66,10 +67,14 @@ export function prepareAssessment(
       blocked.push({ task_id: task.id, reason });
       continue;
     }
+    if (config?.manual_override) {
+      cached[task.id] = { task_id: task.id, task_revision: task.revision, input_hash: inputHash(batch, task), template_version: TEMPLATE, source: "config", outcome: "configured", reason: "manual_override fixes execution profile; Jev only selects parallel work" };
+      continue;
+    }
     const input_hash = inputHash(batch, task),
       prior = cache[task.id];
     if (
-      prior?.input_hash === input_hash &&
+      prior?.source !== "config" && prior?.input_hash === input_hash &&
       prior.task_revision === task.revision &&
       prior.template_version === TEMPLATE
     ) {
@@ -287,7 +292,7 @@ export function prepareWave(
     const a = assessments[task.id];
     if (!reason && (!a || a.input_hash !== inputHash(batch, task)))
       reason = "assessment_required";
-    if (!reason && !["ordinary", "moderate", "complex"].includes(a.outcome))
+    if (!reason && !["ordinary", "moderate", "complex", ...(config.manual_override ? ["configured"] : [])].includes(a.outcome))
       reason = a.outcome;
     if (!reason && task.requirements.capabilities.length)
       reason = "capability_requirements_unverified";
@@ -295,7 +300,8 @@ export function prepareWave(
       blocked.push({ task_id: task.id, reason });
       continue;
     }
-    const complexity = a.outcome as "ordinary" | "moderate" | "complex",
+    // configured is not a difficulty classification; override ignores this lookup key.
+    const complexity = (a.outcome === "configured" ? "ordinary" : a.outcome) as "ordinary" | "moderate" | "complex",
       profile = executionProfile(config, complexity),
       probe = runtime.probes[complexity],
       launch = buildLaunch(config, profile);
@@ -408,7 +414,7 @@ export function prepareWave(
       b.reason === "unresolved_attempt" ||
       b.reason === "task_running",
   );
-  const owner_selection = batch.owner_wave
+  const owner_selection = batch.owner_wave && !config.manual_override
     ? waves.find(
         (w) =>
           hash(w.assignments.map((a) => a.task_id).sort()) ===
@@ -420,7 +426,7 @@ export function prepareWave(
     batch.tasks.every((t) => t.status === "accepted") &&
     !attempts.some((a) => a.slot === "held" || a.writes_held)
       ? "complete"
-      : batch.owner_wave && !owner_selection
+      : batch.owner_wave && !config.manual_override && !owner_selection
         ? "owner_required"
         : waves.length
           ? undefined
@@ -428,7 +434,7 @@ export function prepareWave(
             ? "wait"
             : "owner_required";
   const request =
-    waves.length && !batch.owner_wave
+    waves.length && (!batch.owner_wave || config.manual_override)
       ? bound({
           model: JEV_MODEL,
           state: {
