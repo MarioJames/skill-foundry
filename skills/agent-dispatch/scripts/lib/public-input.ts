@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { isAbsolute, resolve } from "node:path";
+import { lstatSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, parse, resolve, relative, sep } from "node:path";
 import { CliError } from "./cli";
 import { hash, validateBatch, type Batch, type Task } from "./scheduling";
 import type { State } from "./dispatch-state";
@@ -111,9 +111,20 @@ export function mergePublicContext(previous: PublicContext | undefined, next: No
 function resourceKey(cwd: string, value: string): string {
   if (value.startsWith("db/") || value.startsWith("service/") || value.startsWith("redis/") || value.startsWith("bucket/")) return value;
   if (value.startsWith("/") || value.split("/").some((x) => x === "..")) throw new CliError("invalid_resource", `Resource ${value} must be relative to cwd or use db/service/redis/bucket`);
-  const root = createHash("sha256").update(cwd).digest("hex").slice(0, 16);
-  const rel = value === "." ? "" : value.split("/").filter((x) => x && x !== ".").map(encodeURIComponent).join("/");
-  return `repo/${root}${rel ? `/${rel}` : ""}`;
+  const absolute = resolve(cwd, value);
+  let ancestor = absolute;
+  while (true) {
+    try { lstatSync(ancestor); break; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    const parent = dirname(ancestor);
+    if (parent === ancestor) throw new CliError("invalid_resource", `Cannot resolve resource ${value}`);
+    ancestor = parent;
+  }
+  let canonical: string;
+  try { canonical = resolve(realpathSync(ancestor), relative(ancestor, absolute)); }
+  catch { throw new CliError("invalid_resource", `Cannot resolve resource ${value}; inspect symlinks and permissions`); }
+  const parts = canonical.slice(parse(canonical).root.length).split(sep).filter(Boolean);
+  return `file/root${parts.length ? `/${parts.map((part) => Buffer.from(part).toString("base64url")).join("/")}` : ""}`;
 }
 const resources = (cwd: string, a: { reads: string[] | null; writes: string[] | null }) =>
   a.reads === null || a.writes === null ? { status: "unknown" as const, reason: "read/write ownership not confirmed" } :

@@ -1,9 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SQLiteStateStore } from "../scripts/lib/sqlite-state";
 import { buildPublicBatch, contextBlockers, expandPublicPatch, mergePublicContext, validatePublicInput } from "../scripts/lib/public-input";
+import { conflicts } from "../scripts/lib/scheduling";
 
 const scratch: string[] = [];
 const temp = () => { const p = mkdtempSync(join(tmpdir(), "dispatch-public-test-")); scratch.push(p); return p; };
@@ -61,6 +62,26 @@ test("stored facts allow empty calls and small patches without repeating task de
   expect(revised.tasks.map((t) => [t.key, t.revision])).toEqual([["review", 2], ["second", 1]]);
   expect(revised.tasks[0].deliverable).toBe("findings");
   expect(revised.tasks[0].prompt).toBe("Review updated contract");
+});
+
+test("resource keys retain ancestor overlap across cwd and symlink aliases", () => {
+  const root = temp();
+  mkdirSync(join(root, "src"));
+  symlinkSync(join(root, "src"), join(root, "alias"));
+  const store = new SQLiteStateStore("paths", join(root, "state.sqlite"));
+  const key = (cwd: string, path: string) => {
+    const input = request(cwd);
+    input.tasks[0].reads = [];
+    input.tasks[0].writes = [path];
+    const context = mergePublicContext(undefined, validatePublicInput(input).input!);
+    return (buildPublicBatch("paths", context, store.read()).tasks[0].resources as any).writes[0] as string;
+  };
+  const parent = key(root, "src");
+  const nested = key(join(root, "src"), "a.ts");
+  const alias = key(root, "alias/a.ts");
+  expect(nested).toBe(alias);
+  expect(conflicts({ reads: [], writes: [parent] }, { reads: [nested], writes: [] })).toBe(true);
+  store.close();
 });
 
 test("SQLite persists independent scopes across processes and rejects concurrent mutation", async () => {

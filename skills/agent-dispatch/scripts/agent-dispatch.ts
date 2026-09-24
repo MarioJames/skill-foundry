@@ -7,10 +7,10 @@ import { CliError, emit, parseFlags, runCli } from "./lib/cli";
 import { loadRoutingConfig } from "./lib/agent-engines";
 import { command, cleanupAttempt, observeAttempt, transport } from "./lib/agent-runtime";
 import { acceptAttempt, bindBatch, reserve, resolveAttempt, runAttempt, type Decision, type State } from "./lib/dispatch-state";
-import { callJev, prepareAssessment, prepareWave, resolveAssessment, resolveWave, retryableJevCode, waveConfidenceThreshold } from "./lib/jev-decision";
+import { callJev, prepareAssessment, prepareWave, resolveAssessment, resolveWave, waveConfidenceThreshold } from "./lib/jev-decision";
 import { contextBlockers, expandPublicPatch, mergePublicContext, validatePublicInput, buildPublicBatch, type PublicContext } from "./lib/public-input";
 import { taskRuntime } from "./lib/task-input";
-import { hash, validateBatch, type Attempt, type Batch } from "./lib/scheduling";
+import { eligibility, hash, validateBatch, type Attempt, type Batch } from "./lib/scheduling";
 import { runRpc } from "./lib/rpc-runner";
 import { SQLiteStateStore, defaultDatabase } from "./lib/sqlite-state";
 
@@ -23,13 +23,14 @@ Commands:
   status [--attempt ID] [--cached]  Observe execution and report delivery, acceptance, cleanup
   accept --attempt ID --input -|FILE  Record parent verification of delivered artifacts
   cancel --task KEY|--attempt ID  Cancel pending work or request exact execution stop
-  resolve --attempt ID --outcome OUTCOME --evidence TEXT  Reconcile stopped/unknown work
+  resolve --attempt ID --outcome OUTCOME --evidence TEXT [--server-stopped]  Reconcile stopped/unknown work
   cleanup --attempt ID --caller-pane PANE  Release an accepted/resolved owned Herdr lane
 
 Scope defaults to a verified current Herdr parent session; otherwise pass --scope ID. State defaults to ${defaultDatabase()}.
 --input - reads bounded JSON from stdin; FILE uses the same public schema. No internal Batch JSON.
 First run supplies task facts once. Later run/check/plan read SQLite directly; --input may contain only changed fields or new tasks.
 Input: {"version":1,"cwd":"/absolute/repo","goal":"goal","owner":{"id":"parent","adapter":"codex","work":"Editing src while contract is frozen","reads":["src"],"writes":["src"]},"external":[],"authorization":{"delegate":true,"basis":"user request"},"tasks":[{"key":"review","prompt":"Review the contract","deliverable":"findings","acceptance":["cite concrete findings"],"reads":["contracts"],"writes":[],"depends_on":[]}]}
+Accept input: {"artifact_refs":["path or result file returned by status"],"delivery_evidence_ref":"verified result","owner_evidence_ref":"parent review"}
 Unknown reads/writes, external inventory, or dependencies use null; [] means confirmed empty. Changed tasks require if_revision. Optional task mode is oneshot|persistent. Resource paths are cwd-relative; db/service/redis/bucket keys identify external resources.
 Jev request attempts: 3 on timeout, network failure, HTTP 408/429/5xx; each attempt defaults to 60s and may use --jev-timeout-ms 1000..120000. A later run can retry an exhausted transient decision from SQLite.
 Selected Herdr work additionally needs --caller-pane and --label MMDD｜TYPE｜Topic. No worker replay, model fallback, automatic acceptance, or unknown-write release.`;
@@ -63,6 +64,9 @@ function externalAgents(context: PublicContext, config: ReturnType<typeof loadRo
 }
 function otherActivity(store: SQLiteStateStore, batch: Batch, config: ReturnType<typeof loadRoutingConfig>) {
   const active = store.otherActiveAttempts();
+  if (active.some((a) => a.binding.task.resources.status === "known" &&
+    [...a.binding.task.resources.reads, ...a.binding.task.resources.writes].some((key) => key.startsWith("repo/"))))
+    throw new CliError("legacy_resource_lease", "An active scope still holds legacy repo resource keys; resolve or accept it before cross-scope admission");
   const supplemented = validateBatch({ ...batch, external_resources: [...batch.external_resources,
     ...active.map((a) => {
       const r = a.binding.task.resources;
@@ -92,6 +96,9 @@ async function startDecision(store: SQLiteStateStore, decisionId: string, config
   const result = await store.admission(() => store.transaction(async (state, save) => {
     const context = state.public_context as PublicContext | undefined;
     if (!context) throw new CliError("unknown_scope", "Scope has no task facts");
+    if (state.attempts.some((a) => (a.slot === "held" || a.writes_held) && a.binding.task.resources.status === "known" &&
+      [...a.binding.task.resources.reads, ...a.binding.task.resources.writes].some((key) => key.startsWith("repo/"))))
+      throw new CliError("legacy_resource_lease", "This scope still holds legacy repo resource keys; resolve or accept it before new admission");
     const external = otherActivity(store, buildPublicBatch(store.scope, context, state), loadRoutingConfig(configPath));
     const batch = external.batch;
     const d = state.decisions.find((x) => x.id === decisionId);
@@ -139,13 +146,15 @@ async function startDecision(store: SQLiteStateStore, decisionId: string, config
   await store.transaction(async (state, save) => {
     if (state.public_request?.decision_id === decisionId) { state.public_request.lifecycle_hash = lifecycleHash(state); save(); }
   });
-  return { ...result, attempts: store.read().attempts.filter((a) => a.decision_id === decisionId).map(summary) };
+  const attempts = store.read().attempts.filter((a) => a.decision_id === decisionId).map(summary);
+  const uncertain = attempts.some((a) => a.observation_error || (a.backend === "rpc" && !a.runner_pid));
+  return { ...result, attempts, status: uncertain ? "partial" : "started", ok: !uncertain };
 }
 
 await runCli(async () => {
   const [action, ...argv] = process.argv.slice(2);
   if (!action || ["--help", "help"].includes(action)) { process.stdout.write(HELP + "\n"); return; }
-  const f = parseFlags(argv, ["--scope", "--db", "--config", "--input", "--decision", "--attempt", "--task", "--outcome", "--evidence", "--caller-pane", "--label", "--timeout-ms", "--jev-timeout-ms"], ["--live", "--cached", "--help"]);
+  const f = parseFlags(argv, ["--scope", "--db", "--config", "--input", "--decision", "--attempt", "--task", "--outcome", "--evidence", "--caller-pane", "--label", "--timeout-ms", "--jev-timeout-ms"], ["--live", "--cached", "--server-stopped", "--help"]);
   if (f.has("--help")) { process.stdout.write(HELP + "\n"); return; }
   const req = (key: string) => { const v = f.get(key); if (typeof v !== "string" || !v) throw new CliError("missing_argument", `${key} is required`, 2); return v; };
   const timeoutMs = Number(f.get("--timeout-ms") ?? 1_800_000);
@@ -167,7 +176,12 @@ await runCli(async () => {
     const a = store.read().attempts.find((x) => x.id === req("--attempt"));
     if (!a || a.backend !== "rpc" || a.phase !== "starting") throw new CliError("worker_unreserved", "Worker requires one reserved RPC attempt");
     const sandbox = a.binding.task.resources.status === "known" && a.binding.task.resources.writes.length ? "workspace-write" : "read-only";
-    const result = await runRpc(a, { sandbox, timeoutMs });
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    process.once("SIGTERM", stop); process.once("SIGINT", stop);
+    let result: Awaited<ReturnType<typeof runRpc>>;
+    try { result = await runRpc(a, { sandbox, timeoutMs, signal: controller.signal }); }
+    finally { process.off("SIGTERM", stop); process.off("SIGINT", stop); }
     emit({ ok: result.outcome === "completed" && result.cleanup === "stopped", result });
     if (result.outcome !== "completed" || result.cleanup !== "stopped") process.exitCode = 2;
     return;
@@ -176,23 +190,29 @@ await runCli(async () => {
     const before = store.read();
     const source = f.get("--input") as string | undefined;
     if (!source && !before.public_context) throw new CliError("missing_input", "This scope has no facts yet; first run needs --input -|FILE", 2);
-    const parsed = validatePublicInput(expandPublicPatch(before.public_context as PublicContext | undefined,
-      source ? await readInput(source) : { tasks: [] }));
-    if (parsed.issues.length) { inputError(parsed.issues); return; }
-    const context = mergePublicContext(before.public_context as PublicContext | undefined, parsed.input!);
-    const blockers = contextBlockers(context);
+    const raw = source ? await readInput(source) : { tasks: [] };
     const config = loadRoutingConfig(configPath);
     if (action === "check") {
+      const parsed = validatePublicInput(expandPublicPatch(before.public_context as PublicContext | undefined, raw));
+      if (parsed.issues.length) { inputError(parsed.issues); return; }
+      const context = mergePublicContext(before.public_context as PublicContext | undefined, parsed.input!);
+      const blockers = contextBlockers(context);
       const cross = otherActivity(store, buildPublicBatch(store.scope, context, before), config);
       const batch = cross.batch;
       const live = f.has("--live") && !blockers.length ? await taskRuntime(config, [...externalAgents(context, config), ...cross.agents]) : null;
       const capabilityIssues = live ? Object.entries(live.probes).filter(([, p]) => p.status !== "supported").map(([route, p]) => ({ path: `/profiles/${route}`, expected: "supported", received: p.status, next_step: `Inspect ${p.reason}; update the selected profile or repair the live CLI catalog, then check again` })) : [];
-      const issues = [...blockers, ...capabilityIssues];
+      const taskIssues = batch.tasks.filter((t) => t.status === "pending").flatMap((t) => {
+        const reason = eligibility(batch, t, before.attempts);
+        return reason ? [{ path: `/tasks/${t.id}`, expected: "eligible for delegation", received: reason, next_step: "Confirm task facts, dependencies, ownership, and authorization before scheduling" }] : [];
+      });
+      const issues = [...blockers, ...taskIssues, ...capabilityIssues];
       emit({ ok: !issues.length, scope: store.scope, status: issues.length ? "blocked" : "valid", stage: "preflight", issues, tasks: batch.tasks.map((t) => ({ key: t.id, revision: t.revision, status: t.status, resources: t.resources.status })), profiles: live?.probes ?? null, workers_started: 0 });
       if (issues.length) process.exitCode = 2;
       return;
     }
     const decision = await store.transaction(async (state, save) => {
+      const parsed = validatePublicInput(expandPublicPatch(state.public_context as PublicContext | undefined, raw));
+      if (parsed.issues.length) return { status: "invalid_input", stage: "validation", issues: parsed.issues, workers_started: 0 };
       const merged = mergePublicContext(state.public_context as PublicContext | undefined, parsed.input!);
       state.public_context = merged;
       bindBatch(state, buildPublicBatch(store.scope, merged, state));
@@ -201,15 +221,10 @@ await runCli(async () => {
       if (missing.length) return { status: "blocked", stage: "preflight", issues: missing, workers_started: 0 };
       const cross = otherActivity(store, buildPublicBatch(store.scope, merged, state), config);
       const batch = cross.batch;
-      if (state.public_failure?.input_hash === hash(batch) && state.public_failure.config_hash === hash(config) && !retryableJevCode(state.public_failure.code))
-        return { status: "failed", reason: state.public_failure.code, stage: state.public_failure.stage, workers_started: 0, reused: true };
-      const requestHash = hash(merged);
-      const repeated = state.public_request?.hash === requestHash && state.public_request.lifecycle_hash === lifecycleHash(state)
-        ? state.decisions.find((d) => d.id === state.public_request?.decision_id) : undefined;
-      if (repeated) return { status: publicDecisionStatus(repeated), decision_id: repeated.id, reason: repeated.result.reason, selection: repeated.result.selection, blocked: repeated.prepared.blocked, reused: true, workers_started: state.attempts.filter((a) => a.decision_id === repeated.id).length };
-      const old = state.decisions.at(-1);
-      if (old?.input_hash === hash(batch) && old.result.status !== "failed" && old.result.status !== "pending")
-        return { status: publicDecisionStatus(old), decision_id: old.id, reason: old.result.reason, selection: old.result.selection, blocked: old.prepared.blocked, reused: true, workers_started: state.attempts.filter((a) => a.decision_id === old.id).length };
+      const requestHash = hash({ context: merged, config, agents: cross.agents, external_resources: batch.external_resources });
+      const previous = state.public_request?.hash === requestHash ? state.decisions.find((d) => d.id === state.public_request?.decision_id) : undefined;
+      const repeated = previous && state.public_request?.lifecycle_hash === lifecycleHash(state) ? previous : undefined;
+      if (repeated && ["selected", "serial"].includes(repeated.result.status)) return { status: publicDecisionStatus(repeated), decision_id: repeated.id, reason: repeated.result.reason, selection: repeated.result.selection, blocked: repeated.prepared.blocked, reused: true, workers_started: state.attempts.filter((a) => a.decision_id === repeated.id).length };
       const assessment = prepareAssessment(batch, state.assessments, state.attempts, config);
       Object.assign(state.assessments, assessment.cached);
       let response: unknown = null;
@@ -236,12 +251,13 @@ await runCli(async () => {
     if (action === "run" && decision.status === "selected" && decision.decision_id && !store.read().attempts.some((a) => a.decision_id === decision.decision_id)) {
       emit({ ok: true, scope: store.scope, status: "selected", decision_id: decision.decision_id, stage: "decision" });
       const started = await startDecision(store, decision.decision_id, configPath, f.get("--caller-pane") as string | undefined, f.get("--label") as string | undefined, timeoutMs);
-      emit({ ok: true, scope: store.scope, status: "started", ...started });
+      emit({ scope: store.scope, ...started });
+      if (!started.ok) process.exitCode = 2;
     } else emit({ ok: decision.status === "selected" || decision.status === "serial", scope: store.scope, ...decision });
     if (!["selected", "serial"].includes(decision.status)) process.exitCode = 2;
     return;
   }
-  if (action === "start") { emit({ ok: true, scope: store.scope, status: "started", ...(await startDecision(store, req("--decision"), configPath, f.get("--caller-pane") as string | undefined, f.get("--label") as string | undefined, timeoutMs)) }); return; }
+  if (action === "start") { const started = await startDecision(store, req("--decision"), configPath, f.get("--caller-pane") as string | undefined, f.get("--label") as string | undefined, timeoutMs); emit({ scope: store.scope, ...started }); if (!started.ok) process.exitCode = 2; return; }
   if (action === "status") {
     const id = f.get("--attempt") as string | undefined;
     const gather = async (state: State, save?: () => void) => {
@@ -273,6 +289,19 @@ await runCli(async () => {
         throw new CliError("runner_still_active", "Exact RPC runner is still active; stop and observe it before resolve");
       if (a.backend === "rpc" && outcome === "not_performed" && (a.runner_pid || existsSync(`${a.result_path}.rpc.json.started`)))
         throw new CliError("effect_possible", "RPC start may have occurred; inspect and use a stopped outcome");
+      if (a.backend === "rpc" && (a.runner_pid || existsSync(`${a.result_path}.rpc.json.started`)) &&
+        !((a.cleanup as any)?.state === "confirmed" && (a.cleanup as any)?.stopped)) {
+        if (!f.has("--server-stopped")) throw new CliError("server_stop_unconfirmed", "RPC cleanup is unconfirmed; verify the owned app-server stopped, then pass --server-stopped with owner evidence");
+        let serverPid: number | undefined;
+        try {
+          const record = JSON.parse(readFileSync(`${a.result_path}.rpc.json`, "utf8"));
+          if (record?.attempt_id === a.id && Number.isSafeInteger(record.server_pid) && record.server_pid > 0) serverPid = record.server_pid;
+        } catch {}
+        if (serverPid) {
+          try { process.kill(-serverPid, 0); throw new CliError("server_still_active", "Owned RPC process group may still be active; stop and verify it before resolve"); }
+          catch (error) { if (error instanceof CliError || (error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+        }
+      }
       resolveAttempt(a, outcome, req("--evidence")); save(); emit({ ok: true, attempt: summary(a) });
     });
     return;

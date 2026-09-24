@@ -9,8 +9,12 @@ for await (const line of createInterface({ input: process.stdin })) {
   if (message.method === "turn/start") {
     const id = `turn-${message.id}`;
     send({ id: message.id, result: { turn: { id } } });
-    const item = { type: "agentMessage", id: `message-${message.id}`, phase: "final_answer", text: JSON.stringify({ status: "completed", summary: "read-only mock delivery", artifact_refs: [] }) };
-    send({ method: "turn/completed", params: { threadId: "thread", turn: { id, status: "completed", items: [item] } } });
+    const heldTask = process.env.MOCK_TURN_HOLD_TASK;
+    const hold = process.env.MOCK_TURN_HOLD === "1" || (heldTask && String(message.params.input?.[0]?.text ?? "").includes(`"id":"${heldTask}"`));
+    if (!hold) {
+      const item = { type: "agentMessage", id: `message-${message.id}`, phase: "final_answer", text: JSON.stringify({ status: "completed", summary: "read-only mock delivery", artifact_refs: [] }) };
+      send({ method: "turn/completed", params: { threadId: "thread", turn: { id, status: "completed", items: [item] } } });
+    }
   }
   if (message.method === "turn/interrupt") send({ id: message.id, result: {} });
 }
