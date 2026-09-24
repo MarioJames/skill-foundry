@@ -36,6 +36,7 @@ export type Decision = {
     status: string;
     assignments: ReturnType<typeof prepareWave>["waves"][number]["assignments"];
     reason?: string;
+    selection?: { choice: string; confidence: number | null; min_confidence: number };
   };
   assessment_request: unknown;
   assessment_response: unknown;

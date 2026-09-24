@@ -23,7 +23,7 @@ bun scripts/run-task.ts --input /private/task.json --state /private/scope.json -
 
 默认 sandbox 为 read-only；写代码显式传 workspace-write。不会提供 YOLO 开关。默认任务预算 30 分钟，可用 `--timeout-ms` 调整为 1 秒至 24 小时；单 RPC 响应预算 60 秒，清理各阶段宽限 3 秒。Jev 请求默认 60 秒，可用 `--jev-timeout-ms` 在 1–120 秒之间调整；超时保留失败决策，不自动重试。无输出不代表失败。
 
-命令先输出 `attempt_id/runner_pid/state/result`；父宿主后台句柄可能更早返回。父 Agent 继续原工作；runner 自行读取双向 JSONL，按精确 thread/turn 收取结果并关闭独占 app-server。最终退出码 0 仅代表执行 completed 且 cleanup stopped，不代表交付已经验收。2 表示未成功完成；参数/准入/基础设施错误非零。私有结果路径为 `STATE.results/ATTEMPT.json.rpc.json`，stderr 有界保留 64 KB。
+命令先输出 `attempt_id/runner_pid/state/result`；父宿主后台句柄可能更早返回。父 Agent 继续原工作；runner 自行读取双向 JSONL，按精确 thread/turn 收取结果并关闭独占 app-server。RPC 执行路径返回成功需要 completed 且 cleanup stopped；派发前的 serial 也正常退出 0，但未创建 worker。应结合结构化结果判断，退出码 0 本身不代表任务已经验收。2 表示未成功完成；参数/准入/基础设施错误非零。私有结果路径为 `STATE.results/ATTEMPT.json.rpc.json`，stderr 有界保留 64 KB。
 
 持久任务使用同一个入口和状态，增加：
 
@@ -35,7 +35,9 @@ label 日期只取会话 createdAt 转 Asia/Shanghai。非 Codex profile 的 one
 
 ## 收取、验收与取消
 
-派发前返回 `owner_required` 或 `need_context` 时没有创建 worker；`reason` 和 `decision_id` 指向具体决策。当前沿用原 Jev 采纳门槛：答案必须带 `confidence >= 0.80`。即使 choice 已选并行，置信度不足也返回 `below_confidence_policy`，不能报告为“已并行”，也不要反复请求凑过线；父任务处理尚未派发的工作。
+派发前返回 `serial`、`owner_required` 或 `need_context` 时没有创建 worker；`reason`、`selection`（原始 choice、confidence、实际门槛）和 `decision_id` 指向具体决策。`serial` 是正常结果，退出码 0，由父任务处理；其余未派发退出码 2。普通单项 Codex oneshot 的 B 要求 `confidence >= 0.65`，持久/非 Codex 路径及完整批次保留 0.80，A 仍为 0.80。即使 choice 已选并行，置信度不足也返回 `below_confidence_policy`，不能报告为“已并行”或“Jev 判断不适合并行”，也不要反复请求凑过线。
+
+0.65 是有限标注场景上的运行取值，不是普遍最优点。问题定义同时区分有收益的并行、无收益的 serial、缺事实和需要父任务改授权；先校正问题语义再选阈值，不能只为某个失败样本降线。[TypeSafe 的 confidence 定义](https://docs.typesafe.ai/confidence)是概率分布的集中程度统计量，不等于所选选项的概率，也不是单次正确率。
 
 ```sh
 bun scripts/dispatch-tasks.ts --action observe --state /private/scope.json --attempt ATTEMPT_ID

@@ -21,9 +21,10 @@ description: 活跃任务收到新增或变更指令、拆分出独立交付项�
 唯一配置是 `~/.config/herdr/agents.json` 或显式 `--config`；保留这个历史路径以继续采用已有个人覆写，不复制出第二份默认配置。先解析 `manual_override`，否则按难度取 `routes`，再决定执行载体。
 
 - **存在 override：跳过 Jev 的难度分类/模型路由，只让 Jev 判断是否并行、如何组合执行。** 记录为 configured，不虚构难度，不改变已选模型与力度。
-- 无 override：难度判断确有歧义时调用 Jev A；有充分依据的父 Agent 分类可直接记录。Jev B 从通过本地检查的候选组合中选择，也可返回 need_context/owner_required。
+- 无 override：难度判断确有歧义时调用 Jev A；有充分依据的父 Agent 分类可直接记录。Jev B 从通过本地检查的候选组合中选择，也可返回 serial/need_context/owner_required。serial 是正常的“收益不足，父任务处理”，不是缺权限或失败。
 - Jev 判断并行方案，普通交接不可用父 Agent 的独立性说明跳过 B。有 override 时，批次 `owner_wave` 也不跳过 B。无 override 的复杂批次只在用户已明确指定执行组合时可采用原 owner_wave；不要把“可以独立交付”等同于用户已决定调度。
 - 缺权限、必要输入、归属或能力证据时由父任务处理，不让 Jev 猜。Jev 不改本地硬门槛、不接受产物、不证明模型可用。请求失败、低置信度或缺 key 显式回父任务，不重试或换模型。
+- 普通单项 Codex oneshot 的 B 采纳门槛为 0.65；难度 A、持久/非 Codex 路径和完整批次保留 0.80。门槛来自有限场景校准，不是正确率保证；不能拿它代替授权、依赖和资源检查。低置信度退出需区分 Jev 原始选择与本地采纳结果，不能说成 Jev 判定不可并行。
 
 普通单项交接使用 [run-task 用法](references/run-task.md)，脚本复用已有模型配置、准入和状态实现，父 Agent 不维护 RPC 循环。多个就绪任务确有组合取舍时才读 [Jev 批次流程](references/jev-scheduling.md)，可复用原 A/B 流程；不要为普通交接手写完整批次。
 

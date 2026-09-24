@@ -6,6 +6,7 @@ import {
   prepareWave,
   resolveWave,
   callJev,
+  waveConfidenceThreshold,
 } from "../scripts/lib/jev-decision";
 import { buildLaunch, executionProfile } from "../scripts/lib/agent-engines";
 import { hash, validateBatch } from "../scripts/lib/scheduling";
@@ -335,6 +336,9 @@ test("single wave keeps semantic exits and permanent blocks do not become wait",
   const r = runtime(c),
     p = prepareWave(b, c as any, classified(b), r as any, []);
   expect(p.request?.questions.schedule.criteria.need_context).toBeDefined();
+  const serial = resolveWave(p, reply(p.request!.questions, { schedule: "serial" }, 0.4));
+  expect(serial.status).toBe("serial");
+  expect(serial.assignments).toHaveLength(0);
   expect(
     resolveWave(p, reply(p.request!.questions, { schedule: "owner_required" }))
       .status,
@@ -346,6 +350,29 @@ test("single wave keeps semantic exits and permanent blocks do not become wait",
   expect(prepareWave(b, c as any, {}, r as any, []).local_status).toBe(
     "owner_required",
   );
+});
+
+test("bounded Codex handoffs use the calibrated B threshold without relaxing other routes", () => {
+  const b = validateBatch(fixture()), c: any = { ...config(), manual_override: { route: "moderate" } };
+  b.tasks[1].status = "cancelled";
+  const r = runtime(c);
+  for (const k of ["ordinary", "moderate", "complex"] as const) {
+    const profile = executionProfile(c, k);
+    r.probes[k] = { ...r.probes[k], profile, launch: buildLaunch(c, profile) };
+  }
+  const p = prepareWave(b, c, prepareAssessment(b, {}, [], c).cached, r as any, []);
+  expect(waveConfidenceThreshold(p, "oneshot")).toBe(0.65);
+  expect(waveConfidenceThreshold(p, "persistent")).toBe(0.8);
+  const answer = (confidence: number | undefined) => reply(p.request!.questions, { schedule: "wave_1" }, confidence);
+  expect(resolveWave(p, answer(0.65), waveConfidenceThreshold(p, "oneshot")).status).toBe("selected");
+  const rejected = resolveWave(p, answer(0.64), waveConfidenceThreshold(p, "oneshot"));
+  expect(rejected.reason).toBe("below_confidence_policy");
+  expect(rejected.selection).toEqual({ choice: "wave_1", confidence: 0.64, min_confidence: 0.65 });
+  expect(resolveWave(p, answer(0.78)).status).toBe("owner_required");
+  const missing = answer(0.65); delete (missing.answers.schedule as any).confidence;
+  expect(resolveWave(p, missing, 0.65).reason).toBe("confidence_missing");
+  p.waves[0].assignments[0].binding.launch.kind = "qodercli";
+  expect(waveConfidenceThreshold(p, "oneshot")).toBe(0.8);
 });
 test("unknown external ownership blocks and engine rename cannot reset capacity", () => {
   const b = validateBatch(fixture()),

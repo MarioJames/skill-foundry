@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { CliError, emit, parseFlags, runCli } from "./lib/cli";
 import { loadRoutingConfig } from "./lib/agent-engines";
 import { StateStore, readJson, reserve, bindBatch, runAttempt, type Decision } from "./lib/dispatch-state";
-import { prepareAssessment, resolveAssessment, prepareWave, resolveWave, callJev } from "./lib/jev-decision";
+import { prepareAssessment, resolveAssessment, prepareWave, resolveWave, callJev, waveConfidenceThreshold } from "./lib/jev-decision";
 import { taskBatch, taskRuntime } from "./lib/task-input";
 import { observeAttempt, transport } from "./lib/agent-runtime";
 import { hash, type Attempt } from "./lib/scheduling";
@@ -45,9 +45,9 @@ await runCli(async () => {
     state.decisions.push(d); save();
     try {
       d.wave_response = prepared.request ? await callJev(prepared.request, { apiKey: process.env.OPENROUTER_API_KEY, timeoutMs: jevTimeoutMs }) : null;
-      d.result = resolveWave(prepared, d.wave_response); save();
+      d.result = resolveWave(prepared, d.wave_response, waveConfidenceThreshold(prepared, mode as "oneshot" | "persistent")); save();
     } catch (e) { d.result = { status: "failed", assignments: [] }; save(); throw e; }
-    if (d.result.status !== "selected") { emit({ ok: false, status: d.result.status, reason: d.result.reason, blocked: prepared.blocked, decision_id: d.id }); process.exitCode = 2; return; }
+    if (d.result.status !== "selected") { emit({ ok: d.result.status === "serial", status: d.result.status, reason: d.result.reason, selection: d.result.selection, blocked: prepared.blocked, decision_id: d.id }); if (d.result.status !== "serial") process.exitCode = 2; return; }
     const backend = mode === "oneshot" && d.result.assignments[0].binding.launch.kind === "codex" ? "rpc" : "herdr";
     let caller = "", label = "";
     if (backend === "herdr") {
