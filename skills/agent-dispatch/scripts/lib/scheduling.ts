@@ -115,6 +115,8 @@ export type Effect = {
 };
 export type Attempt = {
   backend?: "rpc" | "herdr";
+  runner_pid?: number;
+  runner_start_ticks?: string;
   id: string;
   task: TaskKey;
   decision_id: string;

@@ -55,6 +55,9 @@ export type State = {
     error?: string;
   }[];
   attempts: Attempt[];
+  public_context?: unknown;
+  public_request?: { hash: string; decision_id: string; lifecycle_hash: string };
+  public_failure?: { input_hash: string; config_hash: string; stage: string; code: string };
 };
 const blank = (): State => ({
   version: 1,
@@ -187,6 +190,7 @@ export function reserve(
   config: RoutingConfig,
   runtime: Runtime,
   path: string,
+  resultDirectory = `${path}.results`,
 ): Attempt[] {
   bindBatch(state, batch);
   if (d.result.status !== "selected" || !d.result.assignments.length)
@@ -244,7 +248,7 @@ export function reserve(
       phase: "prepared" as const,
       effects: [],
       lane: null,
-      result_path: resolve(`${path}.results`, `${id}.json`),
+      result_path: resolve(resultDirectory, `${id}.json`),
     };
   });
   state.attempts.push(...attempts);
