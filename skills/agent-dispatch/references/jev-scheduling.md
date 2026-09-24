@@ -1,6 +1,6 @@
 # Configured heterogeneous scheduling
 
-This is the optional full batch workflow using the Herdr backend. For a normal single handoff, use `run-task.ts` from the main skill. Use this workflow when several ready tasks require a meaningful grouping decision. Keep tightly coupled or ordinary single-owner work direct. The main Agent owns decomposition, authorization, evidence, acceptance and integration; Jev supplies bounded decisions.
+This is the optional full batch workflow using the Herdr backend. For a normal single handoff, use `run-task.ts` from the main skill. Use this workflow when several pending items or accumulated issues need a scheduling decision. Include the current work and the full pending workload, with owners, dependencies and resource facts; do not preselect only tasks the parent already considers independent. Jev judges semantic independence and useful overlap. Local hard guards still exclude unsafe assignments. The main Agent owns decomposition, authorization, evidence, acceptance and integration; Jev supplies bounded decisions.
 
 ## One configuration
 

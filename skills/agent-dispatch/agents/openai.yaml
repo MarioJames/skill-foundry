@@ -1,6 +1,6 @@
 interface:
   display_name: "Agent Dispatch"
-  short_description: "多项需求或追加指令到达时先盘点待办，让 Jev 判断就绪候选是否并行"
-  default_prompt: "使用 $agent-dispatch 先盘点当前与追加需求中的全部未完成工作，发现就绪独立候选后立即交给 Jev 判断并派发；无候选时说明具体原因，区分未调用与置信度未达门槛。"
+  short_description: "追加指令后盘点当前工作与积压问题，由 Jev 判断并行，再启动 RPC 或 Herdr"
+  default_prompt: "使用 $agent-dispatch 先盘点当前与追加需求中的全部未完成工作，把当前工作与积压问题交给 Jev 判断未推进工作能否独立执行，再按结果启动 JSON-RPC 或 Herdr；硬阻塞时说明具体原因，区分未调用与置信度未达门槛。"
 policy:
   allow_implicit_invocation: true
