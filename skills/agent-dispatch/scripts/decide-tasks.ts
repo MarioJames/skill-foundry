@@ -26,7 +26,7 @@ await runCli(async () => {
   );
   if (f.has("--help")) {
     console.log(
-      `Usage: bun decide-tasks.ts --input BATCH.json [--config agents.json] [--state PRIVATE.json] [--dry-run] [--timeout-ms 20000]\nConfig defaults to ~/.config/herdr/agents.json. Live decisions require --state.\nDry-run validates and prints classification only; no probes, API calls or writes.\nLive: read-only profile probes + Herdr inventory, classification A then wave B; OPENROUTER_API_KEY is read only from environment.\nOutputs a decision ID, never starts Agents. Confidence adoption threshold 0.8 is local policy, not calibrated certainty.`,
+      `Usage: bun decide-tasks.ts --input BATCH.json [--config agents.json] [--state PRIVATE.json] [--dry-run] [--timeout-ms 20000]\nConfig defaults to ~/.config/agent-dispatch/agents.json. Live decisions require --state.\nDry-run validates and prints classification only; no probes, API calls or writes.\nLive: read-only profile probes + Herdr inventory, classification A then wave B; OPENROUTER_API_KEY is read only from environment.\nOutputs a decision ID, never starts Agents. Confidence adoption threshold 0.8 is local policy, not calibrated certainty.`,
     );
     return;
   }

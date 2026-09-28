@@ -6,7 +6,7 @@ This is the optional full batch workflow using the Herdr backend. For a normal s
 
 ## One configuration
 
-Copy and edit [`examples/agents.json`](../examples/agents.json) to `~/.config/herdr/agents.json`, or pass `--config PATH`. This is one complete file, with no merging, environment overrides or inferred model fallback. Creating a user-wide config requires authorization; using an explicit task-local file does not.
+Copy and edit [`examples/agents.json`](../examples/agents.json) to `~/.config/agent-dispatch/agents.json`, or pass `--config PATH`. This is one complete file, with no merging, environment overrides or inferred model fallback. Creating a user-wide config requires authorization; using an explicit task-local file does not.
 
 - `engines`: stable IDs, canonical `codex` or `qodercli` adapter, and `max_parallel`. V1 permits one instance per adapter. Renaming an ID does not reset old adapter reservations.
 - `routes`: exactly `ordinary`, `moderate`, `complex`; each embeds `engine_id`, `model` and native `reasoning`. No profile registry or separate effort ladder.
@@ -111,4 +111,4 @@ The reviewed design and rationale are in [heterogeneous-agent-design.md](heterog
 
 Use the exact same `--state` for `run-task.ts`, decide and dispatch in one parent scope. RPC reservations are ordinary attempts in that state: they consume the same global/engine slots and keep read/write ownership until accepted or resolved. Run observe before another wave to reconcile completed RPC envelopes; no Herdr CLI is used to observe those attempts. Herdr inventory remains live for this batch adapter; declare the actual parent and all relevant external access in `external_resources`. Standalone RPC handoffs supply the parent/external inventory explicitly; this is owner evidence, not a machine-wide discovery or enforcement guarantee. Never start a second state file to obtain more capacity.
 
-The historical `~/.config/herdr/agents.json` location remains the sole default so existing overrides keep applying. Both backends use the exact same file, or the same explicit `--config`; there is no second config search or merge.
+`~/.config/agent-dispatch/agents.json` is the sole default config location. Both backends use the exact same file, or the same explicit `--config`; there is no second config search or merge.

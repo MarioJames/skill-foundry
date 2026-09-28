@@ -182,7 +182,7 @@ test("loading reads a whole selected file without merging and does not echo malf
   }
 });
 
-test("default config path is HOME/.config/herdr/agents.json, not cwd or a merged fallback", () => {
+test("default config path is HOME/.config/agent-dispatch/agents.json, not cwd or a merged fallback", () => {
   const dir = mkdtempSync(join(tmpdir(), "herdr-home-test-"));
   try {
     const run = () =>
@@ -198,9 +198,9 @@ test("default config path is HOME/.config/herdr/agents.json, not cwd or a merged
         },
       );
     expect(run().stdout.toString().trim()).toBe("config_read_failed");
-    mkdirSync(join(dir, ".config/herdr"), { recursive: true });
+    mkdirSync(join(dir, ".config/agent-dispatch"), { recursive: true });
     writeFileSync(
-      join(dir, ".config/herdr/agents.json"),
+      join(dir, ".config/agent-dispatch/agents.json"),
       JSON.stringify(fixture()),
     );
     expect(JSON.parse(run().stdout.toString())).toEqual(fixture());

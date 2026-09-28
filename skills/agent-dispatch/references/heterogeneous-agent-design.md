@@ -28,7 +28,7 @@
 
 ## 一个配置文件
 
-默认建议 `~/.config/herdr/agents.json`，`--config` 可选择另一份完整文件；首版不做多层合并。该文件由技能调度脚本读取，不宣称 Herdr 原生 config.toml 已支持这些字段。
+默认建议 `~/.config/agent-dispatch/agents.json`，`--config` 可选择另一份完整文件；首版不做多层合并。该文件由技能调度脚本读取，不宣称 Herdr 原生 config.toml 已支持这些字段。
 
 ```ts
 type Complexity = "ordinary" | "moderate" | "complex";

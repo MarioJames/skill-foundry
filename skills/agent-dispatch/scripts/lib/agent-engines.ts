@@ -194,7 +194,7 @@ export function executionProfile(
 }
 
 export function loadRoutingConfig(
-  path = join(homedir(), ".config", "herdr", "agents.json"),
+  path = join(homedir(), ".config", "agent-dispatch", "agents.json"),
 ): RoutingConfig {
   let source: string;
   try {
@@ -202,7 +202,7 @@ export function loadRoutingConfig(
   } catch {
     throw new CliError(
       "config_read_failed",
-      "Cannot read routing config; supply --config or create ~/.config/herdr/agents.json",
+      "Cannot read routing config; supply --config or create ~/.config/agent-dispatch/agents.json",
       2,
     );
   }

@@ -1,6 +1,6 @@
 # 统一调度 CLI
 
-从技能目录执行 `bun scripts/agent-dispatch.ts --help`；正常使用只需 `run → status → accept`。本页是公共输入与恢复边界，`examples/` 和旧的 `run-task.ts/decide-tasks.ts/dispatch-tasks.ts` 是内部协议参考，不是调用前置条件。需要 Bun、Codex CLI；选中 Herdr 路径时还需 Herdr CLI。`agents.json` 仍只从 `~/.config/herdr/agents.json` 或显式 `--config` 加载，Jev 使用调用者环境中的 `OPENROUTER_API_KEY`。
+从技能目录执行 `bun scripts/agent-dispatch.ts --help`；正常使用只需 `run → status → accept`。本页是公共输入与恢复边界，`examples/` 和旧的 `run-task.ts/decide-tasks.ts/dispatch-tasks.ts` 是内部协议参考，不是调用前置条件。需要 Bun、Codex CLI；选中 Herdr 路径时还需 Herdr CLI。`agents.json` 仍只从 `~/.config/agent-dispatch/agents.json` 或显式 `--config` 加载，Jev 使用调用者环境中的 `OPENROUTER_API_KEY`。
 
 ## 提交任务
 

@@ -24,7 +24,7 @@ description: 父任务首次收到多项需求、收到追加或变更指令、�
 
 ## Jev 与执行配置
 
-唯一配置是 `~/.config/herdr/agents.json` 或显式 `--config`；保留这个历史路径以继续采用已有个人覆写，不复制出第二份默认配置。先解析 `manual_override`，否则按难度取 `routes`，再决定执行载体。
+唯一配置是 `~/.config/agent-dispatch/agents.json` 或显式 `--config`；配置由本技能维护，不搜索或合并其他默认路径。先解析 `manual_override`，否则按难度取 `routes`，再决定执行载体。
 
 - **存在 override：跳过 Jev 的难度分类/模型路由，只让 Jev 判断是否并行、如何组合执行。** 记录为 configured，不虚构难度，不改变已选模型与力度。
 - 无 override：难度判断确有歧义时调用 Jev A；有充分依据的父 Agent 分类可直接记录。Jev B 从通过本地检查的候选组合中选择，也可返回 serial/need_context/owner_required。serial 是正常的“收益不足，父任务处理”，不是缺权限或失败。
