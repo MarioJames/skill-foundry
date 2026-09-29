@@ -2,6 +2,8 @@
 
 需要登录或多账号时读取。`bh` 是 `bun "$BH_DIR/bh.ts"` 的速记；目录定位见 [平台与运行时](runtime.md)。
 
+以下 prepare 示例仅用于尚未准备且拥有服务清理权的项目；已交接成功 prepare 结果或借用服务 URL 时直接复用，按 [交接规则](delegation.md) 核对归属，跳过 prepare/cleanup。
+
 ```bash
 if BH_PREPARE_ENV="$(bun "$BH_DIR/bh.ts" prepare "$TARGET")"; then
   eval "$BH_PREPARE_ENV"
@@ -19,7 +21,9 @@ Journey 的 `--auth open` / `--auth use` storageState 由项目 testing-suite �
 
 ## profile 选择
 
-默认情况下不用传 `--profile`：`login` / `collect-evidence` 和无参 `profile-dir` 会从当前工作目录向上查找最近的 `.git` 或 `package.json` 作为项目根，并生成项目 profile。命名规则统一为 `<项目根父目录>-<项目根目录>`，转小写并把连续空格、标点归一成 `-`；例如在 `/workspaces/example/web` 或其子目录运行时，默认 profile 为 `example-web`，目录为 `~/.browser-harness/profiles/example-web`。找不到项目标记时以当前工作目录作为项目根。
+验收先按主技能设置 `BH_DEFAULT_PROFILE` 和对应的 `AGENT_BROWSER_PROFILE`；跨 Agent 沿用交接值。新任务使用唯一名称，复用持久登录态时明确 profile 归属并独占操作。
+
+工具未收到 profile 参数且没有 `BH_DEFAULT_PROFILE` 时，`login` / `collect-evidence` 和无参 `profile-dir` 会从当前工作目录向上查找最近的 `.git` 或 `package.json` 作为项目根，并生成项目共享 profile。命名规则统一为 `<项目根父目录>-<项目根目录>`，转小写并把连续空格、标点归一成 `-`；例如在 `/workspaces/example/web` 或其子目录运行时，默认 profile 为 `example-web`，目录为 `~/.browser-harness/profiles/example-web`。找不到项目标记时以当前工作目录作为项目根。
 
 因此同一项目的子目录会自动复用同一份登录态。若命令的当前目录与被验收项目不同，先在项目目录执行，或显式传 `--profile`，不要依赖另一仓库的上下文 profile。
 
