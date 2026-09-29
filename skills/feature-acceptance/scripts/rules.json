@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "seed-inline-theme",
+      "title": "局部颜色字面量线索",
+      "area": "frontend",
+      "status": "candidate",
+      "severity": "warning",
+      "include": [
+        "**/*.{tsx,jsx,vue,svelte,html,css,scss}"
+      ],
+      "exclude": [
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
+        "**/tests/**",
+        "**/fixtures/**"
+      ],
+      "rationale": "文本扫描缩小Agent阅读范围，不解析框架语义。",
+      "guidance": "检查是否绕过已存在主题token；品牌色和主题定义可能合法，不凭命中判错。",
+      "sources": [
+        {
+          "ref": "history:F02",
+          "summary": "历史反馈提炼，原始来源保留在任务私有证据；是否适用以当前项目为准。"
+        }
+      ],
+      "check": {
+        "kind": "pattern",
+        "pattern": "(?:color|background(?:Color)?|borderColor)\\s*:\\s*['\"]?#[0-9a-fA-F]{3,8}\\b"
+      }
+    },
+    {
+      "id": "seed-local-error",
+      "title": "局部错误入口线索",
+      "area": "frontend",
+      "status": "candidate",
+      "severity": "warning",
+      "include": [
+        "**/*.{tsx,jsx,vue,svelte,html,css,scss}"
+      ],
+      "exclude": [
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
+        "**/tests/**",
+        "**/fixtures/**"
+      ],
+      "rationale": "文本扫描缩小Agent阅读范围，不解析框架语义。",
+      "guidance": "当前项目有共享错误管线时核对是否重复；没有共享管线不据此禁止该API。",
+      "sources": [
+        {
+          "ref": "history:F05",
+          "summary": "历史反馈提炼，原始来源保留在任务私有证据；是否适用以当前项目为准。"
+        }
+      ],
+      "check": {
+        "kind": "pattern",
+        "pattern": "(?:message|notification)\\.error\\s*\\("
+      }
+    },
+    {
+      "id": "seed-deep-import",
+      "title": "深相对路径线索",
+      "area": "shared",
+      "status": "candidate",
+      "severity": "warning",
+      "include": [
+        "**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs,vue,svelte,html,css,scss,py,go,rs,java,kt,rb,php,cs}",
+        "**/package.json"
+      ],
+      "exclude": [
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
+        "**/tests/**",
+        "**/fixtures/**"
+      ],
+      "rationale": "文本扫描缩小Agent阅读范围，不解析框架语义。",
+      "guidance": "检查项目是否已有alias或包公开入口，并核对运行时/测试/构建解析；深度本身不是硬性违规。",
+      "sources": [
+        {
+          "ref": "history:B02",
+          "summary": "历史反馈提炼，原始来源保留在任务私有证据；是否适用以当前项目为准。"
+        }
+      ],
+      "check": {
+        "kind": "pattern",
+        "pattern": "(?:from\\s*|(?:require|import)\\s*\\()\\s*['\"](?:\\.\\./){3,}"
+      }
+    },
+    {
+      "id": "seed-path-case",
+      "title": "文件路径大小写冲突",
+      "area": "shared",
+      "status": "candidate",
+      "severity": "warning",
+      "include": [
+        "**/*"
+      ],
+      "exclude": [],
+      "rationale": "跨文件系统交付时，仅大小写或Unicode规范形式不同的路径可能冲突。",
+      "guidance": "根据项目命名约定保留正确路径并修正消费者；conflicts 列出同组路径。",
+      "sources": [
+        {
+          "ref": "history:K46",
+          "summary": "历史反馈提炼，原始来源保留在任务私有证据；是否适用以当前项目为准。"
+        }
+      ],
+      "check": {
+        "kind": "path-case"
+      }
+    }
+  ]
+}

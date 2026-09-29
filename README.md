@@ -33,6 +33,12 @@ Frontend acceptance helper around [vercel-labs/agent-browser](https://github.com
 
 **Reach for it when** doing smoke checks, journey prep with `APP_URL`, interactive browser exploration, or reusable headed login profiles.
 
+### `feature-acceptance` — 前后端功能验收与规则进化
+
+实现前读取用户的方案选择偏好、组件经验和 Lobe 惯用写法，交付前用脚本与重点审查发现同类偏差。可独立使用，也可与 `browser-harness` 协同验收；纠偏沉淀为项目 lint 或审查规则，并接入下次 Agent 的读取入口。
+
+**使用场景：** 让 Agent 按个人工程习惯实现和验收前后端，减少反复解释基础要求。个人偏好保留具体写法，项目业务决定单独留在需求中；脚本不会把“零命中”判为功能通过。详见 [技能入口](skills/feature-acceptance/SKILL.md)。
+
 ### `public-acceptance` — public DEV acceptance
 
 Prepares a local DEV service, discovers and verifies its actual listening port, creates a temporary Cloudflare review URL, and retrieves the application's development login credentials from effective environment configuration or the development database. Reports available plaintext credentials to the requesting user and explains hash-only or external-auth limitations without inventing passwords. Opens the public page once with `browser-harness` to confirm reachability; login and business flows are outside this check. Runs the project dev script directly in an interactive pane so users can stop and restart it while the tunnel stays in the background, retaining the same local origin and port.
@@ -117,6 +123,7 @@ bunx skills add MarioJames/skill-foundry --all
 # One skill
 bunx skills add MarioJames/skill-foundry --skill asset-validation
 bunx skills add MarioJames/skill-foundry --skill browser-harness
+bunx skills add MarioJames/skill-foundry --skill feature-acceptance
 bunx skills add MarioJames/skill-foundry --skill public-acceptance
 bunx skills add MarioJames/skill-foundry --skill agent-dispatch
 bunx skills add MarioJames/skill-foundry --skill herdr
@@ -163,7 +170,7 @@ Codex:
 git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
 mkdir -p ~/.agents/skills
-cp -R skills/asset-validation skills/browser-harness \
+cp -R skills/asset-validation skills/browser-harness skills/feature-acceptance \
   skills/public-acceptance \
   skills/agent-dispatch skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
@@ -176,7 +183,7 @@ Claude-style runtimes:
 git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
 mkdir -p ~/.claude/skills
-cp -R skills/asset-validation skills/browser-harness \
+cp -R skills/asset-validation skills/browser-harness skills/feature-acceptance \
   skills/public-acceptance \
   skills/agent-dispatch skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
@@ -188,6 +195,7 @@ Verify the installation:
 ```bash
 test -f ~/.agents/skills/asset-validation/scripts/acc.ts
 test -f ~/.agents/skills/browser-harness/scripts/bh.ts
+test -f ~/.agents/skills/feature-acceptance/scripts/accept.ts
 test -f ~/.agents/skills/public-acceptance/scripts/cqt.ts
 test -f ~/.agents/skills/agent-dispatch/scripts/run-task.ts
 test -f ~/.agents/skills/herdr/scripts/route-lane.ts
@@ -209,12 +217,12 @@ test -f ~/.agents/skills/tdd/SKILL.md
 cd skill-foundry
 git pull
 rm -rf ~/.agents/skills/asset-validation \
-  ~/.agents/skills/browser-harness ~/.agents/skills/public-acceptance \
+  ~/.agents/skills/browser-harness ~/.agents/skills/feature-acceptance ~/.agents/skills/public-acceptance \
   ~/.agents/skills/agent-dispatch ~/.agents/skills/herdr ~/.agents/skills/cow-workspace ~/.agents/skills/trigger-build-workflow \
   ~/.agents/skills/persistent-ssh-ops ~/.agents/skills/provision-xray-hy2-node \
   ~/.agents/skills/changelog-writing ~/.agents/skills/awesome-presentation \
   ~/.agents/skills/repo-knowledge-graph ~/.agents/skills/tdd
-cp -R skills/asset-validation skills/browser-harness \
+cp -R skills/asset-validation skills/browser-harness skills/feature-acceptance \
   skills/public-acceptance \
   skills/agent-dispatch skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
@@ -322,6 +330,7 @@ skill-foundry/
 │   ├── browser-harness/
 │   │   ├── SKILL.md
 │   │   └── scripts/
+│   ├── feature-acceptance/  # 扫描、重点审查与项目规则进化
 │   ├── public-acceptance/
 │   │   ├── SKILL.md
 │   │   ├── agents/
@@ -376,6 +385,7 @@ Installable skill packages:
 
 - `skills/asset-validation/`
 - `skills/browser-harness/`
+- `skills/feature-acceptance/`
 - `skills/public-acceptance/`
 - `skills/agent-dispatch/`
 - `skills/herdr/`
@@ -411,6 +421,7 @@ Package-free migrated skills run their behavior tests directly with Bun:
 ```bash
 bun test skills/asset-validation/tests
 bun test skills/browser-harness/tests
+bun test skills/feature-acceptance/tests
 bun test skills/public-acceptance/tests
 bun test skills/cow-workspace/tests # Requires Linux, fuse-overlayfs and /dev/fuse
 bun test skills/herdr/tests skills/agent-dispatch/tests

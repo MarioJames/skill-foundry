@@ -24,3 +24,8 @@ skills/agent-dispatch/tests/*
 !skills/agent-dispatch/tests/*.test.ts
 !skills/agent-dispatch/tests/fixtures/
 !skills/agent-dispatch/tests/fixtures/*.ts
+
+# Ship the feature acceptance scan and rule evolution contract.
+!skills/feature-acceptance/tests/
+skills/feature-acceptance/tests/*
+!skills/feature-acceptance/tests/accept.test.ts
