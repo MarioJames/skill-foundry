@@ -9,7 +9,7 @@
 ```json
 {
   "task_name": "browser_acceptance",
-  "model": "gpt-6-sol",
+  "model": "gpt-6.1-sol",
   "reasoning_effort": "high",
   "fork_turns": "none",
   "message": "按下方交接要求执行浏览器验收；你是受委派执行者，直接读取指定的 browser-harness/SKILL.md 并执行，不再派发。此处填入本轮完整交接内容。"

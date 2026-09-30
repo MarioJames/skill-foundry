@@ -9,7 +9,7 @@ description: 验收前端页面：准备服务和登录态，通过 agent-browse
 
 ## 执行者与交接
 
-父 Agent 默认通过官方 `spawn_agent` 委派浏览器验收，显式设置 `model="gpt-6-sol"`、`reasoning_effort="high"`、`fork_turns="none"`；不用 agent-dispatch RPC 或 Herdr 启动替代 Agent。派发前读取 [子 Agent 交接与复验](references/delegation.md)，传入完整验收要求与资源归属。已受委派的验收 Agent 直接执行下方流程，不再派发。
+父 Agent 默认通过官方 `spawn_agent` 委派浏览器验收，显式设置 `model="gpt-6.1-sol"`、`reasoning_effort="high"`、`fork_turns="none"`；不用 agent-dispatch RPC 或 Herdr 启动替代 Agent。派发前读取 [子 Agent 交接与复验](references/delegation.md)，传入完整验收要求与资源归属。已受委派的验收 Agent 直接执行下方流程，不再派发。
 
 父 Agent 负责验收标准、业务修复与最终确认；子 Agent 负责环境准备、浏览器交互、采证和自有资源清理。工具或指定模型不可用时报告具体阻塞，由父 Agent 承接已授权验收，不静默换模型或执行载体。用户明确要求父 Agent 直接操作时遵从用户。
 
