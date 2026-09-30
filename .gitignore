@@ -1,5 +1,10 @@
 **/tests/
 
+# Ship the browser acceptance CLI, evidence, and lifecycle contract.
+!skills/browser-harness/tests/
+skills/browser-harness/tests/*
+!skills/browser-harness/tests/browser-harness.test.ts
+
 # Ship behavioral regression coverage for ChatGPT coordination.
 !skills/chatgpt-review/tests/
 
