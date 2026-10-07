@@ -34,6 +34,7 @@ server_define passhost root 203.0.113.21 2223 'test password'
 
   const fakeSsh = join(binDirectory, "ssh");
   writeFileSync(fakeSsh, `#!/usr/bin/env zsh
+[[ -n "\${PASSHOST_PASSWD:-}" ]] && print -r -- "leaked-password-env"
 if [[ -n "\${SSH_ASKPASS:-}" ]]; then
   supplied="$("$SSH_ASKPASS" Password:)" || exit
   [[ "$supplied" == "\${SERVER_TEST_EXPECTED:-}" ]] || exit 90
@@ -51,6 +52,7 @@ fi
       HOME: home,
       PATH: `${binDirectory}:${process.env.PATH || "/usr/bin:/bin"}`,
       SERVER_TEST_EXPECTED: "test password",
+      PASSHOST_PASSWD: "inherited stale password",
     },
   };
 }
@@ -88,6 +90,7 @@ describe("server-runtime", () => {
     expect(password.exitCode).toBe(0);
     expect(password.stdout.toString()).toContain("password:-o StrictHostKeyChecking=accept-new -p 2223 root@203.0.113.21 whoami");
     expect(password.stdout.toString()).not.toContain("test password");
+    expect(password.stdout.toString()).not.toContain("leaked-password-env");
   });
 
   test("rejects invalid profile fields instead of silently normalizing them", () => {

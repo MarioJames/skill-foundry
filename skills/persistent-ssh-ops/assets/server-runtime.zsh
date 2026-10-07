@@ -65,7 +65,8 @@ server_define() {
   typeset -gx "${prefix}_IP=$host"
   typeset -gx "${prefix}_USER=$user"
   typeset -gx "${prefix}_PORT=$port"
-  typeset -gx "${prefix}_PASSWD=$passwd"
+  # SSH_ASKPASS re-reads servers.zsh, so the password never needs to reach child environments.
+  typeset -g +x "${prefix}_PASSWD=$passwd"
   typeset -gx "${prefix}_SSH_URI=$uri"
   typeset -gA SERVER_PROFILES
   SERVER_PROFILES[$name]="$uri"
