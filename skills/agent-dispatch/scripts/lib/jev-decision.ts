@@ -1,3 +1,6 @@
+import { readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { CliError } from "./cli";
 import { buildLaunch, executionProfile } from "./agent-engines";
 import {
@@ -578,19 +581,33 @@ async function callJevOnce(request: DecisionRequest, body: string, apiKey: strin
   return parsed as any;
 }
 
+export const jevKeyFile = () => join(homedir(), ".config", "agent-dispatch", "openrouter.key");
+
+/** OPENROUTER_API_KEY wins; the private key file keeps the credential out of every shell environment. */
+export function jevApiKey(): string | undefined {
+  const fromEnv = process.env.OPENROUTER_API_KEY?.trim();
+  if (fromEnv) return fromEnv;
+  const file = jevKeyFile();
+  let mode: number;
+  try { mode = statSync(file).mode; } catch { return undefined; }
+  if (mode & 0o077) throw new CliError("insecure_api_key_file", `${file} must not be accessible by group or others; run chmod 600`, 2);
+  return readFileSync(file, "utf8").trim() || undefined;
+}
+
 export async function callJev(
   request: DecisionRequest,
   options: { apiKey?: string; timeoutMs?: number; fetch?: typeof fetch } = {},
 ) {
   bound(request);
-  if (!options.apiKey?.trim())
-    throw new CliError("missing_api_key", "Set OPENROUTER_API_KEY in the calling environment", 2);
+  const apiKey = (options.apiKey ?? jevApiKey())?.trim();
+  if (!apiKey)
+    throw new CliError("missing_api_key", "Set OPENROUTER_API_KEY or create ~/.config/agent-dispatch/openrouter.key (mode 600)", 2);
   const timeout = options.timeoutMs ?? 20_000;
   if (!Number.isInteger(timeout) || timeout < 1 || timeout > 120_000)
     throw new CliError("invalid_argument", "timeout-ms must be 1..120000", 2);
   const body = JSON.stringify(request);
   for (let attempt = 0; attempt <= JEV_RETRY_DELAYS_MS.length; attempt++) {
-    try { return await callJevOnce(request, body, options.apiKey, timeout, options.fetch ?? fetch); }
+    try { return await callJevOnce(request, body, apiKey, timeout, options.fetch ?? fetch); }
     catch (error) {
       if (!(error instanceof CliError) || !retryableJevCode(error.code)) throw error;
       if (attempt === JEV_RETRY_DELAYS_MS.length)

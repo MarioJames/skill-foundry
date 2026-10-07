@@ -36,7 +36,7 @@ await runCli(async () => {
     if (assessment.request) {
       const record = { id: randomUUID(), request: assessment.request, status: "intent", response: undefined as unknown };
       state.classification_runs.push(record); save();
-      try { response = await callJev(assessment.request, { apiKey: process.env.OPENROUTER_API_KEY, timeoutMs: jevTimeoutMs }); record.response = response; record.status = "confirmed"; Object.assign(state.assessments, resolveAssessment(assessment, response).assessments); save(); }
+      try { response = await callJev(assessment.request, { timeoutMs: jevTimeoutMs }); record.response = response; record.status = "confirmed"; Object.assign(state.assessments, resolveAssessment(assessment, response).assessments); save(); }
       catch (e) { record.status = "failed"; save(); throw e; }
     }
     const runtime = await taskRuntime(config, agents, mode as string);
@@ -44,7 +44,7 @@ await runCli(async () => {
     const d: Decision = { id: randomUUID(), created_at: new Date().toISOString(), input_hash: hash(batch), prepared, result: { status: "pending", assignments: [] }, assessment_request: assessment.request, assessment_response: response, wave_response: null };
     state.decisions.push(d); save();
     try {
-      d.wave_response = prepared.request ? await callJev(prepared.request, { apiKey: process.env.OPENROUTER_API_KEY, timeoutMs: jevTimeoutMs }) : null;
+      d.wave_response = prepared.request ? await callJev(prepared.request, { timeoutMs: jevTimeoutMs }) : null;
       d.result = resolveWave(prepared, d.wave_response, waveConfidenceThreshold(prepared, mode as "oneshot" | "persistent")); save();
     } catch (e) { d.result = { status: "failed", assignments: [] }; save(); throw e; }
     if (d.result.status !== "selected") { emit({ ok: d.result.status === "serial", status: d.result.status, reason: d.result.reason, selection: d.result.selection, blocked: prepared.blocked, decision_id: d.id }); if (d.result.status !== "serial") process.exitCode = 2; return; }

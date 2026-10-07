@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -284,7 +284,7 @@ test("blocked model decision and missing provider key recover in the same SQLite
   writeFileSync(configFile, JSON.stringify(config("unsupported-model")));
   writeFileSync(inputFile, JSON.stringify({ version: 1, cwd: root, goal: "Review a frozen contract", owner: { id: "parent", adapter: "codex", work: "Editing src", reads: ["src"], writes: ["src"] }, external: [], authorization: { delegate: true, basis: "user authorized review" }, tasks: [{ key: "review", prompt: "Review a.md", deliverable: "findings", acceptance: ["cite findings"], reads: ["a.md"], writes: [], depends_on: [] }] }));
   const args = ["--preload", join(import.meta.dir, "fixtures/mock-jev.ts"), cliFile, "plan", "--scope", scope, "--db", db, "--config", configFile];
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, OPENROUTER_API_KEY: "test-only", MOCK_JEV_COUNT_FILE: jevCount };
+  const env = { ...process.env, HOME: root, PATH: `${bin}:${process.env.PATH}`, OPENROUTER_API_KEY: "test-only", MOCK_JEV_COUNT_FILE: jevCount };
   const call = (extra: string[], override = env) => spawnSync(process.execPath, [...args, ...extra], { cwd: root, env: override, encoding: "utf8", timeout: 12_000 });
   const blocked = call(["--input", inputFile]);
   expect(blocked.status).toBe(2);
@@ -293,7 +293,14 @@ test("blocked model decision and missing provider key recover in the same SQLite
   const noKey = call([], { ...env, OPENROUTER_API_KEY: "" });
   expect(noKey.status).toBe(2);
   expect(JSON.parse(noKey.stdout).error.code).toBe("missing_api_key");
-  const recovered = call([]);
+  const keyFile = join(root, ".config", "agent-dispatch", "openrouter.key");
+  mkdirSync(join(root, ".config", "agent-dispatch"), { recursive: true });
+  writeFileSync(keyFile, "file-key\n", { mode: 0o644 });
+  const exposedKey = call([], { ...env, OPENROUTER_API_KEY: "" });
+  expect(exposedKey.status).toBe(2);
+  expect(JSON.parse(exposedKey.stdout).error.code).toBe("insecure_api_key_file");
+  chmodSync(keyFile, 0o600);
+  const recovered = call([], { ...env, OPENROUTER_API_KEY: "" });
   expect(recovered.status).toBe(0);
   expect(JSON.parse(recovered.stdout).status).toBe("selected");
   expect(readFileSync(jevCount, "utf8").trim().split("\n")).toHaveLength(1);

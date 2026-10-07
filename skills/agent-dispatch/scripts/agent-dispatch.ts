@@ -231,7 +231,7 @@ await runCli(async () => {
       if (assessment.request) {
         const record = { id: randomUUID(), request: assessment.request, status: "intent", response: undefined as unknown };
         state.classification_runs.push(record); save();
-        try { response = await callJev(assessment.request, { apiKey: process.env.OPENROUTER_API_KEY, timeoutMs: jevTimeoutMs }); record.response = response; record.status = "confirmed"; Object.assign(state.assessments, resolveAssessment(assessment, response).assessments); save(); }
+        try { response = await callJev(assessment.request, { timeoutMs: jevTimeoutMs }); record.response = response; record.status = "confirmed"; Object.assign(state.assessments, resolveAssessment(assessment, response).assessments); save(); }
         catch (error) { record.status = "failed"; state.public_failure = { input_hash: hash(batch), config_hash: hash(config), stage: "classification", code: error instanceof CliError ? error.code : "jev_failed" }; save(); throw error; }
       }
       const runtime = await taskRuntime(config, [...externalAgents(merged, config), ...cross.agents]);
@@ -239,7 +239,7 @@ await runCli(async () => {
       const d: Decision = { id: randomUUID(), created_at: new Date().toISOString(), input_hash: hash(batch), prepared, result: { status: "pending", assignments: [] }, assessment_request: assessment.request, assessment_response: response, wave_response: null };
       state.decisions.push(d); save();
       try {
-        d.wave_response = prepared.request ? await callJev(prepared.request, { apiKey: process.env.OPENROUTER_API_KEY, timeoutMs: jevTimeoutMs }) : null;
+        d.wave_response = prepared.request ? await callJev(prepared.request, { timeoutMs: jevTimeoutMs }) : null;
         const selected = prepared.waves.length === 1 && prepared.waves[0].assignments.length === 1;
         const mode = selected ? merged.tasks.find((t) => t.key === prepared.waves[0].assignments[0].task_id)?.mode : undefined;
         d.result = resolveWave(prepared, d.wave_response, selected ? waveConfidenceThreshold(prepared, mode ?? "oneshot") : 0.8); save();
