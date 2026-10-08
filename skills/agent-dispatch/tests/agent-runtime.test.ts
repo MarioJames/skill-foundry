@@ -58,6 +58,28 @@ async function isolated(work: (d: string) => Promise<void>) {
     rmSync(d, { recursive: true, force: true });
   }
 }
+test("Claude uses the native Herdr start/prompt path and retains writes until parent acceptance", async () =>
+  isolated(async (d) => {
+    const a = attempt(d), calls: string[][] = [];
+    a.binding.launch = { kind: "claude", argv: ["--model", "opus", "--permission-mode", "bypassPermissions", "--effort", "high"] };
+    const run = async (argv: string[]) => {
+      calls.push(argv);
+      const r = info(); r.result.agent.agent = "claude"; return r;
+    };
+    const io = transport("parent", "label", run, async () => { throw Error("Codex composer must not be read"); });
+    const started = await io.start(a);
+    expect(started.model_evidence).toEqual({ mode: "launch_only", readback: null });
+    expect(calls[0]).toContain("claude");
+    const args = calls[0].slice(calls[0].indexOf("--") + 1);
+    expect(args).toEqual(["--model", "opus", "--permission-mode", "bypassPermissions", "--effort", "high"]);
+    await io.submit(a);
+    expect(calls.filter((x) => x[2] === "prompt")).toHaveLength(1);
+    writeFileSync(a.result_path, JSON.stringify({ attempt_id: a.id, task_id: "date", task_revision: 2, status: "completed", summary: "verified", artifact_refs: ["file"] }));
+    await observeAttempt(a, run);
+    expect(a.phase).toBe("finished");
+    expect(a.slot).toBe("released");
+    expect(a.writes_held).toBe(true);
+  }));
 test("idle is not completion; mismatched result or reused session retains reservation", async () =>
   isolated(async (d) => {
     const a = attempt(d);

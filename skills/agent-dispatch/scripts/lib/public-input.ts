@@ -3,9 +3,10 @@ import { dirname, isAbsolute, parse, resolve, relative, sep } from "node:path";
 import { CliError } from "./cli";
 import { hash, validateBatch, type Batch, type Task } from "./scheduling";
 import type { State } from "./dispatch-state";
+import type { Adapter } from "./agent-engines";
 
 export type Issue = { path: string; expected: string; received: string; next_step: string };
-type Access = { id: string; adapter: "codex" | "qodercli" | "other"; reads: string[] | null; writes: string[] | null; work?: string };
+type Access = { id: string; adapter: Adapter | "other"; reads: string[] | null; writes: string[] | null; work?: string };
 type PublicTask = { key: string; revision: number; prompt: string; deliverable: string; acceptance: string[]; reads: string[] | null; writes: string[] | null; depends_on: string[] | null; mode: "oneshot" | "persistent"; blockers: string[]; cancelled?: boolean; complexity?: "ordinary" | "moderate" | "complex"; assessment_evidence?: string };
 export type PublicContext = { version: 1; cwd: string; goal: string; constraints: string[]; owner: Access; external: Access[] | null; authorization: { delegate: boolean; basis: string }; tasks: PublicTask[] };
 
@@ -51,7 +52,7 @@ export function validatePublicInput(raw: unknown): { input?: Omit<PublicContext,
     if (!object(v)) { add(p, "object", v); v = {}; }
     const x = v as Record<string, any>;
     if (!safeAccessId(x.id)) add(`${p}/id`, "safe caller or pane identifier", x.id);
-    if (!["codex", "qodercli", "other"].includes(x.adapter)) add(`${p}/adapter`, "codex | qodercli | other", x.adapter);
+    if (!["codex", "qodercli", "claude", "other"].includes(x.adapter)) add(`${p}/adapter`, "codex | qodercli | claude | other", x.adapter);
     const reads = strings(x.reads, `${p}/reads`, true), writes = strings(x.writes, `${p}/writes`, true);
     return { id: x.id, adapter: x.adapter, reads, writes, ...(typeof x.work === "string" ? { work: x.work } : {}) };
   };

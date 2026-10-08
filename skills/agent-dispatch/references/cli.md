@@ -1,6 +1,6 @@
 # 统一调度 CLI
 
-从技能目录执行 `bun scripts/agent-dispatch.ts --help`；正常使用只需 `run → status → accept`。本页是公共输入与恢复边界，`examples/` 和旧的 `run-task.ts/decide-tasks.ts/dispatch-tasks.ts` 是内部协议参考，不是调用前置条件。需要 Bun、Codex CLI；选中 Herdr 路径时还需 Herdr CLI。`agents.json` 仍只从 `~/.config/agent-dispatch/agents.json` 或显式 `--config` 加载，Jev 优先使用调用者环境中的 `OPENROUTER_API_KEY`，未设置时读取 `~/.config/agent-dispatch/openrouter.key`（须为 600，仅一行密钥）。
+从技能目录执行 `bun scripts/agent-dispatch.ts --help`；正常使用只需 `run → status → accept`。本页是公共输入与恢复边界，`examples/` 和旧的 `run-task.ts/decide-tasks.ts/dispatch-tasks.ts` 是内部协议参考，不是调用前置条件。需要 Bun 与选中引擎的 CLI；选中 Herdr 路径时还需 Herdr CLI 和同一技能根下的 `herdr` 技能。`agents.json` 仍只从 `~/.config/agent-dispatch/agents.json` 或显式 `--config` 加载，Jev 优先使用调用者环境中的 `OPENROUTER_API_KEY`，未设置时读取 `~/.config/agent-dispatch/openrouter.key`（须为 600，仅一行密钥）。
 
 ## 提交任务
 
@@ -40,6 +40,26 @@ JSON
 `owner` 描述当前实际工作和资源占用，`external` 包含尚未由此数据库跟踪的相关活动。读写与依赖的 `[]` 只表示已核实为空；未知写 `null` 或省略，CLI 作为阻塞处理。文件资源相对 `cwd`，CLI 会解析为可跨 scope 比较的绝对路径键，并处理已有路径的符号链接；数据库、服务、Redis、对象存储用 `db/`、`service/`、`redis/`、`bucket/` 前缀。旧版文件资源键仍有未决预留时，新准入会停下并要求先核实旧 attempt，不会把两种键混用。不把文件隔离当作外部数据隔离。当前任务还需明确授权、交付物和验收标准。可选 `mode: "persistent"` 选择 Herdr，缺省为 oneshot；有效引擎为非 Codex 时也走 Herdr。选中 Herdr 任务时追加 `--caller-pane ID --label 'MMDD｜FEA｜具体任务'`。
 
 后续直接运行 `run`，CLI 从 SQLite 读取当前事实。事实变化时只传变化部分，例如 `run --input -` 可接收 `{"owner":{"work":"正在验收结果"}}`；追加任务只传新的 `tasks`，修改已有任务可只传 `key`、`if_revision` 和变化字段。未重新提交的旧任务会保留；同 key、相同事实不增加 revision；改变事实必须提供 `if_revision` 为旧修订号。旧修订仍占用资源时，新修订不能重叠启动。取消的任务必须以新修订重新定义才能再次执行。后端执行 profile、内部任务结构、结果路径与初始 revision 由 CLI 负责。
+
+## Claude Code
+
+在所选 `agents.json` 的 `engines` 中声明 `"example-claude": {"adapter":"claude","max_parallel":1}`，再将任意 route 或完整 `manual_override` 指向它，例如：
+
+```json
+"manual_override": {
+  "engine_id": "example-claude",
+  "model": "opus",
+  "reasoning": { "mode": "effort", "value": "high" }
+}
+```
+
+`examples/agents.json` 默认简单任务为 `gpt-6.1-sol / medium`，中等为 `gpt-6.1-sol / high`，复杂为 `claude-opus-5-5 / high`；使用示例文件本身不会修改用户的全局配置。Claude 原生力度为 `low/medium/high/xhigh/max`；`engine_default` 省略 `--effort`，`ultracode` 属于工作流模式，不纳入力度合同。父任务和相关外部活动也可声明 `adapter: "claude"`，以占用同一引擎额度。
+
+只读探测运行 `claude --version` 与 CLI 的 Agent SDK `initialize`，读取实际 `models` 中的模型别名、`resolvedModel` 和 `supportedEffortLevels`。探测关闭 hooks、MCP 和会话持久化，不发送用户消息或执行模型任务，并回收自有进程；执行仍继承 CLI 的正常配置。目录列出的别名或解析后 ID 可使用；未列出的完整 ID、自定义模型及不可识别的元数据保持 unknown，不能凭字符串猜能力。指定 effort 不在该模型目录中时返回 unsupported，避免 Claude 自动降低力度。
+
+Claude 的 oneshot 和 persistent 都使用 Herdr：调用时提供 `--caller-pane ID --label 'MMDD｜FEA｜具体任务'`。启动按原生 `--model` / `--effort` 传参，读回证据保持 `launch_only`；目录不证明账号权限、当前额度或会话参数实际生效，启动固定传入用户授权的 `--permission-mode bypassPermissions`，保留原有 hooks、MCP 与项目配置。执行直接读取 Claude 现有 settings，不注入额外 `--settings`。Herdr 的原生 session 上报依赖已启用的官方 Claude integration；用 `herdr integration status` 检查，缺失或失效时先修复现有 integration。文件已安装不等于 hooks 已注册，实际 `agent get` 的 session 读回才是身份依据；未确认时交回父任务，不重放任务。继续用精确 attempt 的 `status → accept → cleanup` 核验交付和回收。
+
+原生参数与力度行为依据：[Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference)、[Model configuration](https://code.claude.com/docs/en/model-config)；初始化协议沿用 [Anthropic Agent SDK](https://github.com/anthropics/claude-agent-sdk-python/blob/main/src/claude_agent_sdk/_internal/query.py)。
 
 ## 收取、验收与异常
 

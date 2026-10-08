@@ -8,14 +8,14 @@ import { rpcCatalog, rpcProbe } from "./rpc-catalog";
 export function taskBatch(input: any, state: State, config: RoutingConfig): { batch: Batch; agents: Runtime["agents"] } {
   identifier(input.scope_id, "scope_id"); identifier(input.id, "id");
   if (input.parallel_evidence !== undefined) throw new CliError("jev_required", "run-task delegates parallel selection to Jev; parallel_evidence cannot bypass it");
-  if (!input.owner || !["codex", "qodercli", "other"].includes(input.owner.adapter))
+  if (!input.owner || !["codex", "qodercli", "claude", "other"].includes(input.owner.adapter))
     throw new CliError("owner_required", "Declare the parent adapter and its current read/write ownership");
   if (state.attempts.some((a) => a.task.id === input.id && a.task.revision === input.revision))
     throw new CliError("attempt_exists", "This task revision already has an attempt; observe it instead of replaying. Deliberate retries require a new revision after resolution.");
   const external = [input.owner, ...(input.external_agents ?? [])];
   const agents: Runtime["agents"] = external.map((x: any) => {
     textValue(x.id, "external id"); strings(x.reads, "external reads"); strings(x.writes, "external writes");
-    if (!["codex", "qodercli", "other"].includes(x.adapter)) throw new CliError("invalid_adapter", "External adapter must be declared");
+    if (!["codex", "qodercli", "claude", "other"].includes(x.adapter)) throw new CliError("invalid_adapter", "External adapter must be declared");
     return { pane_id: x.id, adapter: x.adapter === "other" ? undefined : x.adapter, engine_id: Object.keys(config.engines).find((k) => config.engines[k].adapter === x.adapter) ?? null, state: "working", ...(x.session_id ? { session_id: x.session_id } : {}) };
   });
   if (new Set(agents.map((x) => x.pane_id)).size !== agents.length) throw new CliError("duplicate_external", "External identities must be unique");

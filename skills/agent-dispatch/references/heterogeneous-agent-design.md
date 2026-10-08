@@ -45,7 +45,7 @@ type ExecutionProfile = {
 type RoutingConfig = {
   version: 1;
   engines: Record<string, {
-    adapter: "codex" | "qodercli";
+    adapter: "codex" | "qodercli" | "claude";
     max_parallel: number;
   }>;
   routes: Record<Complexity, ExecutionProfile>;
@@ -268,7 +268,7 @@ ExecutionAttempt 至少保存 attempt ID、task ID/revision、decision ID、冻�
 ```ts
 type Ref = string;
 type TaskKey = { id: string; revision: number };
-type LaunchSpec = { kind: "codex" | "qodercli"; argv: string[] };
+type LaunchSpec = { kind: "codex" | "qodercli" | "claude"; argv: string[] };
 type AcceptanceRecord = {
   task: TaskKey;
   attempt_id: string;

@@ -2,7 +2,7 @@
 
 > 历史底层入口说明。新调用使用 [统一 CLI](cli.md)；单项和批次都提供公共 `tasks` 输入，不需阅读本页的内部 JSON 合同。
 
-需要 Bun 与 Codex CLI。RPC 路径不要求安装 Herdr；持久或非 Codex 路径需要同一技能根下的 `herdr` 与其 CLI。`agents.json` 默认位于 `~/.config/agent-dispatch/agents.json`，也可通过 `--config` 指定。
+需要 Bun 与选中引擎的 CLI。Codex RPC 路径不要求安装 Herdr；持久或非 Codex 路径需要同一技能根下的 `herdr` 与其 CLI。`agents.json` 默认位于 `~/.config/agent-dispatch/agents.json`，也可通过 `--config` 指定。
 
 先按 `SKILL.md` 盘点未完成工作；这一步不需要创建 JSON 或状态文件。把当前工作、尚未推进的待办及积压问题一起交给 Jev 判断独立性与并行收益。只有一个待判断项时用本入口；多个待判断项用批次入口，不能先凭主观收益筛到只剩一项。
 

@@ -6,6 +6,12 @@ import { validateRoutingConfig } from "../scripts/lib/agent-engines";
 const config = validateRoutingConfig(JSON.parse(readFileSync(new URL("../examples/agents.json", import.meta.url), "utf8")));
 const input = () => JSON.parse(readFileSync(new URL("../examples/task.json", import.meta.url), "utf8"));
 const state = (): any => ({ version: 1, batch_id: null, assessments: {}, decisions: [], classification_runs: [], attempts: [] });
+test("Claude ownership consumes the configured engine capacity in single-task handoffs", () => {
+  const x = input(); x.owner.adapter = "claude";
+  const r = taskBatch(x, state(), config);
+  expect(r.agents[0].adapter).toBe("claude");
+  expect(r.agents[0].engine_id).toBe("example-claude");
+});
 test("native Herdr pane identity is an opaque reservation key", () => {
   const x = input(); x.owner.id = "w26:p6";
   const r = taskBatch(x, state(), config);

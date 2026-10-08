@@ -40,9 +40,11 @@ description: 父任务首次收到多项需求、收到追加或变更指令、�
 | --- | --- |
 | 有界一次性交付，有效引擎为 Codex | 独占 `codex app-server` 的 JSON-RPC runner，交付后自动终止自有执行资源 |
 | 要持续多轮交互、保留终端或运行服务 | `herdr` 技能的持久 tab/pane，按原生 profile 启动，按需要复用 |
-| 有效引擎为非 Codex（包括 Qoder override） | 现有 Herdr adapter；不可用时回父任务，不暗改成 Codex |
+| 有效引擎为非 Codex（Qoder 或 Claude Code，包括 override） | 现有 Herdr adapter；不可用时回父任务，不暗改成 Codex |
 
 按交互和资源需求判断长程，不用耗时阈值切换路径。一次性终端命令的 Herdr `oneshot` lane 与后台 LLM 任务是不同入口。
+
+Claude Code 配置使用 `adapter: "claude"`，模型与原生 effort 组合由 CLI 实际模型目录核实，启动使用 `--model` / `--effort`，并按用户授权固定 `--permission-mode bypassPermissions`。hooks、MCP 和项目配置仍沿用 CLI。配置示例、目录探测边界和未支持组合的处理见 [统一 CLI](references/cli.md#claude-code)。
 
 ## 后台交付与收尾
 
@@ -50,7 +52,7 @@ description: 父任务首次收到多项需求、收到追加或变更指令、�
 
 统一 CLI 将所有 scope 持久保存在用户级 `~/.config/agent-dispatch/state.sqlite`；已解析的 Herdr 父会话自动生成 scope，其他入口显式提供 `--scope ID`。每次输出 scope，续谈和交接沿用它。RPC 与 Herdr attempts 共用状态；不同 scope 的未决任务参与同一数据库的容量与写入检查。父任务显式声明自己的活动和相关外部活动的真实读写范围；缺失不能视为已确认无访问。资源声明不是 OS 隔离，也不保证与旧脚本或其他独立调度器的全局事务。unknown 持续占用，不能另建 scope 绕过。
 
-runner 自行处理协议、审批退出、超时、取消、终态和进程回收。它只允许 read-only/workspace-write 与 never 审批；需要新增审批或交互时返回 needs_owner，不自动批准。父任务把权限限制和验收标准写进交接；子进程配置继承不代表新的授权。
+RPC runner 自行处理协议、审批退出、超时、取消、终态和进程回收。它只允许 read-only/workspace-write 与 never 审批；需要新增审批或交互时返回 needs_owner，不自动批准。父任务把权限限制和验收标准写进交接；子进程配置继承不代表新的授权。
 
 执行完成与验收分开：观察精确 attempt 的结果与 cleanup，再验证产物，accept 后才能解锁依赖和移交写入权。失败/取消/未知结果需检查部分写入并显式 resolve；重复消息不重放同一 revision。不能以进程退出、Agent 空闲或自报成功代替验收。
 

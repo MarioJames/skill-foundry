@@ -3,8 +3,10 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { CliError } from "./cli";
+import { claudeCatalog } from "./claude-catalog";
 
 export type Complexity = "ordinary" | "moderate" | "complex";
+export type Adapter = "codex" | "qodercli" | "claude";
 export type Reasoning =
   { mode: "effort"; value: string } | { mode: "engine_default" };
 export type ExecutionProfile = {
@@ -16,13 +18,13 @@ export type RoutingConfig = {
   version: 1;
   engines: Record<
     string,
-    { adapter: "codex" | "qodercli"; max_parallel: number }
+    { adapter: Adapter; max_parallel: number }
   >;
   routes: Record<Complexity, ExecutionProfile>;
   manual_override?: { route: Complexity } | ExecutionProfile | null;
   limits: { max_parallel: number };
 };
-export type LaunchSpec = { kind: "codex" | "qodercli"; argv: string[] };
+export type LaunchSpec = { kind: Adapter; argv: string[] };
 export type ProfileProbe = {
   status: "supported" | "unsupported" | "unknown";
   checked_at: string;
@@ -41,6 +43,7 @@ export type ProbeOptions = {
   now?: () => Date;
   /** Read-only test seam. Production uses the active CODEX_HOME model cache. */
   readCodexCatalog?: () => string;
+  readClaudeCatalog?: () => Promise<any[]>;
 };
 
 const ADAPTER_VERSION = "2";
@@ -51,6 +54,7 @@ const COMPLEXITIES: Complexity[] = ["ordinary", "moderate", "complex"];
 const NATIVE_EFFORTS = {
   codex: ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
   qodercli: ["auto", "none", "low", "medium", "high", "xhigh", "max"],
+  claude: ["low", "medium", "high", "xhigh", "max"],
 };
 function invalid(message: string): never {
   throw new CliError("invalid_config", message, 2);
@@ -143,8 +147,8 @@ export function validateRoutingConfig(value: unknown): RoutingConfig {
       invalid("engine ID must be a simple identifier");
     const e = object(raw, "engine");
     exact(e, ["adapter", "max_parallel"], "engine");
-    if (e.adapter !== "codex" && e.adapter !== "qodercli")
-      invalid("engine.adapter must be codex or qodercli");
+    if (e.adapter !== "codex" && e.adapter !== "qodercli" && e.adapter !== "claude")
+      invalid("engine.adapter must be codex, qodercli or claude");
     if (adapters.has(e.adapter))
       invalid("only one engine instance per adapter is supported");
     adapters.add(e.adapter);
@@ -227,13 +231,14 @@ export function buildLaunch(
   const p = validateProfile(c.engines, profile);
   const kind = c.engines[p.engine_id]!.adapter;
   const argv = ["--model", p.model];
+  if (kind === "claude") argv.push("--permission-mode", "bypassPermissions");
   if (p.reasoning.mode === "effort") {
     if (kind === "codex")
       argv.push(
         "-c",
         `model_reasoning_effort=${JSON.stringify(p.reasoning.value)}`,
       );
-    else argv.push("--reasoning-effort", p.reasoning.value);
+    else argv.push(kind === "claude" ? "--effort" : "--reasoning-effort", p.reasoning.value);
   }
   return { kind, argv };
 }
@@ -291,12 +296,24 @@ export async function probeProfile(
       .match(
         launch.kind === "codex"
           ? /^codex-cli (\d+\.\d+\.\d+)$/u
-          : /^(\d+\.\d+\.\d+)$/u,
+          : launch.kind === "claude" ? /^(\d+\.\d+\.\d+) \(Claude Code\)$/u : /^(\d+\.\d+\.\d+)$/u,
       );
     if (!match) return finish("unknown", "cli_version_unrecognized");
     result.cli_version = match[1]!;
     result.evidence.push(`${launch.kind} --version: ${result.cli_version}`);
-    if (launch.kind === "qodercli") {
+    if (launch.kind === "claude") {
+      const models = await (options.readClaudeCatalog ?? claudeCatalog)();
+      const matches = models.filter((m) => m.value === p.model || m.resolvedModel === p.model);
+      if (!matches.length) return finish("unknown", "model_not_in_catalog");
+      if (p.reasoning.mode === "effort") {
+        if (matches.every((m) => !m.supportsEffort)) return finish("unsupported", "model_effort_not_supported");
+        if (matches.some((m) => m.supportsEffort !== true || !Array.isArray(m.supportedEffortLevels) || !m.supportedEffortLevels.length || m.supportedEffortLevels.some((e: unknown) => typeof e !== "string"))) return finish("unknown", "model_efforts_unrecognized");
+        const effort = p.reasoning.value;
+        if (matches.some((m) => !m.supportedEffortLevels.includes(effort))) return finish("unsupported", "model_effort_not_supported");
+      }
+      result.evidence.push("catalog_only: Claude CLI SDK initialize models/resolvedModel and supportedEffortLevels; no user prompt, model execution, session readback or account authorization guarantee");
+      return finish("supported", "current_model_catalog");
+    } else if (launch.kind === "qodercli") {
       const models = await run(["qodercli", "--list-models"]);
       if (models.status !== 0) return finish("unknown", "model_listing_failed");
       const rows = models.stdout

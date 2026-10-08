@@ -22,22 +22,54 @@ const fixture = () => ({
     ordinary: {
       engine_id: "qoder",
       model: "Qwen3.8-Flash",
-      reasoning: { mode: "effort", value: "xhigh" },
+      reasoning: { mode: "effort" as const, value: "xhigh" },
     },
     moderate: {
       engine_id: "codex",
       model: "gpt-6-astra",
-      reasoning: { mode: "effort", value: "medium" },
+      reasoning: { mode: "effort" as const, value: "medium" },
     },
     complex: {
       engine_id: "codex",
       model: "gpt-6-astra",
-      reasoning: { mode: "effort", value: "high" },
+      reasoning: { mode: "effort" as const, value: "high" },
     },
   },
   limits: { max_parallel: 3 },
 });
 const now = () => new Date("2026-09-23T08:00:00Z");
+
+const claudeConfig = () => validateRoutingConfig({
+  ...fixture(),
+  engines: { ...fixture().engines, claude: { adapter: "claude", max_parallel: 1 } },
+  manual_override: { engine_id: "claude", model: "opus", reasoning: { mode: "effort", value: "high" } },
+});
+test("Claude routes and overrides preserve native model/effort argv and explicit defaults", () => {
+  const c = claudeConfig(), p = executionProfile(c, "ordinary");
+  expect(buildLaunch(c, p)).toEqual({ kind: "claude", argv: ["--model", "opus", "--permission-mode", "bypassPermissions", "--effort", "high"] });
+  expect(buildLaunch(c, { ...p, reasoning: { mode: "engine_default" } })).toEqual({ kind: "claude", argv: ["--model", "opus", "--permission-mode", "bypassPermissions"] });
+  for (const value of ["xhigh", "max"]) expect(buildLaunch(c, { ...p, reasoning: { mode: "effort", value } }).argv.slice(-2)).toEqual(["--effort", value]);
+  for (const value of ["ultracode", "auto", "none", "Extra High"]) expect(() => buildLaunch(c, { ...p, reasoning: { mode: "effort", value } })).toThrow(CliError);
+});
+test("Claude probes use live aliases/resolved IDs and model-specific effort metadata without fallback", async () => {
+  const c = claudeConfig(), p = executionProfile(c, "ordinary"), calls: string[][] = [];
+  const options = {
+    runner: async (args: string[]) => { calls.push(args); return { status: 0, stdout: "2.1.292 (Claude Code)", stderr: "" }; },
+    readClaudeCatalog: async () => [{ value: "opus", resolvedModel: "future-opus", supportsEffort: true, supportedEffortLevels: ["low", "high"] }, { value: "haiku" }],
+  };
+  expect((await probeProfile(c, p, options)).status).toBe("supported");
+  expect((await probeProfile(c, { ...p, model: "future-opus" }, options)).status).toBe("supported");
+  expect((await probeProfile(c, { ...p, reasoning: { mode: "effort", value: "xhigh" } }, options)).reason).toBe("model_effort_not_supported");
+  expect((await probeProfile(c, { ...p, model: "not-listed" }, options)).status).toBe("unknown");
+  expect((await probeProfile(c, { ...p, model: "haiku" }, options)).status).toBe("unsupported");
+  expect((await probeProfile(c, { ...p, model: "haiku", reasoning: { mode: "engine_default" } }, options)).status).toBe("supported");
+  expect(calls.every((x) => JSON.stringify(x) === '["claude","--version"]')).toBe(true);
+  const unknown = await probeProfile(c, p, { ...options, readClaudeCatalog: async () => [{ value: "opus", supportsEffort: true }] });
+  expect(unknown.status).toBe("unknown");
+  const failed = await probeProfile(c, p, { ...options, readClaudeCatalog: async () => { throw new Error("SECRET"); } });
+  expect(failed.status).toBe("unknown");
+  expect(JSON.stringify(failed)).not.toContain("SECRET");
+});
 
 test("manual override accepts a route or complete profile and can restore automatic routing", () => {
   for (const override of [{ route: "ordinary" }, fixture().routes.ordinary]) {

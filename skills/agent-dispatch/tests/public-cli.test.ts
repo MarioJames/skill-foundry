@@ -11,6 +11,15 @@ const temp = () => { const p = mkdtempSync(join(tmpdir(), "dispatch-public-test-
 afterEach(() => { for (const p of scratch.splice(0)) rmSync(p, { recursive: true, force: true }); });
 const request = (cwd: string): any => ({ version: 1, cwd, goal: "Review contract while parent edits another area", owner: { id: "parent", adapter: "codex", work: "Editing src while reviewing test evidence", reads: ["src"], writes: ["src"] }, external: [], authorization: { delegate: true, basis: "user authorized review" }, tasks: [{ key: "review", prompt: "Review frozen contract", deliverable: "findings", acceptance: ["cite the contract"], reads: ["contracts"], writes: [], depends_on: [] }] });
 
+test("Claude callers and external workers are accepted with their ownership intact", () => {
+  const x = request(temp()); x.owner.adapter = "claude";
+  x.external = [{ id: "worker", adapter: "claude", reads: ["docs"], writes: [] }];
+  const r = validatePublicInput(x);
+  expect(r.issues).toEqual([]);
+  expect(r.input!.owner.adapter).toBe("claude");
+  expect(r.input!.external![0].reads).toEqual(["docs"]);
+});
+
 test("public validation reports all bad fields with paths and preserves unknown ownership", () => {
   const root = temp(), input = request(root);
   input.tasks[0].reads = "contracts";
