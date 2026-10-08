@@ -34,3 +34,8 @@ skills/agent-dispatch/tests/*
 !skills/feature-acceptance/tests/
 skills/feature-acceptance/tests/*
 !skills/feature-acceptance/tests/accept.test.ts
+
+# Ship the real-VM lifecycle contract for clean Debian test machines.
+!skills/debian-testvm/tests/
+skills/debian-testvm/tests/*
+!skills/debian-testvm/tests/testvm.test.ts

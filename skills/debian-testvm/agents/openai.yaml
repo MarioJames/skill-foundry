@@ -1,0 +1,7 @@
+interface:
+  display_name: "Debian Test VM"
+  short_description: "按组件组合镜像，秒级拉起干净的 Debian 虚拟机并交付 SSH 地址与账号密码，验证脚本在全新系统上的可用性"
+  default_prompt: "使用 $debian-testvm 拉起一台干净的 Debian 测试虚拟机，交付 SSH 地址、用户名和密码，在其中验证脚本后按归属规则回收。"
+
+policy:
+  allow_implicit_invocation: true

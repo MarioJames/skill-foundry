@@ -1,0 +1,5 @@
+{
+  "requires": [],
+  "description": "Docker CE, Docker Buildx and Compose plugins, and Git from Docker's official apt repository",
+  "groups": ["docker"]
+}

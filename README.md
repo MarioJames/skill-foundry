@@ -67,6 +67,12 @@ Preparation makes one ordinary baseline copy when native reflinks are unavailabl
 
 See the [CoW workspace guide](skills/cow-workspace/SKILL.md) for preparation, returned working directories, Git bundle handoff, recovery, and guarded cleanup. Operational rules live in that skill; no duplicate global workspace rule is required.
 
+### `debian-testvm` — clean Debian VMs for script testing
+
+Boots disposable Debian Stable VMs on a Linux or WSL2 host with QEMU/KVM, from the official SHA512-verified cloud image. Images are composed on demand from components — the built-in `docker` (Docker CE, Compose plugin, Git) plus your own `image.json` + `provision.sh` directories in `~/.config/debian-testvm/images/` — as in `--image docker+nodejs`; every layer is cached and rebuilt only when its component changes. `debian` keeps the unmodified image. Each VM is a copy-on-write overlay with user-mode networking and one forwarded SSH port, so the host gets no bridges, firewall rules or daemons. `up` returns the SSH URL, user and password once cloud-init has finished; `reset` returns a VM to a clean disk in seconds.
+
+**Reach for it when** checking that install, deployment or maintenance scripts work on a fresh system. See the [skill guide](skills/debian-testvm/SKILL.md).
+
 ### `trigger-build-workflow` — safe commit, push, and optional build dispatch
 
 Executes explicitly selected commit, push, and build actions without inferring authorization from repository contents. The workflow detector validates channel, version, and changelog inputs only for a requested dispatch; ordinary commits and pushes do not require release metadata.
@@ -128,6 +134,7 @@ bunx skills add MarioJames/skill-foundry --skill public-acceptance
 bunx skills add MarioJames/skill-foundry --skill agent-dispatch
 bunx skills add MarioJames/skill-foundry --skill herdr
 bunx skills add MarioJames/skill-foundry --skill cow-workspace
+bunx skills add MarioJames/skill-foundry --skill debian-testvm
 bunx skills add MarioJames/skill-foundry --skill trigger-build-workflow
 bunx skills add MarioJames/skill-foundry --skill persistent-ssh-ops
 bunx skills add MarioJames/skill-foundry --skill provision-xray-hy2-node
@@ -153,6 +160,10 @@ fall back to a full copy per workspace. Prepare from a clean, committed reposito
 `node_modules` is included automatically. See the [preparation requirements](skills/cow-workspace/SKILL.md#prepare-once-create-as-needed)
 for extra dependency directories and unsupported layouts.
 
+`debian-testvm` requires a Linux x86_64 host with read/write `/dev/kvm`, `qemu-system-x86_64`, `qemu-img`, `tar`,
+`genisoimage` or `xorriso`, an OpenSSH client and `curl`. It does not install system packages;
+`bun skills/debian-testvm/scripts/testvm.ts doctor` reports what is missing.
+
 Bun 1.3 or newer runs the Agent-facing script and hook entrypoints. Installable resources under
 `assets/`, including the SSH zsh runtime, retain their target runtime; the Bun initializer installs
 that runtime with the required permissions. External tools keep their own runtime requirements.
@@ -172,7 +183,7 @@ cd skill-foundry
 mkdir -p ~/.agents/skills
 cp -R skills/asset-validation skills/browser-harness skills/feature-acceptance \
   skills/public-acceptance \
-  skills/agent-dispatch skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
+  skills/agent-dispatch skills/herdr skills/cow-workspace skills/debian-testvm skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
   skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.agents/skills/
 ```
@@ -185,7 +196,7 @@ cd skill-foundry
 mkdir -p ~/.claude/skills
 cp -R skills/asset-validation skills/browser-harness skills/feature-acceptance \
   skills/public-acceptance \
-  skills/agent-dispatch skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
+  skills/agent-dispatch skills/herdr skills/cow-workspace skills/debian-testvm skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
   skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.claude/skills/
 ```
@@ -200,6 +211,7 @@ test -f ~/.agents/skills/public-acceptance/scripts/cqt.ts
 test -f ~/.agents/skills/agent-dispatch/scripts/run-task.ts
 test -f ~/.agents/skills/herdr/scripts/route-lane.ts
 test -f ~/.agents/skills/cow-workspace/scripts/cow.ts
+test -f ~/.agents/skills/debian-testvm/scripts/testvm.ts
 test -f ~/.agents/skills/trigger-build-workflow/scripts/detect-build-workflow.ts
 test -f ~/.agents/skills/trigger-build-workflow/scripts/dispatch-build-workflow.ts
 test -f ~/.agents/skills/persistent-ssh-ops/SKILL.md
@@ -218,13 +230,13 @@ cd skill-foundry
 git pull
 rm -rf ~/.agents/skills/asset-validation \
   ~/.agents/skills/browser-harness ~/.agents/skills/feature-acceptance ~/.agents/skills/public-acceptance \
-  ~/.agents/skills/agent-dispatch ~/.agents/skills/herdr ~/.agents/skills/cow-workspace ~/.agents/skills/trigger-build-workflow \
+  ~/.agents/skills/agent-dispatch ~/.agents/skills/herdr ~/.agents/skills/cow-workspace ~/.agents/skills/debian-testvm ~/.agents/skills/trigger-build-workflow \
   ~/.agents/skills/persistent-ssh-ops ~/.agents/skills/provision-xray-hy2-node \
   ~/.agents/skills/changelog-writing ~/.agents/skills/awesome-presentation \
   ~/.agents/skills/repo-knowledge-graph ~/.agents/skills/tdd
 cp -R skills/asset-validation skills/browser-harness skills/feature-acceptance \
   skills/public-acceptance \
-  skills/agent-dispatch skills/herdr skills/cow-workspace skills/trigger-build-workflow skills/persistent-ssh-ops \
+  skills/agent-dispatch skills/herdr skills/cow-workspace skills/debian-testvm skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
   skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.agents/skills/
 ```
@@ -346,6 +358,12 @@ skill-foundry/
 │   │   ├── agents/
 │   │   ├── scripts/
 │   │   └── tests/
+│   ├── debian-testvm/
+│   │   ├── SKILL.md
+│   │   ├── agents/
+│   │   ├── assets/
+│   │   ├── scripts/
+│   │   └── tests/
 │   ├── trigger-build-workflow/
 │   │   ├── SKILL.md
 │   │   ├── agents/
@@ -390,6 +408,7 @@ Installable skill packages:
 - `skills/agent-dispatch/`
 - `skills/herdr/`
 - `skills/cow-workspace/`
+- `skills/debian-testvm/`
 - `skills/trigger-build-workflow/`
 - `skills/persistent-ssh-ops/`
 - `skills/provision-xray-hy2-node/`
@@ -424,6 +443,7 @@ bun test skills/browser-harness/tests
 bun test skills/feature-acceptance/tests
 bun test skills/public-acceptance/tests
 bun test skills/cow-workspace/tests # Requires Linux, fuse-overlayfs and /dev/fuse
+bun test skills/debian-testvm/tests # Requires /dev/kvm, QEMU, the fetched debian image and a built docker image
 bun test skills/herdr/tests skills/agent-dispatch/tests
 bun test skills/trigger-build-workflow/tests
 bun test skills/persistent-ssh-ops/tests
@@ -446,6 +466,7 @@ the affected scenarios again.
 bun skills/herdr/scripts/route-lane.ts --help
 bun skills/agent-dispatch/scripts/decide-tasks.ts --input skills/agent-dispatch/examples/jev-batch.json --config skills/agent-dispatch/examples/agents.json --dry-run
 bun skills/cow-workspace/scripts/cow.ts --help
+bun skills/debian-testvm/scripts/testvm.ts --help
 bun skills/herdr/scripts/probe-workspace.ts --help
 bun skills/trigger-build-workflow/scripts/detect-build-workflow.ts --help
 bun skills/trigger-build-workflow/scripts/dispatch-build-workflow.ts --help
