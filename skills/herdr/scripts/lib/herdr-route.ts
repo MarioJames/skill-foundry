@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
+import { ancestorPids, ownsPane } from "./caller-identity";
 
 export type LaneType = "oneshot" | "service" | "coding-agent";
 export type LaneScope = "same-task" | "independent";
@@ -216,6 +217,17 @@ export async function resolveCaller(paneId?: string): Promise<ResourceIds> {
   };
   if (!caller.workspaceId || !caller.tabId || !caller.paneId) {
     throw new CliError("invalid_caller", "Could not resolve caller pane context");
+  }
+  if (paneId && caller.paneId !== paneId) {
+    throw new CliError("invalid_caller", "Herdr returned a different pane than explicitly requested");
+  }
+  // Explicit IDs are supplied by the owner/handoff. Automatic discovery must
+  // prove process ownership: --current may use stale env IDs or focused panes.
+  if (!paneId) {
+    const info = await herdr("pane", "process-info", "--pane", caller.paneId);
+    if (!ownsPane(caller.paneId, info?.result?.process_info, ancestorPids())) {
+      throw new CliError("unverified_caller", "Candidate pane does not own this process; skip automatic naming/routing. Inherited IDs and focus are not ownership evidence.");
+    }
   }
   return caller;
 }

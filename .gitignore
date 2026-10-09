@@ -17,6 +17,7 @@ skills/asset-validation/tests/*
 # Keep unrelated local Herdr fixtures private.
 !skills/herdr/tests/
 skills/herdr/tests/*
+!skills/herdr/tests/caller-identity.test.ts
 
 # Ship the public DEV discovery and foreground lifecycle contract.
 !skills/public-acceptance/tests/

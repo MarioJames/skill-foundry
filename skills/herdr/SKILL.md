@@ -5,7 +5,7 @@ description: 在会话开始或主任务变化时命名当前 Herdr 标签页，
 
 # Herdr
 
-At conversation start or a main-task change, resolve the caller and name its tab as soon as the task is clear, before substantive task work or a final answer. This applies to read-only questions and evaluations as well as implementation; neither an explicit Herdr request nor a need for parallel work is required. Use the CLI result to establish availability, not inherited environment variables; if the caller cannot be resolved, continue the task without naming.
+At conversation start or a main-task change, resolve the caller and name its tab as soon as the task is clear, before substantive task work or a final answer. This applies to read-only questions and evaluations as well as implementation; neither an explicit Herdr request nor a need for parallel work is required. Use the CLI result to establish availability, but require process ownership to establish identity; if the caller cannot be verified, continue the task without naming.
 
 Herdr owns terminal operations and tab naming. Task decomposition, parallel decisions, model routing and acceptance policy belong to `agent-dispatch`; load it when deciding whether or how to delegate. A terminal command may still use a `oneshot` lane; bounded Codex worker tasks default to the independent skill's RPC runner.
 
@@ -16,7 +16,7 @@ When the task is clear, automatically give your tab a short, concrete task label
 - Set the label directly from the current task, regardless of the existing name or who set it. Do not add a name-preservation check or ask for confirmation. The user can manually change it afterward.
 - Determine delegation from the task's explicit handoff context, not focus, pane count, or the CLI's Agent kind. The creator owns initial naming of a new destination tab before handing off work; include your tab ID, the destination IDs, and naming ownership in the handoff. A delegate sharing its parent's tab leaves naming to the parent; a delegate in a separate tab checks the assigned task label and owns later task changes. If a delegated task lacks this context, resolve the parent's tab or naming assignment before renaming; continue the assigned work if that cannot be resolved.
 
-1. Run `herdr pane current --current` and read `result.pane.tab_id` to locate yourself, regardless of which pane the user has focused. If the caller cannot be resolved, skip naming; do not fall back to the focused tab.
+1. Run `bun <skill-dir>/scripts/resolve-caller.ts` and use `caller.tabId` only on success. The resolver checks that a foreground PID of the candidate pane is an OS ancestor of its process. Raw `herdr pane current --current` is only a candidate lookup: this CLI can return an inherited stale pane ID or fall back to focus. Matching `HERDR_*`, `CODEX_THREAD_ID`, Agent kind, or cwd alone does not prove ownership; a long-lived host can inherit all of them from another Agent. On failure or unavailable process evidence, skip naming. Do not retry with environment IDs removed, search by title/cwd, or substitute a focused pane. An explicit destination ID from the current task owner is valid only for that delegated destination, not proof of the caller’s own tab.
 2. Run `herdr tab get <tab_id>` and read `result.tab.label`. Respect the delegation ownership above; skip the write if the desired label already matches.
 3. Run `herdr tab rename <tab_id> '<task label>'`, passing the label as one safely quoted argument. Read the tab back and verify `result.tab.label` matches. If naming fails, report it briefly and continue the task.
 
@@ -36,6 +36,6 @@ Pass the task label with `--label`. Before returning success, the router reads b
 
 If naming or readiness verification fails, the router rolls back only its newly created resource and reports failure. If rollback fails, it reports the exact cleanup command; inspect that resource and retry its cleanup without closing an existing workspace, parent tab, or caller pane.
 
-Resolve the caller with `herdr pane current --current` and carry explicit IDs through routing and cleanup. Actual CLI responses determine availability; inherited `HERDR_*` variables do not. Keep the user's focus unless asked to switch.
+Resolve the caller with `scripts/resolve-caller.ts` and carry verified IDs through routing and cleanup. Automatic lane routing uses the same ownership check. Use `--caller-pane` only for an explicit owner-authorized anchor from the current task/handoff; never copy an environment ID or failed candidate into it to bypass verification. Actual CLI responses determine availability; inherited `HERDR_*` variables do not establish ownership. Keep the user's focus unless asked to switch.
 
 Consult the installed CLI's relevant group help for Agent start, prompt, wait, reads, or concrete failures. Use the returned cleanup command for each lane and inspect failures before choosing recovery.
