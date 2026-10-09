@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import {
-  accessSync, chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync,
+  chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync,
   readdirSync, renameSync, rmSync, writeFileSync, writeSync,
 } from "node:fs";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -9,6 +9,7 @@ import { createConnection, createServer } from "node:net";
 import { homedir } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { doctor } from "./lib/host-runtime.ts";
 
 const help = `Usage: bun testvm.ts <command> [options]
 
@@ -157,29 +158,6 @@ function parseSize(size: string, label: string) {
   const match = /^(\d+)([KMGT]?)$/i.exec(size);
   if (!match) fail(`${label} must look like 20G`);
   return Number(match[1]) * 1024 ** "_KMGT".indexOf((match[2] || "_").toUpperCase());
-}
-
-function kvmUsable() {
-  try { accessSync("/dev/kvm", constants.R_OK | constants.W_OK); return true; } catch { return false; }
-}
-
-function doctor() {
-  const tools = Object.fromEntries(["qemu-system-x86_64", "qemu-img", "ssh", "scp", "ssh-keygen", "curl", "tar"]
-    .map((tool) => [tool, Bun.which(tool) ?? null]));
-  const isoTool = Bun.which("genisoimage") ?? Bun.which("xorriso");
-  const user = process.env.USER ?? "";
-  const kvmMembers = readFileSync("/etc/group", "utf8").split("\n").find((line) => line.startsWith("kvm:"))?.split(":")[3]?.split(",") ?? [];
-  const problems: string[] = [];
-  if (process.platform !== "linux" || process.arch !== "x64") problems.push("Linux x86_64 host required");
-  if (!existsSync("/dev/kvm")) problems.push("/dev/kvm is missing; enable (nested) hardware virtualization");
-  else if (!kvmUsable()) {
-    problems.push(kvmMembers.includes(user)
-      ? "kvm group membership is not active in this login; start a new login session (WSL: wsl --shutdown)"
-      : "no read/write access to /dev/kvm; add the user to the kvm group");
-  }
-  for (const [tool, path] of Object.entries(tools)) if (!path) problems.push(`${tool} not found`);
-  if (!isoTool) problems.push("genisoimage or xorriso not found");
-  return { ok: problems.length === 0, kvm: kvmUsable(), tools: { ...tools, iso: isoTool ?? null }, problems };
 }
 
 function requireRuntime() {

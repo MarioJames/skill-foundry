@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -13,8 +14,78 @@ import { SQLiteStateStore } from "../scripts/lib/sqlite-state";
 import type { Decision } from "../scripts/lib/dispatch-state";
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const cliFile = resolve(import.meta.dir, "../scripts/agent-dispatch.ts");
+
+function processToken(pid: number): string | undefined {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    return fields[0] === "Z" ? undefined : fields[19];
+  } catch (error) {
+    if (["ENOENT", "ESRCH"].includes((error as NodeJS.ErrnoException).code ?? "")) return undefined;
+    throw error;
+  }
+}
+
+async function cleanupFixture(root: string) {
+  // The test can throw/timeout before its explicit cancellation. Read only its
+  // own databases and keep their result records until every owned process stops.
+  const attempts: any[] = [];
+  for (const file of readdirSync(root).filter((file) => file.endsWith(".sqlite"))) {
+    const db = new Database(join(root, file), { readonly: true });
+    try {
+      const rows = db.query("SELECT state_json FROM scopes").all() as { state_json: string }[];
+      attempts.push(...rows.flatMap((row) => JSON.parse(row.state_json).attempts));
+    } finally { db.close(); }
+  }
+  const owned = new Map<number, string>();
+  const remember = (pid: number | undefined, expected?: string) => {
+    if (!pid) return;
+    const token = processToken(pid);
+    if (!token || (expected && token !== expected)) return;
+    let cwd: string, argv: string[];
+    try {
+      cwd = readlinkSync(`/proc/${pid}/cwd`);
+      argv = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
+    } catch (error) {
+      if (["ENOENT", "ESRCH"].includes((error as NodeJS.ErrnoException).code ?? "")) return;
+      throw error;
+    }
+    if (cwd !== root || processToken(pid) !== token || !argv.some((arg) => arg === cliFile || arg === join(import.meta.dir, "fixtures/mock-codex-cli.ts"))) return;
+    owned.set(pid, token);
+  };
+  const rememberServers = () => {
+    for (const a of attempts) {
+      if (a.backend !== "rpc" || a.binding.task.execution.cwd !== root) continue;
+      const file = `${a.result_path}.rpc.json`;
+      if (!existsSync(file)) continue;
+      const result = JSON.parse(readFileSync(file, "utf8"));
+      if (result.attempt_id === a.id) remember(result.server_pid);
+    }
+  };
+  for (const a of attempts) {
+    if (a.backend !== "rpc" || a.binding.task.execution.cwd !== root || !a.runner_start_ticks) continue;
+    remember(a.runner_pid, a.runner_start_ticks);
+    const token = owned.get(a.runner_pid);
+    if (a.runner_pid && token && processToken(a.runner_pid) === token) {
+      try { process.kill(a.runner_pid, "SIGTERM"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+    }
+  }
+  rememberServers();
+  const active = () => [...owned].filter(([pid, token]) => processToken(pid) === token);
+  const deadline = Date.now() + 1500;
+  while (active().length && Date.now() < deadline) await Bun.sleep(25);
+  // Catch a server recorded during graceful cancellation before escalating.
+  rememberServers();
+  for (const [pid] of active()) {
+    try { process.kill(pid, "SIGKILL"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+  }
+  const stoppedBy = Date.now() + 1000;
+  while (active().length && Date.now() < stoppedBy) await Bun.sleep(25);
+  if (active().length) throw new Error(`Fixture processes still active; retained ${root}`);
+  rmSync(root, { recursive: true, force: true });
+}
+afterEach(async () => { for (const root of roots.splice(0)) await cleanupFixture(root); });
 
 test("frozen two-task wave starts separate RPC runners and needs parent acceptance", async () => {
   const root = mkdtempSync(join(tmpdir(), "dispatch-cli-")); roots.push(root);
@@ -134,7 +205,7 @@ test("accepting one wave member schedules a newly unlocked task while its peer s
   }
   expect(stopped).toBe(true);
   store.close();
-});
+}, 15_000);
 
 test("ordinary run uses one Jev decision and identical submission reuses it", async () => {
   const root = mkdtempSync(join(tmpdir(), "dispatch-run-")); roots.push(root);

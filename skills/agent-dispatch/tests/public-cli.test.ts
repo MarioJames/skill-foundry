@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { SQLiteStateStore } from "../scripts/lib/sqlite-state";
 import { buildPublicBatch, contextBlockers, expandPublicPatch, mergePublicContext, validatePublicInput } from "../scripts/lib/public-input";
 import { conflicts } from "../scripts/lib/scheduling";
@@ -10,6 +11,29 @@ const scratch: string[] = [];
 const temp = () => { const p = mkdtempSync(join(tmpdir(), "dispatch-public-test-")); scratch.push(p); return p; };
 afterEach(() => { for (const p of scratch.splice(0)) rmSync(p, { recursive: true, force: true }); });
 const request = (cwd: string): any => ({ version: 1, cwd, goal: "Review contract while parent edits another area", owner: { id: "parent", adapter: "codex", work: "Editing src while reviewing test evidence", reads: ["src"], writes: ["src"] }, external: [], authorization: { delegate: true, basis: "user authorized review" }, tasks: [{ key: "review", prompt: "Review frozen contract", deliverable: "findings", acceptance: ["cite the contract"], reads: ["contracts"], writes: [], depends_on: [] }] });
+
+test("automatic scope follows the calling Codex thread without relying on Herdr session reporting", () => {
+  const root = temp(), bin = join(root, "bin"); mkdirSync(bin);
+  const native = "fixture-codex-thread";
+  writeFileSync(join(bin, "herdr"), `#!${process.execPath}\nconsole.log(JSON.stringify({result:{pane:{pane_id:'unrelated',tab_id:'focused',agent_session:{value:process.env.TEST_NATIVE_SESSION}}}}));\n`, { mode: 0o700 });
+  const cli = resolve(import.meta.dir, "../scripts/agent-dispatch.ts");
+  const call = (values: Record<string, string>, explicit: string[] = []) => {
+    const r = Bun.spawnSync([process.execPath, cli, "status", "--cached", "--db", join(root, "state.sqlite"), ...explicit], {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CODEX_THREAD_ID: "", CODEX_SESSION_ID: "", TEST_NATIVE_SESSION: "", ...values },
+      stdout: "pipe", stderr: "pipe",
+    });
+    return { code: r.exitCode, value: JSON.parse(r.stdout.toString()) };
+  };
+  const expected = `session-${createHash("sha256").update(native).digest("hex").slice(0, 24)}`;
+  expect(call({ TEST_NATIVE_SESSION: native })).toMatchObject({ code: 0, value: { scope: expected } });
+  expect(call({ CODEX_THREAD_ID: native })).toMatchObject({ code: 0, value: { scope: expected } });
+  expect(call({ CODEX_SESSION_ID: native })).toMatchObject({ code: 0, value: { scope: expected } });
+  // The runtime identity belongs to this caller; a focused/unrelated Herdr pane cannot replace it.
+  expect(call({ CODEX_THREAD_ID: native, TEST_NATIVE_SESSION: "other-pane-session" })).toMatchObject({ code: 0, value: { scope: expected } });
+  expect(call({ CODEX_THREAD_ID: native, CODEX_SESSION_ID: "different-thread" })).toMatchObject({ code: 2, value: { error: { code: "caller_session_mismatch" } } });
+  expect(call({})).toMatchObject({ code: 2, value: { error: { code: "missing_scope" } } });
+  expect(call({ CODEX_THREAD_ID: native, CODEX_SESSION_ID: "different-thread" }, ["--scope", "chosen"])).toMatchObject({ code: 0, value: { scope: "chosen" } });
+});
 
 test("Claude callers and external workers are accepted with their ownership intact", () => {
   const x = request(temp()); x.owner.adapter = "claude";

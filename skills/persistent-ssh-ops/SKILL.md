@@ -13,6 +13,8 @@ Open one TTY-backed SSH session per target host and reuse it for the complete re
 
 When the user requests initialization or an update of the local server profiles, use [profile-setup.md](references/profile-setup.md). Ordinary remote work uses existing profiles or OpenSSH aliases without changing local shell configuration.
 
+Named server profiles use zsh on Debian/Linux as well as macOS. The bundled runtime requires `zsh`; profile discovery loads the configured login shell, which must be zsh with the initializer's `.zshrc` source block for these profiles. Inspect `command -v zsh` and the configured shell first; changing the login shell or installing zsh requires authorization.
+
 ## Discover and resolve the target
 
 Before selecting or resolving a target, run the bundled scanner:

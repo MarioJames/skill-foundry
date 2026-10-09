@@ -26,7 +26,7 @@ Commands:
   resolve --attempt ID --outcome OUTCOME --evidence TEXT [--server-stopped]  Reconcile stopped/unknown work
   cleanup --attempt ID --caller-pane PANE  Release an accepted/resolved owned Herdr lane
 
-Scope defaults to a verified current Herdr parent session; otherwise pass --scope ID. State defaults to ${defaultDatabase()}.
+Scope defaults to the calling Codex thread/session ID, or a verified current Herdr parent session; otherwise pass --scope ID. State defaults to ${defaultDatabase()}.
 --input - reads bounded JSON from stdin; FILE uses the same public schema. No internal Batch JSON.
 First run supplies task facts once. Later run/check/plan read SQLite directly; --input may contain only changed fields or new tasks.
 Input: {"version":1,"cwd":"/absolute/repo","goal":"goal","owner":{"id":"parent","adapter":"codex","work":"Editing src while contract is frozen","reads":["src"],"writes":["src"]},"external":[],"authorization":{"delegate":true,"basis":"user request"},"tasks":[{"key":"review","prompt":"Review the contract","deliverable":"findings","acceptance":["cite concrete findings"],"reads":["contracts"],"writes":[],"depends_on":[]}]}
@@ -163,11 +163,16 @@ await runCli(async () => {
   if (!Number.isSafeInteger(jevTimeoutMs) || jevTimeoutMs < 1_000 || jevTimeoutMs > 120_000) throw new CliError("invalid_argument", "--jev-timeout-ms must be 1000..120000", 2);
   let scope = f.get("--scope") as string | undefined;
   if (!scope && action !== "worker") {
-    try {
-      const pane = (await command(["herdr", "pane", "current", "--current"]))?.result?.pane;
-      const session = pane?.agent_session?.value;
-      if (typeof session === "string" && session) scope = `session-${createHash("sha256").update(session).digest("hex").slice(0, 24)}`;
-    } catch {}
+    const runtimeSessions = [...new Set([process.env.CODEX_THREAD_ID, process.env.CODEX_SESSION_ID].map((id) => id?.trim()).filter((id): id is string => !!id))];
+    if (runtimeSessions.length > 1) throw new CliError("caller_session_mismatch", "Calling Codex thread/session identities disagree; inspect the caller or pass --scope ID", 2);
+    let session: unknown = runtimeSessions[0];
+    if (!session) {
+      try {
+        const pane = (await command(["herdr", "pane", "current", "--current"]))?.result?.pane;
+        session = pane?.agent_session?.value;
+      } catch {}
+    }
+    if (typeof session === "string" && session.trim()) scope = `session-${createHash("sha256").update(session.trim()).digest("hex").slice(0, 24)}`;
   }
   if (!scope) throw new CliError("missing_scope", "No caller session could be resolved; pass --scope ID", 2);
   const store = new SQLiteStateStore(scope, f.get("--db") as string | undefined);

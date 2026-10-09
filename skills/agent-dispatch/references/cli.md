@@ -4,7 +4,7 @@
 
 ## 提交任务
 
-脚本会从当前 Herdr 父会话生成 scope；无法解析时提供一次明确的 `--scope ID`，后续命令沿用输出中的 ID。所有 scope 的调度状态默认写入用户私有 `~/.config/agent-dispatch/state.sqlite`，执行结果写入同目录的私有结果文件。`--db PATH` 只用于明确指定另一持久数据库或隔离验收；不要通过换数据库绕过未决预留。CLI 不在项目中写状态。
+脚本优先从调用者环境中的 `CODEX_THREAD_ID` / `CODEX_SESSION_ID` 生成 scope，缺失时才读取 Herdr 当前 pane 的原生会话，因此 Herdr 尚未上报会话时 Codex 仍能使用自动 scope。两项 Codex 身份不一致会报 `caller_session_mismatch`；没有可解析身份会报 `missing_scope`，不会用聚焦 tab 或 PID 兜底。显式 `--scope ID` 优先于自动解析，后续命令沿用输出中的 ID。所有 scope 的调度状态默认写入用户私有 `~/.config/agent-dispatch/state.sqlite`，执行结果写入同目录的私有结果文件。`--db PATH` 只用于明确指定另一持久数据库或隔离验收；不要通过换数据库绕过未决预留。CLI 不在项目中写状态。
 
 ```sh
 bun scripts/agent-dispatch.ts run --input - <<'JSON'

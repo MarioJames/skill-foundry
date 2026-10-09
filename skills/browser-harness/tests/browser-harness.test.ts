@@ -124,6 +124,7 @@ process.exit(4);
       BH_LOG_DIR: logDir,
       BH_PROFILE_ROOT: join(root, "profiles"),
       FAKE_AGENT_BROWSER_LOG: callsPath,
+      DISPLAY: ":fixture",
     }),
   };
 }
@@ -337,6 +338,24 @@ describe("CLI contracts", () => {
       expected,
       "--headed",
     ]);
+  });
+
+  test.if(process.platform === "linux")("Linux login without a display fails before creating a profile or opening a browser", () => {
+    const harness = createHarness();
+    const result = runBh(["login", "https://example.test/login", "--profile", "no-display"], {
+      cwd: harness.root,
+      env: { ...harness.env, DISPLAY: "", WAYLAND_DISPLAY: "", AGENT_BROWSER_HEADED: "false" },
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toContain("DISPLAY");
+    expect(result.stderr.toString()).toContain("profile");
+    expect(existsSync(join(harness.root, "profiles", "no-display"))).toBe(false);
+    expect(calls(harness.callsPath).some((call) => call[0] === "open")).toBe(false);
+    const wayland = runBh(["login", "https://example.test/login", "--profile", "wayland"], {
+      cwd: harness.root,
+      env: { ...harness.env, DISPLAY: "", WAYLAND_DISPLAY: "wayland-fixture" },
+    });
+    expect(wayland.exitCode).toBe(0);
   });
 
   test("default profile follows the nearest project directory", () => {

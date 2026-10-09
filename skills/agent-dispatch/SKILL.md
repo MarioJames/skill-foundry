@@ -50,7 +50,7 @@ Claude Code 配置使用 `adapter: "claude"`，模型与原生 effort 组合由 
 
 `run` 在一次 Jev 决策后启动选中 wave，为每个 RPC attempt 创建独立的短命 runner 并返回身份；父任务继续无冲突工作。收到追加任务时重新 `run`，CLI 合并已有待办；没有独立工作时在自然检查点执行 `status` 收取结果。不另造 watcher/daemon。
 
-统一 CLI 将所有 scope 持久保存在用户级 `~/.config/agent-dispatch/state.sqlite`；已解析的 Herdr 父会话自动生成 scope，其他入口显式提供 `--scope ID`。每次输出 scope，续谈和交接沿用它。RPC 与 Herdr attempts 共用状态；不同 scope 的未决任务参与同一数据库的容量与写入检查。父任务显式声明自己的活动和相关外部活动的真实读写范围；缺失不能视为已确认无访问。资源声明不是 OS 隔离，也不保证与旧脚本或其他独立调度器的全局事务。unknown 持续占用，不能另建 scope 绕过。
+统一 CLI 将所有 scope 持久保存在用户级 `~/.config/agent-dispatch/state.sqlite`；优先用调用者的 `CODEX_THREAD_ID` / `CODEX_SESSION_ID` 自动生成 scope，未提供时才读取 Herdr 当前 pane 的原生会话。两项 Codex 身份不一致时停止并报告冲突；没有会话身份时显式提供 `--scope ID`，不以聚焦 tab、pane 或 PID 代替会话。每次输出 scope，续谈和交接沿用它。RPC 与 Herdr attempts 共用状态；不同 scope 的未决任务参与同一数据库的容量与写入检查。父任务显式声明自己的活动和相关外部活动的真实读写范围；缺失不能视为已确认无访问。资源声明不是 OS 隔离，也不保证与旧脚本或其他独立调度器的全局事务。unknown 持续占用，不能另建 scope 绕过。
 
 RPC runner 自行处理协议、审批退出、超时、取消、终态和进程回收。它只允许 read-only/workspace-write 与 never 审批；需要新增审批或交互时返回 needs_owner，不自动批准。父任务把权限限制和验收标准写进交接；子进程配置继承不代表新的授权。
 

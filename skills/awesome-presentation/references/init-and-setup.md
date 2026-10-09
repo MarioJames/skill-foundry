@@ -48,6 +48,8 @@ bun install
 bun x playwright install chromium
 ```
 
+Debian/Linux 上还需浏览器对应的共享库；缺库时核对实际 Chromium 的启动错误和 `ldd` 结果。系统依赖安装须先取得授权，项目 Playwright runner 使用 `bun x playwright install-deps chromium`；agent-browser 验收按 [browser-harness 的运行时说明](../../browser-harness/references/runtime.md) 处理。
+
 ## 失败处理
 
 - `destination path already exists`：回到目录选择，不能自行覆盖或绕过合并授权。

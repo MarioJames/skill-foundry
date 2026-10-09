@@ -206,6 +206,9 @@ async function cleanup(arguments_: string[]): Promise<number> {
 async function login(arguments_: string[]): Promise<number> {
   const options = parseBrowserOptions("login", arguments_);
   requireAgentBrowser();
+  if (process.platform === "linux" && !process.env.DISPLAY?.trim() && !process.env.WAYLAND_DISPLAY?.trim()) {
+    fail(2, "交互登录需要 DISPLAY 或 WAYLAND_DISPLAY；请在本地图形会话或显示转发环境登录，CI 可复用已建立的 profile 进行无头采证");
+  }
   const path = profileDir(options.profile);
   mkdirSync(path, { recursive: true });
   log(`profile 存储目录：${path}`);

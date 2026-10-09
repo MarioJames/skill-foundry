@@ -162,7 +162,14 @@ for extra dependency directories and unsupported layouts.
 
 `debian-testvm` requires a Linux x86_64 host with read/write `/dev/kvm`, `qemu-system-x86_64`, `qemu-img`, `tar`,
 `genisoimage` or `xorriso`, an OpenSSH client and `curl`. It does not install system packages;
-`bun skills/debian-testvm/scripts/testvm.ts doctor` reports what is missing.
+`bun skills/debian-testvm/scripts/testvm.ts doctor` distinguishes missing CPU virtualization,
+KVM modules, device permissions and tools. VMware/WSL2 guests must verify passthrough explicitly;
+see the [host preparation guide](skills/debian-testvm/SKILL.md#prepare-once).
+
+On Debian/Linux, browser login needs `DISPLAY` or `WAYLAND_DISPLAY`, and Chromium needs its
+system libraries. Headless evidence collection can reuse an existing login profile;
+see [browser runtime setup](skills/browser-harness/references/runtime.md). Named SSH profiles
+use zsh and its initialized `.zshrc`; no Bash profile migration is required.
 
 Bun 1.3 or newer runs the Agent-facing script and hook entrypoints. Installable resources under
 `assets/`, including the SSH zsh runtime, retain their target runtime; the Bun initializer installs
@@ -443,7 +450,8 @@ bun test skills/browser-harness/tests
 bun test skills/feature-acceptance/tests
 bun test skills/public-acceptance/tests
 bun test skills/cow-workspace/tests # Requires Linux, fuse-overlayfs and /dev/fuse
-bun test skills/debian-testvm/tests # Requires /dev/kvm, QEMU, the fetched debian image and a built docker image
+bun test skills/debian-testvm/tests/doctor.test.ts # Host diagnostics; no VM prerequisites
+bun test skills/debian-testvm/tests/testvm.test.ts # Requires /dev/kvm, QEMU, the fetched debian image and a built docker image
 bun test skills/herdr/tests skills/agent-dispatch/tests
 bun test skills/trigger-build-workflow/tests
 bun test skills/persistent-ssh-ops/tests

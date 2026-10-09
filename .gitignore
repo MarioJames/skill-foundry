@@ -39,3 +39,4 @@ skills/feature-acceptance/tests/*
 !skills/debian-testvm/tests/
 skills/debian-testvm/tests/*
 !skills/debian-testvm/tests/testvm.test.ts
+!skills/debian-testvm/tests/doctor.test.ts

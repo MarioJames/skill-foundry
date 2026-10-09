@@ -53,6 +53,8 @@ fi
 
 禁止省略路径后依赖自动发现：agent-browser 的发现顺序可能优先选择系统 Chrome，见 [官方浏览器说明](https://agent-browser.dev/engines/chrome)。没有可用的自带 Chromium 时报告缺失前置，按已有授权安装；不静默回退到系统 Chrome，不自动安装系统依赖。
 
+Linux 上 Chromium 文件存在仍可能缺少共享库。启动报告缺库时，先用 `ldd "$AGENT_BROWSER_EXECUTABLE_PATH"` 检查实际选中的浏览器；安装系统依赖须取得当前任务的授权，再按 [官方安装说明](https://agent-browser.dev/installation) 运行 `agent-browser install --with-deps`，不能仅重复下载 Chromium，也不以关闭 sandbox 解决依赖问题。
+
 验收入口统一设置 `AGENT_BROWSER_HEADED=false`，直接交互与 `collect-evidence` 都继承此设置。恢复旧配置时，只调整本任务已获授权的 `headed` / `executablePath`，保留其他字段；不在脚本中自动改写用户配置。临时需要可视化调试时可以显式覆盖，完成后关闭该会话再切回无头：
 
 ```bash
@@ -62,6 +64,8 @@ bun "$BH_DIR/bh.ts" collect-evidence "$APP_URL"
 ```
 
 `login` 为交互登录显式传入 `--headed`，优先于环境变量，所以以上无头设置适用于直接交互和采证，登录除外。切换浏览器路径或窗口模式前，先关闭本任务的 agent-browser 会话，再以新配置启动；已有会话或 `--reuse-page` 不会因此自动切换模式。关闭时保持同一 session/profile 边界，不关闭用户既有浏览器，也不删除持久化登录态。
+
+Linux 的 `login` 在创建 profile 和启动浏览器前检查 `DISPLAY` / `WAYLAND_DISPLAY`；两者都为空时返回退出码 2。使用可显示窗口的本地图形会话或显示转发完成登录，再在 CI/SSH 环境复用该 profile 无头采证。显示变量已设置只证明有显示配置，实际连接是否成功仍由浏览器启动结果确认。
 
 日常验收使用任务独有 session/profile，不使用 `--auto-connect` 或指向 Convorel 的 `--cdp`，避免接管 ChatGPT 登录浏览器。
 

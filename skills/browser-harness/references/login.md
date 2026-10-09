@@ -17,6 +17,8 @@ bun "$BH_DIR/bh.ts" login "$APP_URL/login"
 
 默认验收为无头模式；`login` 继承同一自带 Chromium 的路径配置，并显式添加 `--headed`，需要能显示浏览器窗口的本机或显示转发环境；即使设置 `AGENT_BROWSER_HEADED=false`，登录仍以有头模式启动。该无头设置适用于直接交互和 `collect-evidence`；CI 应复用预先建好的 profile。切换窗口模式前先关闭本任务会话，见 [浏览器与窗口模式](runtime.md#浏览器与窗口模式)。登录态持久化供后续验收复用，关闭浏览器不等于删除 profile。只清理本次临时凭据或临时 profile，不删除用户既有登录态。
 
+Linux 没有 `DISPLAY` 或 `WAYLAND_DISPLAY` 时，`login` 会在创建 profile 前退出并给出显示环境提示。不要反复执行登录或自动安装显示服务器；在有图形界面的会话登录，再把同一 profile 交给无头验收。
+
 Journey 的 `--auth open` / `--auth use` storageState 由项目 testing-suite 管理，与 `bh login` profile 不互通；`bh login` 服务于 collect-evidence 和直接调用 agent-browser。
 
 ## profile 选择
