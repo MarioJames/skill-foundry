@@ -50,7 +50,7 @@
 ### 素材选择
 
 1. 用户提供图片路径/资产时直接引用，填写 alt/caption/source。
-2. 生成插图属于当前制作要求或已有用户授权，且工具可用时直接生成，保存到项目 `src/assets/` 或用户指定目录；registry `media` 与 Figure 保持一致，source 标明“AI 生成 / 日期”。不把生成图当产品截图或生产数据。
+2. 生成插图属于当前制作要求或已有用户授权，且工具可用时直接生成，保存到目标 `presentations/<id>/src/assets/` 或用户指定目录；registry `media` 与 Figure 保持一致，source 标明“AI 生成 / 日期”。不把生成图当产品截图或生产数据。
 3. 当前请求未涵盖生图且必须使用该能力时，说明用途与范围后取得授权，已有授权不重复问。无工具或用户拒绝时使用明确占位，给可复制 prompt 与替换步骤。
 4. 占位交付记录页 id、占位路径、prompt（主题、构图、标签、比例）和来源缺口；可以改用无图 recipe 时不硬塞 Figure。
 
@@ -58,7 +58,7 @@
 
 ```tsx
 import placeholder from '../../assets/placeholders/media-right.svg';
-import { Figure } from '../../components/figure';
+import { Figure } from '@awesome-presentation/core/components/figure';
 
 <Figure
   src={placeholder}

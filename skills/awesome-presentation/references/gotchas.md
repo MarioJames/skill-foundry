@@ -13,11 +13,11 @@
 - 新 clone 的 `package.json.name` 和模板 `repository` 要调整；只移除本次 clone 的模板 `.git`，不碰已有项目 Git 历史。
 - `.claude/skills/presentation-layouts/SKILL.md` 与 `.claude/skills/presentation-components/SKILL.md` 是项目内选型指导，隐藏目录应完整保留。
 - 克隆/安装失败后只排查本次来源与错误，不扫描缓存或其他项目拼装旧模板。详见 [初始化与环境](init-and-setup.md)。
-- 包管理器按请求/项目约定，无约定优先 bun、pnpm；不无条件使用 tnpm。项目测试脚本用 `bun run test`，避免误选 bun 内置 runner。
+- 当前 fork 是 pnpm monorepo，先核对 `packageManager` 和锁文件；首次安装用 `pnpm install --frozen-lockfile`。`presentation new` 增加 workspace 后，用 `pnpm install --no-frozen-lockfile` 正常生成新 importer；不切换包管理器或手改 lock。业务 Deck 在 `presentations/<id>`，共享布局/规则在 `packages/core`，`apps/showcase` 是展示项目。
 
 ## 页面实现
 
-- 布局真源是 `src/rules/layout-catalog.ts` 和项目内 skills，不在提示中手抄第二套容量表。
+- 布局真源是 `packages/core/src/rules/layout-catalog.ts` 和项目内 skills，不在提示中手抄第二套容量表；页面导入使用 `@awesome-presentation/core` 的 exports 子路径。
 - 上标题加左右工作区用 `TopColumnsLayout` / `header-columns`；`ColumnsLayout` 是可嵌套同级网格。
 - 三项解释不自动做三卡，可用纵向 `content-stack`；连续布局和 dense 选择考虑 Deck 节奏。
 - dense 只收紧结构间距和标题层级，不降低 body/caption 字号下限；超限拆页或换 recipe。
@@ -25,10 +25,12 @@
 - 叙事图保留 alt/caption/source；图表保留 insight/unit/range/source/summary/data 等项目契约。生图标明 AI 来源，不冒充生产截图；无素材时明确占位。
 - registry 显式写 `intent/layoutId/density/visualMode/takeaway`；章节中英写 `section/sectionEn`，内容页不以 `SlideHeading.eyebrow` 重复章节。
 - 业务 Deck 就绪后移除默认 start 页，除非用户要求保留。详见 [实现](content-to-deck.md) 与 [布局约定](layout-conventions.md)。
+- 实测默认 starter 可能含重复 eyebrow、缺少 DOM density/visualMode 标记或 16px 正文。不能把安装/构建成功当成模板规则通过：在本次生成项目中按其现有规则修正占位页、写入明确 metadata，并保证正文至少符合 catalog 下限，再重跑测试和 visual runner；不改断言或降低检查阈值。
 
 ## 验收
 
 - browser-harness 是浏览器验收入口；项目 visual runner 补其未覆盖的矩阵、diagnostics 和像素回归，使用真实 APP_URL 与实际项目配置。
 - `visual:update` 替换 baseline，先审 actual；不能用它盲目清除回归失败。
+- 新 Deck 尚无 baseline/manifest 时，先修复实际布局和 diagnostics，再审 actual、建立本次成稿基线并执行 `visual:check`。已有基线的失败必须审 diff；不盲目更新。
 - 字体子集与单 HTML 体积按项目 packaging 规则，不恢复全量字体或无限塞位图。
 - 验收通过后默认清理，已有远程/保留要求才进入对应分支。完整交付规则见 [验收与交付](validation-and-delivery.md)。

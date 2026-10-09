@@ -51,6 +51,8 @@ fi
 
 验收固定为 **自带 Chromium + 无头模式**。浏览器使用工具管理的独立安装或缓存，例如已有 Playwright Chromium；先检查实际安装记录和可执行文件，再通过 agent-browser 原生 `executablePath` / `AGENT_BROWSER_EXECUTABLE_PATH` 显式指定，不把某台机器的路径或缓存版本硬编码进技能。agent-browser 引擎名称为 `chrome`，但这不意味着使用系统 Google Chrome。
 
+新版 agent-browser 的 `install` 下载 Chrome for Testing，也是工具管理的 Chromium 系浏览器。安装目录按工具实际输出核对；实测原生 installer 不一定遵循 `XDG_CACHE_HOME` 或 `PLAYWRIGHT_BROWSERS_PATH`。隔离验收先查已支持的目录选项，或在任务目录按官方发布清单下载并验证所选可执行文件，不假定设置环境变量就阻止全局缓存写入。
+
 禁止省略路径后依赖自动发现：agent-browser 的发现顺序可能优先选择系统 Chrome，见 [官方浏览器说明](https://agent-browser.dev/engines/chrome)。没有可用的自带 Chromium 时报告缺失前置，按已有授权安装；不静默回退到系统 Chrome，不自动安装系统依赖。
 
 Linux 上 Chromium 文件存在仍可能缺少共享库。启动报告缺库时，先用 `ldd "$AGENT_BROWSER_EXECUTABLE_PATH"` 检查实际选中的浏览器；安装系统依赖须取得当前任务的授权，再按 [官方安装说明](https://agent-browser.dev/installation) 运行 `agent-browser install --with-deps`，不能仅重复下载 Chromium，也不以关闭 sandbox 解决依赖问题。

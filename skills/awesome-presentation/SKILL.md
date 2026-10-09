@@ -18,13 +18,13 @@ description: 使用 awesome-presentation 脚手架创建或修改 React 演示�
 
 1. 整理材料与页表，复用用户已给的目标、页数和路径。确需讨论时才加载 [内容发现](references/content-discovery.md)。
 2. 新项目按 [初始化与环境](references/init-and-setup.md) 检查目录并 clone；已有脚手架项目且用户要在此修改时直接使用。未指定路径可在当前工作区选择新的主题子目录并说明；非空陌生目录的合并/覆盖须有明确授权。
-3. 读取生成项目内 `.claude/skills/presentation-layouts/SKILL.md` 和 `.claude/skills/presentation-components/SKILL.md`，按 [页表到代码](references/content-to-deck.md) 实现。机器规则以 `src/rules/*` 和 `src/pages/registry.ts` 为准，不复制第二份容量表。
+3. 读取生成项目内 `.claude/skills/presentation-layouts/SKILL.md` 和 `.claude/skills/presentation-components/SKILL.md`，按 [页表到代码](references/content-to-deck.md) 实现。机器规则以 `packages/core/src/rules/*` 和目标 Deck 的 `presentations/<id>/src/pages/registry.ts` 为准，不复制第二份容量表。
 4. 按 [布局约定](references/layout-conventions.md) 写 registry、章节和图像来源。显式填写 `intent/layoutId/density/visualMode/takeaway`、`section/sectionEn`；业务 Deck 就绪后移除默认 start 页。
 5. 按 [验收与交付](references/validation-and-delivery.md) 完成项目检查、构建，以 `browser-harness` 为浏览器验收入口；项目 visual runner 补充尚未覆盖的矩阵和像素检查。通过后默认清理本次资源，已有保留要求时按其范围保留。
 
 ## 约束
 
-- 包管理按当前请求和项目约定选择；无明确要求时优先 bun，其次 pnpm，再 npm。tnpm 仅用于用户/项目明确要求的内网环境，不作为默认命令。
+- 包管理先读取本次模板的 `packageManager`、锁文件和 workspace；当前 fork 使用 pnpm，不按通用偏好改成 bun 或重写锁文件。只有项目无约定时才优先 bun。tnpm 仅用于用户/项目明确要求的内网环境。
 - 初始化只使用指定 GitHub fork；克隆/安装失败时根据本次错误排障并报告，不扫描 HOME 缓存、旧项目或系统临时目录拼装替代模板。
 - 非空目录合并不因“保留既有内容”自动获准。只修改已授权的文件；新增或真实覆盖风险超出授权时才询问。
 - 材料不足可明确占位、标待补或改口播；不编造生产数据、引用或产品截图。示例数据须标明“示例 / 非生产数据”。

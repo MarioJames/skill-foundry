@@ -6,8 +6,8 @@
 
 把页表落成：
 
-1. `src/pages/{number-name}/`
-2. `src/pages/registry.ts`
+1. `presentations/<id>/src/pages/{number-name}/`
+2. `presentations/<id>/src/pages/registry.ts`
 3. 每页与 Spec 一致的 `takeaway` + 正确的 recipe / 组件
 
 权威细则以项目内技能为准：
@@ -15,7 +15,7 @@
 - `.claude/skills/presentation-layouts/SKILL.md`
 - `.claude/skills/presentation-components/SKILL.md`
 
-机器真源：`src/rules/layout-catalog.ts`、`recommend-layout.ts`、`deck-validator.ts`。
+机器真源：`packages/core/src/rules/layout-catalog.ts`、`recommend-layout.ts`、`deck-validator.ts`。业务页面位于目标 Deck；共用组件和布局位于 `packages/core`，不复制一份进 Deck。
 
 ## Step A — 对照 Spec，不重新发明叙事
 
@@ -47,7 +47,7 @@ Spec 页表 → 实现清单：
 对每一页构造 `ContentProfile`（以项目导出为准）：
 
 ```ts
-import { recommendLayout } from '../rules/recommend-layout';
+import { recommendLayout } from '@awesome-presentation/core/rules/recommend-layout';
 
 const result = recommendLayout({
   intent: 'compare',
@@ -70,22 +70,22 @@ const result = recommendLayout({
 ## Step C — 建页目录
 
 ```text
-src/pages/01-cover/
+presentations/<id>/src/pages/01-cover/
   index.tsx
   style.less          # 仅页面特有样式；颜色只用 --color-*
-src/pages/02-problem/
+presentations/<id>/src/pages/02-problem/
   index.tsx
   style.less
 …
-src/pages/registry.ts
+presentations/<id>/src/pages/registry.ts
 ```
 
 最小骨架（`top-bottom` + heading + callout）：
 
 ```tsx
-import { SlideHeading } from '../../components/slide-heading';
-import { Callout } from '../../components/callout';
-import { TopBottomLayout } from '../../layouts/top-bottom';
+import { SlideHeading } from '@awesome-presentation/core/components/slide-heading';
+import { Callout } from '@awesome-presentation/core/components/callout';
+import { TopBottomLayout } from '@awesome-presentation/core/layouts/top-bottom';
 import './style.less';
 
 export function ProblemPage() {
@@ -110,12 +110,12 @@ export function ProblemPage() {
 }
 ```
 
-导入：从 `src/layouts/<name>`、`src/components/<name>` **目录直引**；不要造 barrel。
+导入使用 `@awesome-presentation/core/layouts/<name>`、`components/<name>`、`rules/<name>` 的项目公开子路径；以当前 `packages/core/package.json` exports 为准，不跨目录拼内部相对路径，也不另造 barrel。
 
 ## Step D — registry
 
 ```ts
-import type { SlideDefinition } from '../components/deck-player/types';
+import type { SlideDefinition } from '@awesome-presentation/core/components/deck-player/types';
 import { CoverPage } from './01-cover';
 import { ProblemPage } from './02-problem';
 

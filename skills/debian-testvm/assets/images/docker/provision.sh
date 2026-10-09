@@ -3,7 +3,7 @@ apt-get update
 apt-get -y full-upgrade
 apt-get install -y --no-install-recommends ca-certificates curl git gnupg
 install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 60 https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
 chmod a+r /etc/apt/keyrings/docker.asc
 cat > /etc/apt/sources.list.d/docker.sources <<SOURCES
 Types: deb
