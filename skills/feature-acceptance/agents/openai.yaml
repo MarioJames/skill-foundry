@@ -1,4 +1,4 @@
 interface:
   display_name: "Feature Acceptance"
-  short_description: "按个人工程偏好与 Lobe 写法实现和验收，减少重复纠偏"
-  default_prompt: "使用 $feature-acceptance 检查本次前后端实现是否符合我的工程偏好与项目写法，先应用已有约束，再扫描和重点审查，将同类纠偏沉淀为项目规则。"
+  short_description: "按工程偏好检查实现、交互与恢复，协同设计技能并按归属沉淀纠偏"
+  default_prompt: "使用 $feature-acceptance 检查本次前后端实现、交互状态与恢复路径，按需协同设计技能，将已验证的可复用纠偏沉淀到所属技能或项目门禁。"

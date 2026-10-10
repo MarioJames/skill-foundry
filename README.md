@@ -35,7 +35,7 @@ Frontend acceptance helper around [vercel-labs/agent-browser](https://github.com
 
 ### `feature-acceptance` — 前后端功能验收与规则进化
 
-实现前读取用户的方案选择偏好、组件经验和 Lobe 惯用写法，交付前用脚本与重点审查发现同类偏差。可独立使用，也可与 `browser-harness` 协同验收；纠偏沉淀为项目 lint 或审查规则，并接入下次 Agent 的读取入口。
+实现前读取工程偏好和交互约束，交付前用脚本与重点审查检查状态、边界和恢复。视觉规则与 `lobe-design` 分工，浏览器证据可由 `browser-harness` 提供；纠偏按归属沉淀到技能参考或项目门禁，并接入下次 Agent 的读取入口。
 
 **使用场景：** 让 Agent 按个人工程习惯实现和验收前后端，减少反复解释基础要求。个人偏好保留具体写法，项目业务决定单独留在需求中；脚本不会把“零命中”判为功能通过。详见 [技能入口](skills/feature-acceptance/SKILL.md)。
 
