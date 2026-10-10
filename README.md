@@ -111,7 +111,7 @@ Uses the current Git remote to locate one repository's online graph, domains, en
 
 ### `tdd` — when to test, and what counts as a test
 
-A thin coding-time gate: default is fast path. Write a test only when the assertion can still fail on a wrong implementation after the files already exist. Pins business rules, mappings, permissions, and bug reproductions; skips scaffolding, copy, layout, and tautological green tests.
+A thin coding-time gate: default is fast path. Write a test only when the assertion can still fail on a wrong implementation after the files already exist. Pins uncovered error-prone contracts (business rules, mappings, permissions, state transitions, concurrency, parsing, boundaries, consumed output shapes) and logic-bug regressions; routes refactors, wiring, copy, layout, and migrations to engineering checks, browser acceptance, or migration runs; skips scaffolding and tautological green tests.
 
 **Reach for it when** implementing or changing production code or tests. The skill description is meant to fire on every development change; the body then decides TDD vs skip.
 
