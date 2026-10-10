@@ -1,7 +1,7 @@
 interface:
   display_name: "Herdr"
-  short_description: "命名当前标签页，管理持久终端与 Agent 启停，并精确清理任务自有资源"
-  default_prompt: "使用 $herdr 按当前会话命名规则命名标签页，并操作指定的终端、Agent 与任务自有资源。"
+  short_description: "命名当前会话及归属可验证的标签页，管理持久终端与 Agent 启停"
+  default_prompt: "使用 $herdr 按当前会话命名规则命名当前会话与可验证归属的标签页，并操作指定的终端、Agent 与任务自有资源。"
 
 policy:
   allow_implicit_invocation: true
