@@ -19,6 +19,7 @@ skills/asset-validation/tests/*
 skills/herdr/tests/*
 !skills/herdr/tests/caller-identity.test.ts
 !skills/herdr/tests/codex-session.test.ts
+!skills/herdr/tests/codex-pane.test.ts
 
 # Ship the public DEV discovery and foreground lifecycle contract.
 !skills/public-acceptance/tests/

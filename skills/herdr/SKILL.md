@@ -5,23 +5,31 @@ description: 在会话开始或主任务变化时命名当前会话与可验证�
 
 # Herdr
 
-At conversation start or a main-task change, name the current conversation and, where ownership can be verified, its Herdr tab as soon as the task is clear, before substantive task work or a final answer. This applies to read-only questions and evaluations as well as implementation; neither an explicit Herdr request nor a need for parallel work is required. Use the CLI result to establish availability, but require process ownership to establish identity; if the caller cannot be verified, continue the task without naming.
+At conversation start or a main-task change, name the current conversation and, where ownership can be verified, its Herdr tab as soon as the task is clear, before substantive task work or a final answer. This applies to read-only questions and evaluations as well as implementation; neither an explicit Herdr request nor a need for parallel work is required. Use the CLI result to establish availability, but require process ownership or a fresh native-title challenge to establish identity; if the caller cannot be verified, continue the task without naming.
 
 Herdr owns terminal operations and tab naming. Task decomposition, parallel decisions, model routing and acceptance policy belong to `agent-dispatch`; load it when deciding whether or how to delegate. A terminal command may still use a `oneshot` lane; bounded Codex worker tasks default to the independent skill's RPC runner.
 
 ## Codex with a shared local app-server
 
-When `CODEX_THREAD_ID` is present, first run:
+When `CODEX_THREAD_ID` is present and this task owns tab naming, first run:
 
 ```sh
 bun <skill-dir>/scripts/name-codex-session.ts --type FIX --topic '具体任务'
 ```
 
-Choose TYPE/topic from the current task. `--dry-run` reads metadata and reports the target without writing. The helper connects to the existing local daemon using the socket reported by `codex app-server daemon version`, reads exactly the runtime-provided thread ID, derives the date from its `createdAt` in Asia/Shanghai, changes only its native name, and reads it back. It does not start, stop, or restart the daemon, resume threads, modify projects, or use focus/cwd to select a session. Do not override `CODEX_THREAD_ID` with a Herdr-reported value. `CODEX_SESSION_ID` can identify a parent session tree and is not a substitute for the current thread.
+Choose TYPE/topic from the current task. The helper reads exactly the runtime-provided thread from the existing local daemon, derives its date from `createdAt` in Asia/Shanghai, sets the formal native name, then binds and names its Herdr tab:
 
-Then try the verified tab path below. Native naming success is independent of tab availability: if the tab cannot be verified, retain its label and do not describe this as conversation naming failure. Older/local Codex without a running daemon and Claude continue through the verified terminal path; never launch a daemon merely to name a conversation. Do not claim a Herdr tab was renamed when only a native conversation was renamed. Report an actual native naming error briefly; a timed-out write is not permission to replay it.
+1. Temporarily set this exact thread's native name to an unpredictable one-use marker.
+2. Observe the marker echoed by the actual Codex client's live terminal title through `herdr agent list`. Require one pane, allow client updates to settle, and recheck its pane/tab/workspace/terminal IDs and the thread's marker before writing.
+3. Rename only that verified tab, read its label back, and restore the formal native name in `finally`. On missing/ambiguous/moved panes, leave all tabs untouched. On a concurrent native name edit, preserve the other writer's edit and report a conflict.
 
-Shared app-server tools are not descendants of the TUI process. Moreover, the installed Herdr Codex SessionStart hook may report every thread to a daemon-inherited `HERDR_PANE_ID`. Therefore a Herdr `agent_session` match alone is not independent ownership evidence. Neither reinstalling the OS nor matching cwd repairs that binding. Keep the process guard for tab operations; a reliable client-to-pane binding is required before extending it to detached hosts.
+This is a causal challenge/response, not matching an existing title, cwd, focus, or `agent_session`. A brief temporary title may be visible. The returned `tab.caller` is the verified caller for this operation; carry those explicit IDs into immediate routing/handoff instead of re-running raw `--current`. Do not cache the binding across resumes, client switches, or later tasks. If the helper reports failure, do not turn a candidate ID into `--caller-pane` to bypass it.
+
+`--dry-run` reads metadata only, does not send a challenge or rename anything, and does not claim a verified tab. `--native-only` changes only the current native conversation name: use it for a delegate sharing its parent's tab (the parent retains tab naming), or a host explicitly known to have no Herdr client. Otherwise, default to binding and naming both. On a partial failure, output distinguishes native naming from tab failure; never claim tab success from native success alone. A timed-out write is not permission to replay it. Cleanup reads the current native name before restoring only its own marker; if cleanup cannot finish, report the temporary-title risk.
+
+The helper does not start/restart the daemon, resume threads, modify projects, or change focus. Do not override `CODEX_THREAD_ID` with a Herdr-reported value. `CODEX_SESSION_ID` can identify a parent session tree and is not a substitute for the current thread. Older/local Codex without a running daemon and Claude use the verified terminal path below; never launch a daemon merely to name a conversation. After successful native+tab naming, do not repeat the terminal naming steps.
+
+Shared app-server tools are not descendants of the TUI process. The installed Herdr Codex SessionStart hook may also report every thread to a daemon-inherited `HERDR_PANE_ID`. Consequently, a Herdr `agent_session` match alone is not independent ownership evidence. The fresh client echo avoids relying on either inherited IDs or that hook report. If a client does not echo native name changes, or multiple panes display the same thread, automatic binding fails safely.
 
 ## Name your own tab
 
@@ -50,6 +58,6 @@ Pass the task label with `--label`. Before returning success, the router reads b
 
 If naming or readiness verification fails, the router rolls back only its newly created resource and reports failure. If rollback fails, it reports the exact cleanup command; inspect that resource and retry its cleanup without closing an existing workspace, parent tab, or caller pane.
 
-Resolve the caller with `scripts/resolve-caller.ts` and carry verified IDs through routing and cleanup. Automatic lane routing uses the same ownership check. Use `--caller-pane` only for an explicit owner-authorized anchor from the current task/handoff; never copy an environment ID or failed candidate into it to bypass verification. Actual CLI responses determine availability; inherited `HERDR_*` variables do not establish ownership. Keep the user's focus unless asked to switch.
+For a shared Codex daemon, carry the fresh `tab.caller` returned by successful native+tab naming. For direct terminal hosts, resolve the caller with `scripts/resolve-caller.ts`. Carry verified IDs through routing and cleanup. Automatic lane routing uses the same ownership check. Use `--caller-pane` only for that freshly verified caller or an explicit owner-authorized anchor from the current task/handoff; never copy an environment ID or failed candidate into it to bypass verification. Actual CLI responses determine availability; inherited `HERDR_*` variables do not establish ownership. Keep the user's focus unless asked to switch.
 
 Consult the installed CLI's relevant group help for Agent start, prompt, wait, reads, or concrete failures. Use the returned cleanup command for each lane and inspect failures before choosing recovery.

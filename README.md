@@ -55,7 +55,7 @@ The host must deliver the new message and return a background process handle. A 
 
 ### `herdr` — terminal operations and resource ownership
 
-`herdr` names the current Codex conversation through an existing shared daemon and names Herdr tabs only after verifying process ownership. It also manages persistent terminals, native Agent operations and precise cleanup. Shared-daemon conversation naming uses the runtime thread ID, never an inherited pane ID; terminal-only hosts retain the verified tab path. Scheduling policy belongs to `agent-dispatch`. Herdr remains optional for the pure Codex RPC path; installing both skills in the same skill root enables the persistent backend.
+`herdr` names the current Codex conversation through an existing shared daemon and names Herdr tabs after verifying process ownership or a fresh native-title challenge echoed by the actual client. It also manages persistent terminals, native Agent operations and precise cleanup. Shared-daemon conversation naming uses the runtime thread ID, never an inherited pane ID; terminal-only hosts retain the verified tab path. Scheduling policy belongs to `agent-dispatch`. Herdr remains optional for the pure Codex RPC path; installing both skills in the same skill root enables the persistent backend.
 
 ### `cow-workspace` — copy-on-write development workspaces
 
@@ -154,7 +154,9 @@ Restart or reload the target agent runtime after installation so it can discover
 environment variables as an availability gate; the actual CLI response is authoritative, including
 from agent sandboxes that do not inherit the parent Herdr environment. Availability does not prove
 identity: a shared daemon can inherit stale pane IDs, and its hooks can report sessions to that
-wrong pane. Native Codex naming and Herdr tab naming therefore have separate ownership checks.
+wrong pane. Shared-daemon naming uses a one-use native-title challenge to identify the actual client pane,
+then verifies the tab write and restores the formal conversation title. Ambiguous or absent
+client echoes leave tabs untouched; `--dry-run` performs no challenge or writes.
 
 `cow-workspace` requires Linux, Git, Bun, `flock`, `fuse-overlayfs`, `fusermount3`, and a usable
 `/dev/fuse`. Its CLI checks real mounting and does not install missing system tools or silently

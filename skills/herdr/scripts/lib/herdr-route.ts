@@ -91,7 +91,7 @@ async function capture(command: string[]): Promise<{ stdout: string; stderr: str
   return { stdout: stdout.trim(), stderr: stderr.trim(), status };
 }
 
-async function herdr(...args: string[]): Promise<any> {
+export async function herdr(...args: string[]): Promise<any> {
   const result = await capture(["herdr", ...args]);
   if (result.status !== 0) {
     throw new CliError("herdr_failed", [result.stdout, result.stderr].filter(Boolean).join("\n"), result.status);
