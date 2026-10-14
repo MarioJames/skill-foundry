@@ -47,15 +47,13 @@ The existing Bun CLI owns anonymous tunnel start / status / stop / cleanup with 
 
 **Reach for it when** preparing a project for public acceptance, handing over a temporary review URL with login details, or inspecting and cleaning up an existing Quick Tunnel.
 
-### `agent-dispatch` — background task dispatch
+### `agents-cooperation` — model-driven multi-agent orchestration
 
-`agent-dispatch` assesses the full pending workload on the first multi-deliverable request, each added or changed instruction, and each worker result. Current work and accumulated pending issues go to Jev to judge independence and useful overlap; the parent supplies facts and enforces hard safety guards without preselecting tasks by subjective benefit. Bounded Codex work uses a JSON-RPC background runner; persistent interaction and non-Codex profiles use Herdr. Both paths share configuration, capacity reservations and acceptance rules. A configured `manual_override` skips Jev difficulty routing; Jev still decides whether and how to parallelize. See [single-task usage](skills/agent-dispatch/references/run-task.md) and the optional [Jev batch workflow](skills/agent-dispatch/references/jev-scheduling.md).
-
-The host must deliver the new message and return a background process handle. A skill cannot intercept queued messages or guarantee a host wakeup. The repository [AGENTS.md](AGENTS.md) includes a parent-only trigger bridge; cross-project use requires adopting that bridge in guidance the host actually loads.
+`agents-cooperation` lets the main model schedule work itself; no external classifier is involved. The agent facing the user is the main agent: it picks one of three modes — design discussion with a peer main agent (optionally audited through Convorel), parallel development split between both sides, or ordinary dispatch where it only routes work to workers — and prints a progress ledger at every trigger. Workers run through each host's built-in subagent tool (Sonnet 5.5 high on Claude Code, gpt-6.1-sol high on Codex). The two main agents communicate only in text through a Herdr pane and message files, and cross-review each other's diffs. Install the same skill on both Claude Code and Codex; the role follows the message source, not the vendor. See the [peer protocol](skills/agents-cooperation/references/peer-protocol.md).
 
 ### `herdr` — terminal operations and resource ownership
 
-`herdr` names the current Codex conversation through an existing shared daemon and names Herdr tabs after verifying process ownership or a fresh native-title challenge echoed by the actual client. It also manages persistent terminals, native Agent operations and precise cleanup. Shared-daemon conversation naming uses the runtime thread ID, never an inherited pane ID; terminal-only hosts retain the verified tab path. Scheduling policy belongs to `agent-dispatch`. Herdr remains optional for the pure Codex RPC path; installing both skills in the same skill root enables the persistent backend.
+`herdr` names the current Codex conversation through an existing shared daemon and names Herdr tabs after verifying process ownership or a fresh native-title challenge echoed by the actual client. It also manages persistent terminals, native Agent operations and precise cleanup. Shared-daemon conversation naming uses the runtime thread ID, never an inherited pane ID; terminal-only hosts retain the verified tab path. Scheduling policy belongs to `agents-cooperation`, which uses Herdr panes for peer main-agent collaboration.
 
 ### `cow-workspace` — copy-on-write development workspaces
 
@@ -131,7 +129,7 @@ bunx skills add MarioJames/skill-foundry --skill asset-validation
 bunx skills add MarioJames/skill-foundry --skill browser-harness
 bunx skills add MarioJames/skill-foundry --skill feature-acceptance
 bunx skills add MarioJames/skill-foundry --skill public-acceptance
-bunx skills add MarioJames/skill-foundry --skill agent-dispatch
+bunx skills add MarioJames/skill-foundry --skill agents-cooperation
 bunx skills add MarioJames/skill-foundry --skill herdr
 bunx skills add MarioJames/skill-foundry --skill cow-workspace
 bunx skills add MarioJames/skill-foundry --skill debian-testvm
@@ -194,7 +192,7 @@ cd skill-foundry
 mkdir -p ~/.agents/skills
 cp -R skills/asset-validation skills/browser-harness skills/feature-acceptance \
   skills/public-acceptance \
-  skills/agent-dispatch skills/herdr skills/cow-workspace skills/debian-testvm skills/trigger-build-workflow skills/persistent-ssh-ops \
+  skills/agents-cooperation skills/herdr skills/cow-workspace skills/debian-testvm skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
   skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.agents/skills/
 ```
@@ -207,7 +205,7 @@ cd skill-foundry
 mkdir -p ~/.claude/skills
 cp -R skills/asset-validation skills/browser-harness skills/feature-acceptance \
   skills/public-acceptance \
-  skills/agent-dispatch skills/herdr skills/cow-workspace skills/debian-testvm skills/trigger-build-workflow skills/persistent-ssh-ops \
+  skills/agents-cooperation skills/herdr skills/cow-workspace skills/debian-testvm skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
   skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.claude/skills/
 ```
@@ -219,7 +217,7 @@ test -f ~/.agents/skills/asset-validation/scripts/acc.ts
 test -f ~/.agents/skills/browser-harness/scripts/bh.ts
 test -f ~/.agents/skills/feature-acceptance/scripts/accept.ts
 test -f ~/.agents/skills/public-acceptance/scripts/cqt.ts
-test -f ~/.agents/skills/agent-dispatch/scripts/run-task.ts
+test -f ~/.agents/skills/agents-cooperation/references/peer-protocol.md
 test -f ~/.agents/skills/herdr/scripts/route-lane.ts
 test -f ~/.agents/skills/cow-workspace/scripts/cow.ts
 test -f ~/.agents/skills/debian-testvm/scripts/testvm.ts
@@ -241,13 +239,13 @@ cd skill-foundry
 git pull
 rm -rf ~/.agents/skills/asset-validation \
   ~/.agents/skills/browser-harness ~/.agents/skills/feature-acceptance ~/.agents/skills/public-acceptance \
-  ~/.agents/skills/agent-dispatch ~/.agents/skills/herdr ~/.agents/skills/cow-workspace ~/.agents/skills/debian-testvm ~/.agents/skills/trigger-build-workflow \
+  ~/.agents/skills/agent-dispatch ~/.agents/skills/agents-cooperation ~/.agents/skills/herdr ~/.agents/skills/cow-workspace ~/.agents/skills/debian-testvm ~/.agents/skills/trigger-build-workflow \
   ~/.agents/skills/persistent-ssh-ops ~/.agents/skills/provision-xray-hy2-node \
   ~/.agents/skills/changelog-writing ~/.agents/skills/awesome-presentation \
   ~/.agents/skills/repo-knowledge-graph ~/.agents/skills/tdd
 cp -R skills/asset-validation skills/browser-harness skills/feature-acceptance \
   skills/public-acceptance \
-  skills/agent-dispatch skills/herdr skills/cow-workspace skills/debian-testvm skills/trigger-build-workflow skills/persistent-ssh-ops \
+  skills/agents-cooperation skills/herdr skills/cow-workspace skills/debian-testvm skills/trigger-build-workflow skills/persistent-ssh-ops \
   skills/provision-xray-hy2-node skills/changelog-writing \
   skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.agents/skills/
 ```
@@ -277,7 +275,7 @@ Use public-acceptance to start this project in DEV, discover its actual port, cr
 Dispatch useful parallel work:
 
 ```text
-Use agent-dispatch to handle independent work while the current task continues, then verify and integrate the results. Use Herdr for persistent terminal work.
+Use agents-cooperation to split this work across workers, discuss the design with Codex first, and cross-review the result.
 ```
 
 Prepare an isolated development directory with existing dependencies:
@@ -332,10 +330,8 @@ Decide whether a change needs a real test:
 Use tdd before implementing this feature or adding a unit test.
 ```
 
-Each skill defines its own activation rules in `SKILL.md`. Load `agent-dispatch` when a parent receives a
-multi-deliverable request or additional instructions; its first step identifies candidates across pending work.
-For cross-project use, adopt the trigger rule from its single-task reference in the instructions actually loaded
-by that host. Installing a skill alone does not guarantee automatic invocation. `tdd` is meant to activate on every
+Each skill defines its own activation rules in `SKILL.md`. `agents-cooperation` activates implicitly on development
+tasks, follow-up instructions and worker results; installing a skill alone does not guarantee automatic invocation. `tdd` is meant to activate on every
 production-code or test change; the skill body then chooses TDD vs skip.
 
 ## Repository Layout
@@ -359,7 +355,7 @@ skill-foundry/
 │   │   ├── agents/
 │   │   ├── scripts/
 │   │   └── tests/
-│   ├── agent-dispatch/      # RPC background workers and parallel decisions
+│   ├── agents-cooperation/      # Model-driven orchestration and peer protocol
 │   ├── herdr/
 │   │   ├── SKILL.md
 │   │   ├── agents/
@@ -416,7 +412,7 @@ Installable skill packages:
 - `skills/browser-harness/`
 - `skills/feature-acceptance/`
 - `skills/public-acceptance/`
-- `skills/agent-dispatch/`
+- `skills/agents-cooperation/`
 - `skills/herdr/`
 - `skills/cow-workspace/`
 - `skills/debian-testvm/`
@@ -456,7 +452,7 @@ bun test skills/public-acceptance/tests
 bun test skills/cow-workspace/tests # Requires Linux, fuse-overlayfs and /dev/fuse
 bun test skills/debian-testvm/tests/doctor.test.ts # Host diagnostics; no VM prerequisites
 bun test skills/debian-testvm/tests/testvm.test.ts # Requires /dev/kvm, QEMU, the fetched debian image and a built docker image
-bun test skills/herdr/tests skills/agent-dispatch/tests
+bun test skills/herdr/tests
 bun test skills/trigger-build-workflow/tests
 bun test skills/persistent-ssh-ops/tests
 ```
@@ -476,7 +472,6 @@ the affected scenarios again.
 
 ```bash
 bun skills/herdr/scripts/route-lane.ts --help
-bun skills/agent-dispatch/scripts/decide-tasks.ts --input skills/agent-dispatch/examples/jev-batch.json --config skills/agent-dispatch/examples/agents.json --dry-run
 bun skills/cow-workspace/scripts/cow.ts --help
 bun skills/debian-testvm/scripts/testvm.ts --help
 bun skills/herdr/scripts/probe-workspace.ts --help

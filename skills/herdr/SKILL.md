@@ -1,13 +1,13 @@
 ---
 name: herdr
-description: 在会话开始或主任务变化时命名当前会话与可验证归属的 Herdr 标签页，包括只读问答和无并行工作的评估，无需显式提及 Herdr。负责 Herdr tab/pane、持久终端、Agent 启停与精确资源清理；任务并行与模型决策使用 agent-dispatch。
+description: 在会话开始或主任务变化时命名当前会话与可验证归属的 Herdr 标签页，包括只读问答和无并行工作的评估，无需显式提及 Herdr。负责 Herdr tab/pane、持久终端、Agent 启停与精确资源清理；任务并行与模型决策使用 agents-cooperation。
 ---
 
 # Herdr
 
 At conversation start or a main-task change, name the current conversation and, where ownership can be verified, its Herdr tab as soon as the task is clear, before substantive task work or a final answer. This applies to read-only questions and evaluations as well as implementation; neither an explicit Herdr request nor a need for parallel work is required. Use the CLI result to establish availability, but require process ownership or a fresh native-title challenge to establish identity; if the caller cannot be verified, continue the task without naming.
 
-Herdr owns terminal operations and tab naming. Task decomposition, parallel decisions, model routing and acceptance policy belong to `agent-dispatch`; load it when deciding whether or how to delegate. A terminal command may still use a `oneshot` lane; bounded Codex worker tasks default to the independent skill's RPC runner.
+Herdr owns terminal operations and tab naming. Task decomposition, parallel decisions, model routing and acceptance policy belong to `agents-cooperation`; load it when deciding whether or how to delegate. A terminal command may still use a `oneshot` lane; peer main-agent panes follow that skill's protocol.
 
 ## Codex with a shared local app-server
 
