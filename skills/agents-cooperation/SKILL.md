@@ -24,6 +24,13 @@ description: 直接面对用户的 Agent 收到开发、修复、重构或跨项
 | Claude Code | `claude-opus-5-5`，effort high | `sonnet`（Sonnet 5.5），effort high |
 | Codex | `gpt-6-astra`，reasoning high | `gpt-6.1-sol`，reasoning high |
 
+内置子 Agent 不传参数时继承父会话的模型，也就是主 Agent 的模型，所以每次派发都必须显式传入模型和推理强度。这条同样适用于 `Explore`、`Plan` 等只读子 Agent，以及 SendMessage 续接之外的每一次新建：
+
+- **Claude Code**：`Agent` 工具同时传 `model: "sonnet"` 和 `effort: "high"`，`subagent_type` 用 `general-purpose` 或具体类型，不用 `fork`，因为 fork 会忽略 `model` 覆盖，固定沿用父模型。
+- **Codex**：`spawn_agent` 同时传 `model: "gpt-6.1-sol"`、`reasoning_effort: "high"` 和 `fork_turns: "none"`；覆盖模型时不能带完整历史 `all`。
+
+其他技能对某类 worker 另有规定时以那个技能为准，例如 browser-harness 规定 Codex 验收 worker 用 `gpt-6.1-sol` medium。派发后核对子 Agent 实际运行的模型：Claude Code 看子 Agent 转录中的 `message.model`，Codex 看子会话的 `turn_context`。不符合时停掉重派，台账“角色·模型”列按实际模型填写。
+
 ## 硬门槛
 
 主 Agent 必须遵守以下规则，它们不是可选建议：
