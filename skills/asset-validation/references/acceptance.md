@@ -28,6 +28,8 @@ Continue authorized fixes and re-run affected tasks until clean PASS or a docume
 
 Report the verdict, actual task coverage, evidence, and cleanup. For self-validation, distinguish the observer's outer round from any nested round created by the asset-under-test.
 
+For a required standalone handoff report, use HTML and follow the [HTML report standard](../../feature-acceptance/references/html-report.md); link only evidence retained after cleanup and preserve the existing JSON results.
+
 ## Host and recovery notes
 
 - Shell variables do not persist between execution calls; resolve the loaded CLI path again or reload a task-private file. A review-only run has no strategy `WORK` directory.

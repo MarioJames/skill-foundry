@@ -22,6 +22,7 @@ Infer the route from the requested deliverable and existing authorization. Ask o
 - Preserve unrelated changes. Use task-private scratch directories and clean only resources created by this task.
 - Distinguish inspection, format checks, script execution, and observed Agent behavior in the result. Do not manufacture a PASS from work performed on behalf of the asset-under-test.
 - Continue authorized fixes and relevant verification to completion; a new approval is needed only when the next action exceeds that authorization.
+- When the existing workflow needs or the user requests a standalone acceptance report, default to `REPORT.html` and read the [HTML report standard](../feature-acceptance/references/html-report.md). Preserve existing JSON contracts; ordinary static review does not require an extra report.
 
 ## References
 

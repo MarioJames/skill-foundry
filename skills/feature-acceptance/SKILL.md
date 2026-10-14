@@ -37,6 +37,8 @@ bun "$FA_DIR/scripts/accept.ts" scan --project "$PROJECT" --base "$BASE_COMMIT"
 - 前端完成真实浏览器交互及 console/network 检查；使用 browser-harness 时向它交接功能范围、被测版本、关键路径和预期，已有服务同时交接实际 APP_URL、所有者及保留要求，其环境、登录态、采证与清理由该技能负责。
 - 独立使用时采用项目已有浏览器工具完成同样的交互验证；项目指定 browser-harness 时遵循该入口，不因本技能支持独立使用而绕过。
 
-只审查源码不能宣称运行验收通过。报告具体问题及文件位置、相关规则、实际证据和未验证项，不逐条复述整个规则库；前端同时给出 APP_URL、关键页面结果、console/network 错误及资源释放情况。复验对应当前版本，只清理自有进程并保留项目数据。
+只审查源码不能宣称运行验收通过。报告具体问题及文件位置、相关规则、实际证据和未验证项，不逐条复述整个规则库；前端同时给出 APP_URL、关键页面结果、console/network 错误及资源释放情况。复验对应当前版本，只清理自有进程并保护真实开发与业务数据；一次性验收资源按 [任务资源生命周期](../cow-workspace/SKILL.md#task-artifacts-and-resource-lifecycle) 收尾。
+
+既有流程需要或用户要求独立验收报告时，默认交付 `REPORT.html`，生成前读取 [HTML 验收报告](references/html-report.md)；普通问答、静态审查和内部计划不因此增加独立报告。
 
 用户只要求审查时不改实现和规则；已要求沉淀项目规范时完成规则写入与下次读取入口，不只返回建议。技能自身验证按需使用 asset-validation。
