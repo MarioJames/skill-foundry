@@ -15,7 +15,7 @@ herdr agent start peer-codex --kind codex --pane <pane> -- -m gpt-6-astra -c mod
 herdr agent start peer-claude --kind claude --pane <pane> -- --model claude-opus-5-5 --effort high --permission-mode bypassPermissions
 ```
 
-同一任务从讨论、开发到交叉 review 复用同一个副 Agent 会话，以保留上下文。Herdr 不可用或启动失败时，主 Agent 在台账中说明原因，用自己的 worker 独立完成，不改走其他入口。降级只免除主/副讨论，不免除 [ChatGPT 审查门槛](#chatgpt-审查门槛)；主 Agent 自己的 worker 也只在门槛满足后实施依赖该方案的工作。
+同一任务从讨论、开发到交叉 review 复用同一个副 Agent 会话，以保留上下文。Herdr 不可用或启动失败时，主 Agent 在台账中说明原因，用自己的 worker 独立完成，不改走其他入口。降级只免除主/副讨论；分级为必审时不免除 [ChatGPT 审查门槛](#chatgpt-审查门槛)，主 Agent 自己的 worker 也只在门槛满足后实施依赖该方案的工作。
 
 - 在从未启动过该 CLI 的目录里，两个 CLI 都会先弹出目录信任提示，`agent start` 因此返回 `agent_not_ready`（blocked）；`-c` 配置覆盖和权限参数都跳不过这个提示。处理步骤：先用 `herdr agent read <peer> --source visible` 确认确实是信任提示，再按 CLI 选择信任，信任结果由 CLI 自己持久化：
   - Codex（"Trust this folder?"，默认选项就是 Trust and continue）：`herdr agent send-keys <peer> enter`
@@ -70,12 +70,12 @@ herdr agent prompt <peer> "<信封>" --wait --until idle --until done --until bl
 ## 副 Agent 守则
 
 - 只在 `assign` 给定的写入范围内调度自己的 worker 完成改动，自己不改项目文件；需要越界时写进回复，不自行扩大。
-- 不提交、不推送、不关闭非自己创建的资源，也不直接与用户沟通。如果用户在副 Agent 的 pane 中直接下达指令：属于当前协作需求的追加或变更，先记录并交主 Agent 判定依赖和门槛状态，再按其回复执行；与当前需求无关的普通实施指令照常派 worker 执行，并在下一次回复中告知主 Agent。普通实施指令不视为 ChatGPT 审查豁免。
+- 不提交、不推送、不关闭非自己创建的资源，也不直接与用户沟通。如果用户在副 Agent 的 pane 中直接下达指令：属于当前协作需求的追加或变更，先记录并交主 Agent 判定依赖和门槛状态，再按其回复执行；与当前需求无关的普通实施指令照常派 worker 执行，并在下一次回复中告知主 Agent。普通实施指令不视为必审方案的 ChatGPT 审查豁免。
 - 回复以结论开头，不依赖终端输出传递关键信息。
 
 ## ChatGPT 审查门槛
 
-方案讨论模式下，主/副讨论之后必须经过 ChatGPT 方案审查，主 Agent 处置意见并冻结后才能实施依赖该方案的工作。门槛是“完成必需审查并处置意见”，不是“取得模型同意”。预算上限见 SKILL.md 的方案讨论一节，本节写计数、等待、裁决和留痕细则。
+本节适用于分级为必审的方案（含升级后的）：主/副讨论之后必须经过 ChatGPT 方案审查，主 Agent 处置意见并冻结后才能实施直接依赖该方案的工作；免审方案不送审，不适用本节。门槛是“完成必需审查并处置意见”，不是“取得模型同意”。预算上限见 SKILL.md 的方案讨论一节，本节写计数、等待、裁决和留痕细则。
 
 ### 计数
 
@@ -124,11 +124,11 @@ ChatGPT 阶段一轮 = 一次新的实质送审（方案审查对应一版方案
 
 `~/.local/state/agents-cooperation/<collab-id>/decision-log.md` 由主 Agent 维护，分三层。
 
-**1. 任务头**（写一次）：`collab-id`、主 Agent、目标与验收、用户授权依据、预算与规则版本、实际 Convorel state-dir（解析后的绝对路径）。
+**1. 任务头**（写一次）：`collab-id`、主 Agent、目标与验收、用户授权依据、ChatGPT 分级与依据、预算与规则版本、实际 Convorel state-dir（解析后的绝对路径）。
 
 **2. 事件**（只追加），每条含：序号、带时区时间、事件类型、阶段·轮次、参与者·实际模型（无法核验写“未核验”）、输入与回复定位、原判断、源码快照引用（仓库路径 + 基线 commit + diff/未跟踪文件）、finding 处置（只记变化）、证据与状态变化。
 
-- 事件类型：占号、提交、读取、处置、版本变化、阻塞、冻结，必要时补充豁免、恢复。
+- 事件类型：分级、升级、占号、提交、读取、处置、版本变化、阻塞、冻结，必要时补充豁免、恢复。
 - ChatGPT 送审事件单列三个独立状态：run complete、Markdown 捕获、归档，以及 finish 回执的 `organizationPending`、`replyChanged`；未知记“未知”。
 - finding 首次出现时分配需求内唯一编号，含发现阶段前缀、原轮次与序号：`P` = ChatGPT 方案审查、`V` = ChatGPT 结果校验、`D` = 主/副讨论、`X` = 交叉 review；`B` 阻断、`S` 建议，如 `P1-B3`、`V1-S2`。后续跨轮、跨阶段处置沿用首次编号；新问题不得复用，严重度变化不重新编号。
 
@@ -144,6 +144,7 @@ ChatGPT 阶段一轮 = 一次新的实质送审（方案审查对应一版方案
 - 主 Agent: claude-opus-5-5
 - 目标与验收: <一句话>
 - 用户授权依据: <消息或指令引用>
+- ChatGPT 分级与依据: 必审——<命中的条件>
 - 预算与规则版本: 讨论 3 / 交叉 review 2 / 方案审查 2 / 结果校验 2；peer-protocol <commit>
 - Convorel state-dir: /home/<user>/.local/share/convorel
 

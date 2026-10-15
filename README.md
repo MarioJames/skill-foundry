@@ -39,7 +39,7 @@
 
 A typical development task touches several skills:
 
-1. **Plan.** `agents-cooperation` picks a mode and prints a progress ledger. Design questions go to a discussion between two main agents (Claude Code and Codex) and then through a ChatGPT review called via Convorel's `chatgpt-review`.
+1. **Plan.** `agents-cooperation` picks a mode and prints a progress ledger. Design questions go to a discussion between two main agents (Claude Code and Codex); only high-risk designs then go through a ChatGPT review called via Convorel's `chatgpt-review`.
 2. **Isolate.** Workers that would collide get their own `cow-workspace` view; peer agents and long-running processes live in `herdr` panes.
 3. **Build and check.** Workers implement. `tdd` decides which tests are worth writing; `feature-acceptance` and `browser-harness` verify behavior; `public-acceptance` shares a temporary URL when someone else needs to look.
 4. **Ship.** `trigger-build-workflow` commits, pushes or dispatches a build only within what you authorized; `changelog-writing` turns the result into release notes.
@@ -50,7 +50,7 @@ Each skill also works alone.
 
 - **Roles.** The agent facing you is the main agent; a second main agent on the other host acts as peer. Both only design, review and dispatch, so the expensive models stay out of execution. Workers (Sonnet 5.5 high on Claude Code, `gpt-6.1-sol` high on Codex) make every file change and are always dispatched with an explicit model and effort.
 - **Modes.** Design discussion, parallel development split between both sides, or ordinary dispatch. A progress ledger accompanies every update.
-- **Review gate.** After main/peer discussion, a design must pass a ChatGPT review before dependent work starts. Rounds are budgeted per stage: discussion 3, cross review 2, design review 2, result review 2. Each round is logged before it is sent, and revisions never reset the count. When the budget runs out, the main agent decides within the user's authorization and records that ChatGPT did not pass the design.
+- **Review gate.** ChatGPT review is mandatory only for high-risk designs: security, migrations of persisted data, costly-to-reverse architecture, irreversible effects, a main/peer deadlock, or an explicit request. Such a design must pass review after main/peer discussion, and only the work that depends on it waits; everything else keeps moving. Other designs are frozen by the main agent after main/peer discussion. Rounds are budgeted per stage: discussion 3, cross review 2, design review 2, result review 2. Each round is logged before it is sent, and revisions never reset the count. When the budget runs out, the main agent decides within the user's authorization and records that ChatGPT did not pass the design.
 - **Trace.** Each requirement keeps an append-only `decision-log.md`, every plan version as its own message file, source snapshots for uncommitted code, and Convorel task, run and content-version references.
 
 Install the same skill on both hosts; the role follows the message source, not the vendor. Details: [skill entry](skills/agents-cooperation/SKILL.md) and [peer protocol](skills/agents-cooperation/references/peer-protocol.md).
@@ -98,7 +98,7 @@ Bun 1.3 or newer runs every script and hook entrypoint. Some skills also need ho
 
 | Skill | Also needs |
 | --- | --- |
-| `agents-cooperation` | Herdr for the peer agent (falls back to own workers without it); Convorel with `chatgpt-review` for the review gate |
+| `agents-cooperation` | Herdr for the peer agent (falls back to own workers without it); Convorel with `chatgpt-review` for high-risk designs |
 | `herdr` | Herdr CLI; the CLI response decides availability, and inherited `HERDR_*` variables are not trusted for identity |
 | `cow-workspace` | Linux, Git, `flock`, `fuse-overlayfs`, `fusermount3`, usable `/dev/fuse`; prepare from a clean, committed repository ([details](skills/cow-workspace/SKILL.md#prepare-once-create-as-needed)) |
 | `browser-harness` | agent-browser with its bundled Chromium; `DISPLAY` or `WAYLAND_DISPLAY` for headed login ([runtime setup](skills/browser-harness/references/runtime.md)) |

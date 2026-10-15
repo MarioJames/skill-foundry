@@ -1,6 +1,6 @@
 interface:
   display_name: "Agents Cooperation"
   short_description: "主/副 Agent 只设计、review 和调度，改动全部交给 worker；经 Herdr pane 与另一主 Agent 协作并交叉 review"
-  default_prompt: "使用 $agents-cooperation 盘点全部未完成工作，判定讨论、并行开发或普通调度模式，主/副 Agent 不亲自改文件，用内置子 Agent 执行，必要时经 Herdr pane 与另一主 Agent 协作和交叉 review，方案讨论后必经 ChatGPT 审查，轮次有界、由主 Agent 拍板并写入 decision-log，并在每个触发点输出台账。"
+  default_prompt: "使用 $agents-cooperation 盘点全部未完成工作，判定讨论、并行开发或普通调度模式，主/副 Agent 不亲自改文件，用内置子 Agent 执行，必要时经 Herdr pane 与另一主 Agent 协作和交叉 review，高风险（必审）方案经 ChatGPT 审查，其余方案由主/副讨论后冻结，轮次有界、由主 Agent 拍板并写入 decision-log，并在每个触发点输出台账。"
 policy:
   allow_implicit_invocation: true
