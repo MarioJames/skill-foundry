@@ -10,7 +10,7 @@ const SAFE_PROFILE = /^[a-z][a-z0-9_]*$/u;
 const SSH_COMMAND = /^\s*(?:(?:builtin|command|exec)\s+)?(?<transport>autossh|mosh|ssh)(?:\s|$)/u;
 
 export interface DiscoveryRecord {
-  kind: "alias" | "profile";
+  kind: "alias" | "profile" | "status";
   name: string;
   value: string;
 }
@@ -51,22 +51,25 @@ export function captureCommand(shellName: string, begin: string, end: string): s
 
   if (shellName === "zsh") {
     return `
-printf '%s\\0' ${quotedBegin}
+\\builtin setopt noaliases
+\\builtin printf '%s\\0' ${quotedBegin}
+\\builtin printf 'status\\0runtime\\0%s:%s\\0' \"\${SERVER_PROFILES_STATUS:-not_loaded}\" \"\${SERVER_PROFILES_REASON:-not_loaded}\"
 for alias_name in \${(ok)aliases}; do
-  printf 'alias\\0%s\\0%s\\0' "$alias_name" "$aliases[$alias_name]"
+  \\builtin printf 'alias\\0%s\\0%s\\0' "$alias_name" "$aliases[$alias_name]"
 done
 if (( \${+functions[server_ssh]} )) && [[ "\${(t)SERVER_PROFILES}" == *association* ]]; then
   for profile_name in \${(ok)SERVER_PROFILES}; do
-    printf 'profile\\0%s\\0%s\\0' "$profile_name" "$SERVER_PROFILES[$profile_name]"
+    \\builtin printf 'profile\\0%s\\0%s\\0' "$profile_name" "$SERVER_PROFILES[$profile_name]"
   done
 fi
-printf '%s\\0' ${quotedEnd}
+\\builtin printf '%s\\0' ${quotedEnd}
 `;
   }
 
   if (shellName === "bash") {
     return `
 printf '%s\\0' ${quotedBegin}
+printf 'status\\0runtime\\0not_applicable:bash\\0'
 while IFS= read -r alias_name; do
   printf 'alias\\0%s\\0%s\\0' "$alias_name" "\${BASH_ALIASES[$alias_name]}"
 done < <(printf '%s\\n' "\${!BASH_ALIASES[@]}" | LC_ALL=C sort)
@@ -87,7 +90,13 @@ export function parseDiscoveryStream(stdout: Uint8Array, begin: string, end: str
     throw new Error("could not read aliases from the effective login shell");
   }
 
-  const fields = bytes.subarray(start + beginMarker.length, stop).toString("utf8").split("\0");
+  const payload = bytes.subarray(start + beginMarker.length, stop);
+  if (bytes.indexOf(beginMarker, start + beginMarker.length) !== -1
+      || bytes.indexOf(endMarker, stop + endMarker.length) !== -1
+      || payload.length === 0 || payload.at(-1) !== 0) {
+    throw new Error("the login shell returned an invalid discovery envelope");
+  }
+  const fields = payload.toString("utf8").split("\0");
   if (fields.at(-1) === "") fields.pop();
   if (fields.length % 3 !== 0) {
     throw new Error("the login shell returned an invalid discovery stream");
@@ -96,8 +105,23 @@ export function parseDiscoveryStream(stdout: Uint8Array, begin: string, end: str
   const records: DiscoveryRecord[] = [];
   for (let index = 0; index < fields.length; index += 3) {
     const kind = fields[index];
-    if (kind !== "alias" && kind !== "profile") continue;
+    if (kind !== "alias" && kind !== "profile" && kind !== "status") {
+      throw new Error("the login shell returned an invalid discovery record");
+    }
     records.push({ kind, name: fields[index + 1]!, value: fields[index + 2]! });
+  }
+  const statuses = records.filter(({ kind }) => kind === "status");
+  const status = statuses[0];
+  if (statuses.length !== 1 || status?.name !== "runtime"
+      || !["ok:none", "missing:absent", "not_applicable:bash", "not_loaded:not_loaded",
+           "error:invalid_configuration", "error:jq_required"].includes(status.value)) {
+    throw new Error("the login shell returned a missing or invalid runtime status");
+  }
+  if (status.value.startsWith("error:") || status.value.startsWith("not_loaded:")) {
+    throw new Error("the server runtime is not loaded or its configuration is invalid");
+  }
+  if (status.value !== "ok:none" && records.some(({ kind }) => kind === "profile")) {
+    throw new Error("the login shell returned profiles with an invalid runtime status");
   }
   return records;
 }
@@ -113,6 +137,7 @@ export function effectiveDiscovery(shell: string): DiscoveryRecord[] {
     stdout: "pipe",
     stderr: "pipe",
   });
+  if (result.exitCode !== 0) throw new Error("the login shell failed during discovery");
   return parseDiscoveryStream(result.stdout, begin, end);
 }
 
@@ -172,6 +197,7 @@ export function main(args: string[] = Bun.argv.slice(2)): number {
     const output = {
       schema_version: 2,
       shell,
+      runtime_status: discovery.find(({ kind }) => kind === "status")!.value.split(":")[0],
       server_profiles: filterServerProfiles(discovery),
       host_aliases: filterHostAliases(discovery),
     };

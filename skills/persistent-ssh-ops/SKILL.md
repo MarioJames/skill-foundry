@@ -13,7 +13,7 @@ Open one TTY-backed SSH session per target host and reuse it for the complete re
 
 When the user requests initialization or an update of the local server profiles, use [profile-setup.md](references/profile-setup.md). Ordinary remote work uses existing profiles or OpenSSH aliases without changing local shell configuration.
 
-Named server profiles use zsh on Debian/Linux as well as macOS. The bundled runtime requires `zsh`; profile discovery loads the configured login shell, which must be zsh with the initializer's `.zshrc` source block for these profiles. Inspect `command -v zsh` and the configured shell first; changing the login shell or installing zsh requires authorization.
+Named server profiles use zsh on Debian/Linux as well as macOS. The bundled runtime requires `zsh` and `jq` 1.7+; profile discovery loads the configured login shell, which must be zsh with the initializer's `.zshrc` source block for these profiles. Inspect `command -v zsh`, `command -v jq` and the configured shell first; changing the login shell or installing zsh requires authorization.
 
 ## Discover and resolve the target
 
@@ -25,10 +25,10 @@ bun <skill-directory>/scripts/scan-hosts.ts
 
 Resolve the script path relative to this `SKILL.md`, not the current project directory. The scanner starts the user's configured login shell in login and interactive mode and returns two separately filtered sources:
 
-- `server_profiles`: names and password-free `ssh://` URIs registered by `server_define`;
+- `server_profiles`: names and password-free `ssh://` URIs loaded from `~/.config/zsh/servers.json`;
 - `host_aliases`: legacy direct `ssh`, `mosh`, and `autossh` aliases.
 
-Treat both fields as runtime-only local context. Never copy scanner output into the skill, repository, memory, or final report. Prefer an exact `server_profiles[].name` match over a legacy alias with the same name. Never infer or inspect a corresponding `*_PASSWD` variable.
+Treat both fields as runtime-only local context. Never copy scanner output into the skill, repository, memory, or final report. Prefer an exact `server_profiles[].name` match over a legacy alias with the same name. Never inspect or report stored passwords. `runtime_status` is `ok`, `missing` (confirmed absent JSON), or `not_applicable` (bash alias discovery). Invalid configuration, an unloaded runtime, a malformed discovery stream, or a failing login shell causes a nonzero exit; do not treat these as an empty host list.
 
 For a registered profile, use only a scanner-returned name matching `^[a-z][a-z0-9_]*$` and start the installed runtime directly:
 
@@ -110,6 +110,7 @@ Report the resolved host identity, important files changed, validation commands,
 ## Gotchas
 
 - A local listener or green service status does not prove the service is reachable externally.
+- Automatic JSON password authentication disables keyboard-interactive and refuses effective ProxyJump/ProxyCommand connections. Key authentication retains proxy support. See [profile-setup.md](references/profile-setup.md) for supported prompts and identity paths.
 - A registered profile must be executed through `server-runtime.zsh`; its URI is discovery metadata, not an executable command.
 - A host alias may use `ProxyJump`, a non-default port, or several identity files; inspect `ssh -G` before reproducing the connection manually.
 - Repeated one-shot SSH commands lose shell state, current directory, and interactive diagnostics; reuse the TTY for multi-step work.
