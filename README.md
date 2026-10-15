@@ -6,488 +6,154 @@
 
 > Forge once. Empower every agent.
 
-`skill-foundry` is a small set of agent skills we run in production — workflows we got tired of re-explaining, hardened into portable, inspectable, versioned packages. Each skill ships with its scripts, prompts, references, and recovery rules, so you install a capability once and reuse it across Codex, Claude-style runtimes, and your own agent environments.
+`skill-foundry` is a set of agent skills taken from daily engineering work: orchestration, isolation, acceptance, release and operations. These are workflows we got tired of re-explaining. Each skill packages its instructions, Bun scripts, references and recovery rules, so you install a capability once and reuse it in Codex, Claude Code and other runtimes that read `SKILL.md`.
 
-## Why skill-foundry
+- **Proven in real work.** A skill earns its place by doing actual work, not by sounding good in a README.
+- **Evidence over trust.** Behavior is checked against real CLIs, browsers and hosts; reports separate what was observed from what was assumed.
+- **Built to resume.** Long multi-agent work keeps durable state, so a paused or crashed run continues instead of starting over.
+- **Inspectable.** Instructions, scripts and references live together in Git, so behavior is versioned and reviewable.
 
-- **Production-proven, not aspirational** — every skill here earns its place doing real work in real runs, not by sounding good in a README.
-- **Evidence over trust** — skills are verified by running them against a real CLI and capturing what actually happened (that is what `asset-validation` does).
-- **Built to survive interruption** — long multi-agent work carries durable state and recovery rules, so a paused or crashed run resumes instead of restarting.
-- **Portable & inspectable** — instructions, scripts, and references live together in Git; you version and audit behavior instead of trusting undocumented prompts.
+## Skills
 
-## The Skills
+| Area | Skill | What it does |
+| --- | --- | --- |
+| Orchestration | [`agents-cooperation`](skills/agents-cooperation/SKILL.md) | Main/peer agents design, review and dispatch; workers make every change |
+| | [`herdr`](skills/herdr/SKILL.md) | Herdr tabs and panes, persistent terminals, agent start/stop, verified naming and precise cleanup |
+| | [`cow-workspace`](skills/cow-workspace/SKILL.md) | Copy-on-write Git workspaces per task, Git bundle handoff, task resource lifecycle |
+| Quality | [`tdd`](skills/tdd/SKILL.md) | Decides before coding which checks a change needs; writes tests only when they can fail |
+| | [`feature-acceptance`](skills/feature-acceptance/SKILL.md) | Engineering preferences, interaction states and recovery paths for front-end and back-end work; records corrections where they belong |
+| | [`browser-harness`](skills/browser-harness/SKILL.md) | Browser acceptance with agent-browser: services, login state, screenshot/console/network evidence |
+| | [`public-acceptance`](skills/public-acceptance/SKILL.md) | Starts a DEV service, opens a temporary Cloudflare URL and hands over login details |
+| | [`asset-validation`](skills/asset-validation/SKILL.md) | Reviews skills, plugins, rules and agents; runs real CLI acceptance when behavior must be proven |
+| Release & ops | [`trigger-build-workflow`](skills/trigger-build-workflow/SKILL.md) | Commits, pushes and dispatches GitHub Actions builds only within the authorized scope |
+| | [`changelog-writing`](skills/changelog-writing/SKILL.md) | Release notes for customers or engineers from release evidence, with a JSON contract |
+| | [`persistent-ssh-ops`](skills/persistent-ssh-ops/SKILL.md) | One reusable TTY SSH session per host for multi-step maintenance and diagnostics |
+| | [`debian-testvm`](skills/debian-testvm/SKILL.md) | Disposable Debian Stable VMs on QEMU/KVM for testing install and deploy scripts |
+| | [`provision-xray-hy2-node`](skills/provision-xray-hy2-node/SKILL.md) | Runbook for Xray Vision/REALITY plus Hysteria 2 nodes, certificates and clients |
+| Knowledge & content | [`repo-knowledge-graph`](skills/repo-knowledge-graph/SKILL.md) | Repository knowledge, project paths and cross-project relations in OpenViking |
+| | [`awesome-presentation`](skills/awesome-presentation/SKILL.md) | React slide decks from materials or a brief, built on the awesome-presentation scaffold |
 
-### `asset-validation` — evidence-backed acceptance for agent assets
+`chatgpt-review` used to live here. It is now bundled and maintained with [Convorel](https://github.com/MarioJames/convorel); install it from there.
 
-Reviews reusable assets with scoped static checks, or runs **real interactive CLI** acceptance when behavioral evidence is requested. The acceptance route stages the asset in isolation, feeds tasks, independently scores the outcome, and cleans up; ordinary review does not start that pipeline.
+## How they fit together
 
-It includes progressive task ladders, clean post-fix PASS gates, typed staging profiles (`skill` / `plugin` / `agent` / `rule`), secret redaction, and budgeted unattended runs.
+A typical development task touches several skills:
 
-Real CLI acceptance defaults to Codex. Claude Code requires an explicit user choice and is never an automatic fallback.
+1. **Plan.** `agents-cooperation` picks a mode and prints a progress ledger. Design questions go to a discussion between two main agents (Claude Code and Codex) and then through a ChatGPT review called via Convorel's `chatgpt-review`.
+2. **Isolate.** Workers that would collide get their own `cow-workspace` view; peer agents and long-running processes live in `herdr` panes.
+3. **Build and check.** Workers implement. `tdd` decides which tests are worth writing; `feature-acceptance` and `browser-harness` verify behavior; `public-acceptance` shares a temporary URL when someone else needs to look.
+4. **Ship.** `trigger-build-workflow` commits, pushes or dispatches a build only within what you authorized; `changelog-writing` turns the result into release notes.
 
-**Reach for it when** validating a skill, plugin, rule, or agent before release, or re-checking one after changes.
+Each skill also works alone.
 
-### `browser-harness` — browser acceptance scaffolding
+### `agents-cooperation` in brief
 
-Frontend acceptance helper around [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser), using bundled headless Chromium by default and headed mode for interactive login. Resolves target shape (URL / static HTML / project dir), starts a dev server when needed, prepares login state, injects a stable `APP_URL`, and collects screenshot + console + network evidence. Step-level browser actions stay on the agent-browser CLI; temporary public review delegates standard tunnel lifecycle to `public-acceptance` while retaining project-specific Host, environment, and URL mapping here.
+- **Roles.** The agent facing you is the main agent; a second main agent on the other host acts as peer. Both only design, review and dispatch, so the expensive models stay out of execution. Workers (Sonnet 5.5 high on Claude Code, `gpt-6.1-sol` high on Codex) make every file change and are always dispatched with an explicit model and effort.
+- **Modes.** Design discussion, parallel development split between both sides, or ordinary dispatch. A progress ledger accompanies every update.
+- **Review gate.** After main/peer discussion, a design must pass a ChatGPT review before dependent work starts. Rounds are budgeted per stage: discussion 3, cross review 2, design review 2, result review 2. Each round is logged before it is sent, and revisions never reset the count. When the budget runs out, the main agent decides within the user's authorization and records that ChatGPT did not pass the design.
+- **Trace.** Each requirement keeps an append-only `decision-log.md`, every plan version as its own message file, source snapshots for uncommitted code, and Convorel task, run and content-version references.
 
-**Reach for it when** doing smoke checks, journey prep with `APP_URL`, interactive browser exploration, or reusable headed login profiles.
-
-### `feature-acceptance` — 前后端功能验收与规则进化
-
-实现前读取工程偏好和交互约束，交付前用脚本与重点审查检查状态、边界和恢复。视觉规则与 `lobe-design` 分工，浏览器证据可由 `browser-harness` 提供；纠偏按归属沉淀到技能参考或项目门禁，并接入下次 Agent 的读取入口。
-
-**使用场景：** 让 Agent 按个人工程习惯实现和验收前后端，减少反复解释基础要求。个人偏好保留具体写法，项目业务决定单独留在需求中；脚本不会把“零命中”判为功能通过。详见 [技能入口](skills/feature-acceptance/SKILL.md)。
-
-### `public-acceptance` — public DEV acceptance
-
-Prepares a local DEV service, discovers and verifies its actual listening port, creates a temporary Cloudflare review URL, and retrieves the application's development login credentials from effective environment configuration or the development database. Reports available plaintext credentials to the requesting user and explains hash-only or external-auth limitations without inventing passwords. Opens the public page once with `browser-harness` to confirm reachability; login and business flows are outside this check. Runs the project dev script directly in an interactive pane so users can stop and restart it while the tunnel stays in the background, retaining the same local origin and port.
-
-The existing Bun CLI owns anonymous tunnel start / status / stop / cleanup with isolated configuration and exact process state. It returns the generated root URL immediately; the acceptance workflow verifies reachability and pages afterward.
-
-**Reach for it when** preparing a project for public acceptance, handing over a temporary review URL with login details, or inspecting and cleaning up an existing Quick Tunnel.
-
-### `agents-cooperation` — model-driven multi-agent orchestration
-
-`agents-cooperation` lets the main model schedule work itself; no external classifier is involved. The agent facing the user is the main agent: it picks one of three modes — design discussion with a peer main agent followed by a mandatory ChatGPT review gate through Convorel (bounded rounds, the main agent makes the final call, every decision recorded in a decision-log), parallel development split between both sides, or ordinary dispatch where it only routes work to workers — and prints a progress ledger at every trigger. Workers run through each host's built-in subagent tool (Sonnet 5.5 high on Claude Code, gpt-6.1-sol high on Codex). Main and peer agents never edit project files themselves: they design, review and dispatch, and workers make every change, which keeps the expensive main-agent models out of execution. The two main agents communicate only in text through a Herdr pane and message files, and cross-review each other's diffs. Install the same skill on both Claude Code and Codex; the role follows the message source, not the vendor. See the [peer protocol](skills/agents-cooperation/references/peer-protocol.md).
-
-### `herdr` — terminal operations and resource ownership
-
-`herdr` names the current Codex conversation through an existing shared daemon and names Herdr tabs after verifying process ownership or a fresh native-title challenge echoed by the actual client. It also manages persistent terminals, native Agent operations and precise cleanup. Shared-daemon conversation naming uses the runtime thread ID, never an inherited pane ID; terminal-only hosts retain the verified tab path. Scheduling policy belongs to `agents-cooperation`, which uses Herdr panes for peer main-agent collaboration.
-
-### `cow-workspace` — copy-on-write development workspaces
-
-Prepares one fixed Git and dependency baseline, then uses `fuse-overlayfs` to give each task its own writable view on Linux. Shared `.env` configuration remains available while source edits, dependency changes, Git state, and build output stay local to each workspace. The Bun CLI exports task commits as Git bundles, resumes retained writes, and refuses unsafe cleanup. Herdr can route Agents to the returned working directory.
-
-**Reach for it when** parallel development needs isolated writes without copying a complete source and dependency tree for every Agent.
-
-Preparation makes one ordinary baseline copy when native reflinks are unavailable; subsequent workspaces reuse it through CoW. Task-specific configuration belongs in `.env.local`, using the project's loader. The shared `.env` target remains writable outside CoW, and databases, network services, and processes need their own isolation.
-
-See the [CoW workspace guide](skills/cow-workspace/SKILL.md) for preparation, returned working directories, Git bundle handoff, recovery, and guarded cleanup. Operational rules live in that skill; no duplicate global workspace rule is required.
-
-### `debian-testvm` — clean Debian VMs for script testing
-
-Boots disposable Debian Stable VMs on a Linux or WSL2 host with QEMU/KVM, from the official SHA512-verified cloud image. Images are composed on demand from components — the built-in `docker` (Docker CE, Compose plugin, Git) plus your own `image.json` + `provision.sh` directories in `~/.config/debian-testvm/images/` — as in `--image docker+nodejs`; every layer is cached and rebuilt only when its component changes. `debian` keeps the unmodified image. Each VM is a copy-on-write overlay with user-mode networking and one forwarded SSH port, so the host gets no bridges, firewall rules or daemons. `up` returns the SSH URL, user and password once cloud-init has finished; `reset` returns a VM to a clean disk in seconds.
-
-**Reach for it when** checking that install, deployment or maintenance scripts work on a fresh system. See the [skill guide](skills/debian-testvm/SKILL.md).
-
-### `trigger-build-workflow` — safe commit, push, and optional build dispatch
-
-Executes explicitly selected commit, push, and build actions without inferring authorization from repository contents. The workflow detector validates channel, version, and changelog inputs only for a requested dispatch; ordinary commits and pushes do not require release metadata.
-
-**Reach for it when** committing and pushing changes, triggering a build, or publishing a beta/production release across repositories with different CI capabilities.
-
-### `persistent-ssh-ops` — reusable remote-operation sessions
-
-Keeps one TTY-backed SSH session per host through multi-step maintenance, deployment, log, and incident workflows. It ships a complete `server_define`/`server_ssh` zsh runtime and initializer, discovers registered profiles before legacy shell aliases, falls back to OpenSSH `Host` aliases, preserves remote context, verifies changes, redacts secret-bearing output, and closes every task-owned session.
-
-**Reach for it when** remote work requires more than one command or interactive diagnostics.
-
-### `provision-xray-hy2-node` — mixed Xray and Hysteria 2 runbook
-
-Provisions or audits Xray VLESS Vision/REALITY on TCP/443 alongside Hysteria 2 on UDP/443, including DNS, DNS-01 certificates, layered firewalls, generic Mihomo clients, rollback, and external acceptance. All committed values are placeholders; generated credentials remain runtime-only.
-
-**Reach for it when** setting up, migrating, troubleshooting, or accepting a mixed Xray + HY2 server.
-
-### `changelog-writing` — audience-routed release notes
-
-Turns release evidence into either customer-facing outcomes or technical/internal notes, with a stable JSON contract for workflow consumers and a package-free Git source collector.
-
-**Reach for it when** drafting changelogs, GitHub Release bodies, beta notes, production updates, or engineering handoffs.
-
-### `awesome-presentation` — content-first React slide decks
-
-Turns presentation materials or a goal into a runnable React deck. When scope is clear, it builds and validates directly; collaborative outline discussion is available when requested or when essential content is missing. Uses the open-source [awesome-presentation](https://github.com/MarioJames/awesome-presentation) scaffold (layouts, components, deck rules, offline single-file build).
-
-**Reach for it when** building a tech talk, training deck, product narrative, or management report — even from a vague one-liner.
-
-### `repo-knowledge-graph` — repository knowledge and cross-project relations
-
-Uses the current Git remote to locate one repository's online graph, domains, entities, and shared knowledge. Project identities, peer-specific paths, and cross-project edges live in one global relation source; cross-project decisions and continuation live in one global memory source.
-
-**Reach for it when** retrieving or maintaining repository knowledge, resolving project identity and paths, following cross-repository dependencies, or continuing earlier project work.
-
-### `tdd` — when to test, and what counts as a test
-
-A thin coding-time gate: default is fast path. Write a test only when the assertion can still fail on a wrong implementation after the files already exist. Pins uncovered error-prone contracts (business rules, mappings, permissions, state transitions, concurrency, parsing, boundaries, consumed output shapes) and logic-bug regressions; routes refactors, wiring, copy, layout, and migrations to engineering checks, browser acceptance, or migration runs; skips scaffolding and tautological green tests.
-
-**Reach for it when** implementing or changing production code or tests. The skill description is meant to fire on every development change; the body then decides TDD vs skip.
+Install the same skill on both hosts; the role follows the message source, not the vendor. Details: [skill entry](skills/agents-cooperation/SKILL.md) and [peer protocol](skills/agents-cooperation/references/peer-protocol.md).
 
 ## Install
 
-`chatgpt-review` is now bundled and maintained in [Convorel](https://github.com/MarioJames/convorel). Install it from Convorel; preserve existing personal modifications and private review history when migrating. It is no longer distributed by skill-foundry.
-
-Install with the [`skills`](https://github.com/vercel-labs/skills) CLI (`pnpm dlx` or `npx` can
-replace `bunx` when Bun is unavailable):
+Use the [`skills`](https://github.com/vercel-labs/skills) CLI. `pnpm dlx` or `npx` can replace `bunx`.
 
 ```bash
 # Everything
 bunx skills add MarioJames/skill-foundry --all
 
-# One skill
-bunx skills add MarioJames/skill-foundry --skill asset-validation
-bunx skills add MarioJames/skill-foundry --skill browser-harness
-bunx skills add MarioJames/skill-foundry --skill feature-acceptance
-bunx skills add MarioJames/skill-foundry --skill public-acceptance
-bunx skills add MarioJames/skill-foundry --skill agents-cooperation
-bunx skills add MarioJames/skill-foundry --skill herdr
-bunx skills add MarioJames/skill-foundry --skill cow-workspace
-bunx skills add MarioJames/skill-foundry --skill debian-testvm
-bunx skills add MarioJames/skill-foundry --skill trigger-build-workflow
-bunx skills add MarioJames/skill-foundry --skill persistent-ssh-ops
-bunx skills add MarioJames/skill-foundry --skill provision-xray-hy2-node
-bunx skills add MarioJames/skill-foundry --skill changelog-writing
-bunx skills add MarioJames/skill-foundry --skill awesome-presentation
-bunx skills add MarioJames/skill-foundry --skill repo-knowledge-graph
-bunx skills add MarioJames/skill-foundry --skill tdd
+# Selected skills
+bunx skills add MarioJames/skill-foundry --skill agents-cooperation tdd
 
-# Target a specific agent, or install globally
-bunx skills add MarioJames/skill-foundry --all -a claude-code   # or: -a codex
-bunx skills add MarioJames/skill-foundry --all -g
+# A specific agent, or a global install
+bunx skills add MarioJames/skill-foundry --skill '*' --agent claude-code   # or: codex
+bunx skills add MarioJames/skill-foundry --skill '*' -g
+
+# Update installed skills
+bunx skills update
 ```
 
-Restart or reload the target agent runtime after installation so it can discover the skills.
+Reload the agent runtime afterwards so it discovers the skills. Keep one copy of each skill per host; for Codex, do not install the same skill in both `~/.agents/skills` and `~/.codex/skills`.
 
-`herdr` requires Bun and an installed Herdr CLI. It does not use `HERDR_ENV` or other inherited
-environment variables as an availability gate; the actual CLI response is authoritative, including
-from agent sandboxes that do not inherit the parent Herdr environment. Availability does not prove
-identity: a shared daemon can inherit stale pane IDs, and its hooks can report sessions to that
-wrong pane. Shared-daemon naming uses a one-use native-title challenge to identify the actual client pane,
-then verifies the tab write and restores the formal conversation title. Ambiguous or absent
-client echoes leave tabs untouched; `--dry-run` performs no challenge or writes.
-
-`cow-workspace` requires Linux, Git, Bun, `flock`, `fuse-overlayfs`, `fusermount3`, and a usable
-`/dev/fuse`. Its CLI checks real mounting and does not install missing system tools or silently
-fall back to a full copy per workspace. Prepare from a clean, committed repository; ignored root
-`node_modules` is included automatically. See the [preparation requirements](skills/cow-workspace/SKILL.md#prepare-once-create-as-needed)
-for extra dependency directories and unsupported layouts.
-
-`debian-testvm` requires a Linux x86_64 host with read/write `/dev/kvm`, `qemu-system-x86_64`, `qemu-img`, `tar`,
-`genisoimage` or `xorriso`, an OpenSSH client and `curl`. It does not install system packages;
-`bun skills/debian-testvm/scripts/testvm.ts doctor` distinguishes missing CPU virtualization,
-KVM modules, device permissions and tools. VMware/WSL2 guests must verify passthrough explicitly;
-see the [host preparation guide](skills/debian-testvm/SKILL.md#prepare-once).
-
-On Debian/Linux, browser login needs `DISPLAY` or `WAYLAND_DISPLAY`, and Chromium needs its
-system libraries. Headless evidence collection can reuse an existing login profile;
-see [browser runtime setup](skills/browser-harness/references/runtime.md). Named SSH profiles
-use zsh and its initialized `.zshrc`; no Bash profile migration is required.
-
-Bun 1.3 or newer runs the Agent-facing script and hook entrypoints. Installable resources under
-`assets/`, including the SSH zsh runtime, retain their target runtime; the Bun initializer installs
-that runtime with the required permissions. External tools keep their own runtime requirements.
-
-Use one installation entry per skill in each host. For Codex, do not install the same skill in both
-`~/.agents/skills` and `~/.codex/skills`; keep the chosen copy synchronized from this repository.
-
-### Manual Fallback
-
-If your runtime does not support `skills add`, clone the repository and copy the skill directories directly.
-
-Codex:
+### Manual install
 
 ```bash
 git clone https://github.com/MarioJames/skill-foundry.git
 cd skill-foundry
-mkdir -p ~/.agents/skills
-cp -R skills/asset-validation skills/browser-harness skills/feature-acceptance \
-  skills/public-acceptance \
-  skills/agents-cooperation skills/herdr skills/cow-workspace skills/debian-testvm skills/trigger-build-workflow skills/persistent-ssh-ops \
-  skills/provision-xray-hy2-node skills/changelog-writing \
-  skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.agents/skills/
+target=~/.agents/skills   # Claude Code: ~/.claude/skills
+mkdir -p "$target"
+for skill in skills/*/; do
+  name=$(basename "$skill")
+  rm -rf "$target/$name"
+  cp -R "$skill" "$target/$name"
+done
 ```
 
-Claude-style runtimes:
+Run the same loop after `git pull` to update. It replaces only the directories it copies, so keep personal edits in a fork rather than in the installed copy.
 
-```bash
-git clone https://github.com/MarioJames/skill-foundry.git
-cd skill-foundry
-mkdir -p ~/.claude/skills
-cp -R skills/asset-validation skills/browser-harness skills/feature-acceptance \
-  skills/public-acceptance \
-  skills/agents-cooperation skills/herdr skills/cow-workspace skills/debian-testvm skills/trigger-build-workflow skills/persistent-ssh-ops \
-  skills/provision-xray-hy2-node skills/changelog-writing \
-  skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.claude/skills/
-```
+### Requirements
 
-Verify the installation:
+Bun 1.3 or newer runs every script and hook entrypoint. Some skills also need host tools; none of them installs system packages for you.
 
-```bash
-test -f ~/.agents/skills/asset-validation/scripts/acc.ts
-test -f ~/.agents/skills/browser-harness/scripts/bh.ts
-test -f ~/.agents/skills/feature-acceptance/scripts/accept.ts
-test -f ~/.agents/skills/public-acceptance/scripts/cqt.ts
-test -f ~/.agents/skills/agents-cooperation/references/peer-protocol.md
-test -f ~/.agents/skills/herdr/scripts/route-lane.ts
-test -f ~/.agents/skills/cow-workspace/scripts/cow.ts
-test -f ~/.agents/skills/debian-testvm/scripts/testvm.ts
-test -f ~/.agents/skills/trigger-build-workflow/scripts/detect-build-workflow.ts
-test -f ~/.agents/skills/trigger-build-workflow/scripts/dispatch-build-workflow.ts
-test -f ~/.agents/skills/persistent-ssh-ops/SKILL.md
-test -f ~/.agents/skills/persistent-ssh-ops/scripts/scan-hosts.ts
-test -f ~/.agents/skills/provision-xray-hy2-node/references/templates.md
-test -f ~/.agents/skills/changelog-writing/scripts/collect-commits.ts
-test -f ~/.agents/skills/awesome-presentation/SKILL.md
-test -f ~/.agents/skills/repo-knowledge-graph/SKILL.md
-test -f ~/.agents/skills/tdd/SKILL.md
-```
-
-### Update Manual Installs
-
-```bash
-cd skill-foundry
-git pull
-rm -rf ~/.agents/skills/asset-validation \
-  ~/.agents/skills/browser-harness ~/.agents/skills/feature-acceptance ~/.agents/skills/public-acceptance \
-  ~/.agents/skills/agent-dispatch ~/.agents/skills/agents-cooperation ~/.agents/skills/herdr ~/.agents/skills/cow-workspace ~/.agents/skills/debian-testvm ~/.agents/skills/trigger-build-workflow \
-  ~/.agents/skills/persistent-ssh-ops ~/.agents/skills/provision-xray-hy2-node \
-  ~/.agents/skills/changelog-writing ~/.agents/skills/awesome-presentation \
-  ~/.agents/skills/repo-knowledge-graph ~/.agents/skills/tdd
-cp -R skills/asset-validation skills/browser-harness skills/feature-acceptance \
-  skills/public-acceptance \
-  skills/agents-cooperation skills/herdr skills/cow-workspace skills/debian-testvm skills/trigger-build-workflow skills/persistent-ssh-ops \
-  skills/provision-xray-hy2-node skills/changelog-writing \
-  skills/awesome-presentation skills/repo-knowledge-graph skills/tdd ~/.agents/skills/
-```
+| Skill | Also needs |
+| --- | --- |
+| `agents-cooperation` | Herdr for the peer agent (falls back to own workers without it); Convorel with `chatgpt-review` for the review gate |
+| `herdr` | Herdr CLI; the CLI response decides availability, and inherited `HERDR_*` variables are not trusted for identity |
+| `cow-workspace` | Linux, Git, `flock`, `fuse-overlayfs`, `fusermount3`, usable `/dev/fuse`; prepare from a clean, committed repository ([details](skills/cow-workspace/SKILL.md#prepare-once-create-as-needed)) |
+| `browser-harness` | agent-browser with its bundled Chromium; `DISPLAY` or `WAYLAND_DISPLAY` for headed login ([runtime setup](skills/browser-harness/references/runtime.md)) |
+| `public-acceptance` | `cloudflared` for anonymous Quick Tunnels |
+| `trigger-build-workflow` | Git and an authenticated `gh` for workflow dispatch |
+| `persistent-ssh-ops` | OpenSSH and zsh; the initializer installs the bundled zsh runtime |
+| `debian-testvm` | Linux x86_64 with read/write `/dev/kvm`, `qemu-system-x86_64`, `qemu-img`, `tar`, `genisoimage` or `xorriso`, OpenSSH, `curl`; `doctor` explains what is missing ([host setup](skills/debian-testvm/SKILL.md#prepare-once)) |
+| `repo-knowledge-graph` | OpenViking tools registered in the agent runtime |
+| `awesome-presentation` | Git and the scaffold's own package manager |
 
 ## Usage
 
-After installation, invoke the installed skills through normal agent requests.
-
-Validate an asset:
-
-```text
-Use asset-validation to validate this skill before release.
-```
-
-Browser acceptance:
-
-```text
-Use browser-harness to prepare the app, open it, and collect screenshot + console + network evidence.
-```
-
-Expose a local HTTP service temporarily:
-
-```text
-Use public-acceptance to start this project in DEV, discover its actual port, create a public acceptance URL, and provide the configured login username and password. Verify the page and keep the service available until I finish.
-```
-
-Dispatch useful parallel work:
+Ask in normal language. Name a skill when you want to require it; selection is otherwise model-driven and never guaranteed by installation alone. `agents-cooperation` and `tdd` are written to activate on development work without being named.
 
 ```text
 Use agents-cooperation to split this work across workers, discuss the design with Codex first, and cross-review the result.
+Prepare an isolated workspace for this repository so another agent can edit it without copying node_modules; export the commits when done.
+Use browser-harness to open the app and collect screenshot, console and network evidence.
+Use public-acceptance to start this project in DEV, create a public URL and give me the login details.
+Use asset-validation to validate this skill before release.
+Use trigger-build-workflow to commit and push these files without dispatching a build.
+Use changelog-writing to produce customer-facing notes for the changes since v1.2.0.
+Use persistent-ssh-ops to inspect the service, apply the config change, verify it and close the session.
+Use debian-testvm to boot a clean Debian VM with docker and run this install script.
+Use awesome-presentation to turn these materials into a React deck and verify it in the browser.
 ```
 
-Prepare an isolated development directory with existing dependencies:
+## Development
 
-```text
-Prepare an independent development directory for this repository so another Agent can edit it without copying the complete source and node_modules for each task. Reuse the shared .env, keep task overrides local, and report the working directory. When the work is committed, export the commits for integration and clean up the task workspace.
-```
+Each skill lives in `skills/<name>/` with `SKILL.md` plus optional `agents/`, `scripts/`, `references/`, `assets/` and `tests/`.
 
-The installed skill's description helps the Agent select `cow-workspace`; selection is model-driven,
-not an execution hook or guarantee. Name `cow-workspace` explicitly when you want to require it.
-The [skill guide](skills/cow-workspace/SKILL.md) also provides direct CLI commands.
+Metadata conventions:
 
-Submit changes within the requested scope:
+- The directory name and `SKILL.md` frontmatter `name` are the same lowercase, hyphenated identifier; installers and `$skill-name` references use it.
+- `agents/openai.yaml` is present in every skill. `interface.display_name` is an English title that keeps product names and acronyms (`ChatGPT`, `CoW`, `SSH`, `TDD`).
+- Frontmatter `description`, `interface.short_description` and `interface.default_prompt` are written in Chinese, state when the skill applies and keep meaningful exclusions.
+- Scripts are TypeScript run with an explicit `bun`; documented commands must not call `scripts/*.ts` directly.
 
-```text
-Use trigger-build-workflow to commit and push these files without dispatching a build. Select --commit --push for this authorized scope; add --dispatch only when a build is requested.
-```
-
-Operate a remote server through one persistent session:
-
-```text
-Use persistent-ssh-ops to inspect the service, apply the requested config change, verify it, and close the SSH session.
-```
-
-Provision a mixed proxy node:
-
-```text
-Use provision-xray-hy2-node to add Hysteria 2 beside the existing Xray listener and run external acceptance.
-```
-
-Draft release notes:
-
-```text
-Use changelog-writing to produce customer-facing production notes from the changes since v1.2.0.
-```
-
-Build a presentation:
-
-```text
-Use awesome-presentation to turn these materials into a React deck, build it, and verify it in the browser. Make routine narrative and layout choices from the brief.
-```
-
-Retrieve repository knowledge and cross-project context:
-
-```text
-Use repo-knowledge-graph to identify this repository from its Git remote and load its online knowledge and relations.
-```
-
-Decide whether a change needs a real test:
-
-```text
-Use tdd before implementing this feature or adding a unit test.
-```
-
-Each skill defines its own activation rules in `SKILL.md`. `agents-cooperation` activates implicitly on development
-tasks, follow-up instructions and worker results; installing a skill alone does not guarantee automatic invocation. `tdd` is meant to activate on every
-production-code or test change; the skill body then chooses TDD vs skip.
-
-## Repository Layout
-
-```text
-skill-foundry/
-├── assets/
-│   └── logo.svg
-├── skills/
-│   ├── asset-validation/
-│   │   ├── SKILL.md
-│   │   ├── assets/
-│   │   ├── references/
-│   │   └── scripts/
-│   ├── browser-harness/
-│   │   ├── SKILL.md
-│   │   └── scripts/
-│   ├── feature-acceptance/  # 扫描、重点审查与项目规则进化
-│   ├── public-acceptance/
-│   │   ├── SKILL.md
-│   │   ├── agents/
-│   │   ├── scripts/
-│   │   └── tests/
-│   ├── agents-cooperation/      # Model-driven orchestration and peer protocol
-│   ├── herdr/
-│   │   ├── SKILL.md
-│   │   ├── agents/
-│   │   └── scripts/
-│   ├── cow-workspace/
-│   │   ├── SKILL.md
-│   │   ├── agents/
-│   │   ├── scripts/
-│   │   └── tests/
-│   ├── debian-testvm/
-│   │   ├── SKILL.md
-│   │   ├── agents/
-│   │   ├── assets/
-│   │   ├── scripts/
-│   │   └── tests/
-│   ├── trigger-build-workflow/
-│   │   ├── SKILL.md
-│   │   ├── agents/
-│   │   ├── scripts/
-│   │   └── tests/
-│   ├── persistent-ssh-ops/
-│   │   ├── SKILL.md
-│   │   ├── agents/
-│   │   ├── assets/
-│   │   ├── scripts/
-│   │   └── tests/
-│   ├── provision-xray-hy2-node/
-│   │   ├── SKILL.md
-│   │   ├── agents/
-│   │   └── references/
-│   ├── changelog-writing/
-│   │   ├── SKILL.md
-│   │   ├── agents/
-│   │   ├── references/
-│   │   └── scripts/
-│   ├── awesome-presentation/
-│   │   ├── SKILL.md
-│   │   ├── agents/
-│   │   └── references/
-│   ├── repo-knowledge-graph/
-│   │   ├── SKILL.md
-│   │   ├── agents/
-│   │   └── references/
-│   ├── tdd/
-│   │   ├── SKILL.md
-│   │   └── agents/
-├── LICENSE
-└── README.md
-```
-
-Installable skill packages:
-
-- `skills/asset-validation/`
-- `skills/browser-harness/`
-- `skills/feature-acceptance/`
-- `skills/public-acceptance/`
-- `skills/agents-cooperation/`
-- `skills/herdr/`
-- `skills/cow-workspace/`
-- `skills/debian-testvm/`
-- `skills/trigger-build-workflow/`
-- `skills/persistent-ssh-ops/`
-- `skills/provision-xray-hy2-node/`
-- `skills/changelog-writing/`
-- `skills/awesome-presentation/`
-- `skills/repo-knowledge-graph/`
-- `skills/tdd/`
-
-## Verify
-
-### Skill metadata convention
-
-- Keep the skill directory and `SKILL.md` frontmatter `name` as the same lowercase, hyphenated identifier, such as `browser-harness`. Installation selectors and `$skill-name` references use this identifier.
-- Set `agents/openai.yaml` → `interface.display_name` to an English title with spaces, such as `Browser Harness` or `ChatGPT Review`. Preserve product names and acronyms such as `ChatGPT`, `CoW`, `SSH`, and `TDD`.
-- Write frontmatter `description`, `interface.short_description`, and `interface.default_prompt` in Chinese. Describe when the skill applies and retain meaningful exclusions; keep technical names and the `$skill-name` identifier unchanged.
-- Include `agents/openai.yaml` in every skill package and preserve existing invocation policy and dependencies when updating metadata.
-
-Useful local checks before publishing changes:
+Checks before publishing:
 
 ```bash
 bun scripts/check-runtime-contract.ts
-find skills -name SKILL.md -print
-find skills -path '*/node_modules' -prune -o -type f \
-  \( -path '*/scripts/*' -o -path '*/hooks/*' \) ! -name '*.ts' -print
-```
-
-Package-free migrated skills run their behavior tests directly with Bun:
-
-```bash
 bun test skills/asset-validation/tests
 bun test skills/browser-harness/tests
 bun test skills/feature-acceptance/tests
 bun test skills/public-acceptance/tests
-bun test skills/cow-workspace/tests # Requires Linux, fuse-overlayfs and /dev/fuse
-bun test skills/debian-testvm/tests/doctor.test.ts # Host diagnostics; no VM prerequisites
-bun test skills/debian-testvm/tests/testvm.test.ts # Requires /dev/kvm, QEMU, the fetched debian image and a built docker image
 bun test skills/herdr/tests
 bun test skills/trigger-build-workflow/tests
 bun test skills/persistent-ssh-ops/tests
+bun test skills/cow-workspace/tests                  # Linux, fuse-overlayfs, /dev/fuse
+bun test skills/debian-testvm/tests/doctor.test.ts   # host diagnostics only
+bun test skills/debian-testvm/tests/testvm.test.ts   # needs /dev/kvm, QEMU and built images
 ```
 
-`cow-workspace` passed fixture-based behavioral acceptance on 2026-09-09 with a real Codex CLI
-using `gpt-6-astra` and `medium` reasoning. The run exercised the staged skill without global CoW
-instructions and independently checked:
-
-- Natural selection, real CoW mounts, and source/dependency/configuration isolation.
-- Two task commits exported and integrated through Git bundles, including binary changes and deletion.
-- Uncommitted changes surviving unmount/remount, and busy-workspace removal preserving data until the holder stopped.
-- A fresh read-only environment-variable question that did not load the skill or create a workspace.
-
-The original repository stayed unchanged; task mounts, temporary workspaces, processes, and the
-acceptance sandbox were removed. This records the observed run; changes should be validated against
-the affected scenarios again.
-
-```bash
-bun skills/herdr/scripts/route-lane.ts --help
-bun skills/cow-workspace/scripts/cow.ts --help
-bun skills/debian-testvm/scripts/testvm.ts --help
-bun skills/herdr/scripts/probe-workspace.ts --help
-bun skills/trigger-build-workflow/scripts/detect-build-workflow.ts --help
-bun skills/trigger-build-workflow/scripts/dispatch-build-workflow.ts --help
-bun skills/changelog-writing/scripts/collect-commits.ts --help
-bun skills/persistent-ssh-ops/scripts/init-server-config.ts --help
-bun skills/persistent-ssh-ops/scripts/scan-hosts.ts --help
-bun skills/asset-validation/scripts/acc.ts --help
-bun skills/browser-harness/scripts/bh.ts --version
-bun skills/public-acceptance/scripts/cqt.ts --version
-```
-
-```bash
-find skills -type f -name '*.md' -print
-```
+Behavioral acceptance of a changed skill goes through `asset-validation` with a real CLI; re-run the affected scenarios after each change. For example, `cow-workspace` passed fixture-based acceptance on 2026-09-09 with a real Codex CLI: natural selection, real CoW mounts, isolation of source, dependencies and configuration, Git bundle export of two task commits, and uncommitted changes surviving a remount. Compatibility reports live in [`reports/`](reports/).
 
 ## License
 
