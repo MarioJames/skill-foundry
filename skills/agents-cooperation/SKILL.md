@@ -76,7 +76,7 @@ herdr 派发依赖 Herdr；不可用时跨引擎 worker 无法派发，改用同
 
 运行状态与配置分离，记录在 `~/.local/state/agents-cooperation/availability.json`，只用 `block` / `unblock` / `status` 读写。
 
-- 派发、herdr prompt 或子 agent 结果中出现额度耗尽信号（429、usage limit、quota exceeded、credit 或额度不足、提示需等待到某时刻的 rate limit）时，owner 立即执行 `block --engine <id> [--model <m>] [--release-at <时间>] --reason <原因> --by <owner-id>`：报错能解析出重置时间就写 `--release-at`，否则省略，由该引擎配置的 `block_ttl` 给出默认冷却时长（默认配置：claude、codex 为 5h，opencode、qoder 为 1h，grok 不设；引擎没有 `block_ttl` 时不自动解封，直到手动 `unblock`）；报错只针对某个模型时带 `--model`，账户级额度不带。
+- 派发、herdr prompt 或子 agent 结果中出现额度耗尽信号（429、usage limit、quota exceeded、credit 或额度不足、提示需等待到某时刻的 rate limit）时，owner 立即执行 `block --engine <id> [--model <m>] [--release-at <时间>] --reason <原因> --by <owner-id>`：必须从报错中解析出恢复时间并传 `--release-at`（ISO 8601 含时区，或 `+<n>m|h|d`）；报错没有恢复时间时不传，该条目不自动解封，直到手动 `unblock`；报错只针对某个模型时带 `--model`，账户级额度不带。
 - 然后用 `resolve --owner <owner-id> [--tag <tag>]` 重新选子 agent，把未完成的工作包整包改派（整包转移，不在包内来回切换），台账写明 block 与改派。
 - 到期自动解封：`release_at` 之后该条目视为失效，新派发自动可用，不需要手动 `unblock`。有 `release_at` 且仍有依赖该引擎的待派发工作时，可用宿主定时唤醒在 `release_at` 之后复查 `status`。
 - owner 自身被 block 时，它的原生子 agent 随之不可派发；协作 owner 被 block 时降级为单 owner（等同 Herdr 不可用）。

@@ -22,8 +22,7 @@ SKILL.md 的“调度配置”写规则，本文写字段、派发推导、herdr
     "<engine-id>": {
       "enabled": true,
       "kind": "claude",              // herdr agent start --kind 的合法值之一（claude、codex、grok、opencode、qodercli）
-      "native_subagents": true,      // 仅 kind 为 claude、codex 时可为 true
-      "block_ttl": "5h"              // 可选，匹配 ^[1-9][0-9]*[mhd]$；该引擎 block 未给出重置时间时的默认冷却时长
+      "native_subagents": true       // 仅 kind 为 claude、codex 时可为 true
     }
   },
   "owners": {
@@ -167,8 +166,7 @@ herdr worker 指引擎与 owner 不同、经 Herdr pane 启动的 worker。每�
 ```
 
 - `model` 省略 = 整个引擎（账户级额度）；有值 = 该引擎下使用该 model 的 owner 与子 agent。`release_at` 省略 = 没有解封时间，直到手动 `unblock`。同一 (engine, model) 只保留一条，再次 `block` 覆盖。条目存在即表示 blocked。
-- **release_at 取值优先级**：`--release-at`（从报错解析出的重置时间，`explicit`）> 该引擎配置的 `block_ttl`（从 block 时刻起算，`block_ttl`）> 不写（`none`，不自动解封，直到手动 `unblock`）。`block` 的输出在条目上附 `release_source`，取值 `explicit` | `block_ttl` | `none`，只出现在命令输出里，不写入状态文件。
-- **block_ttl 默认值**：`claude`、`codex` 为 `5h`（订阅额度窗口）；`opencode`、`qoder` 为 `1h`（免费模型限流）；`grok` 不设。`block_ttl` 与 `--release-at` 的相对时间（`+<n>m|h|d`）用同一个解析函数，n 必须 ≥1。
+- **release_at 取值**：`--release-at` 取自报错里的恢复时间，格式为 ISO 8601 含时区，或 `+<n>m|h|d`（n ≥ 1，从 block 时刻起算）。不传则不写 `release_at`，不自动解封，直到手动 `unblock`。配置里没有默认冷却时长字段，`block_ttl` 等多余字段报未知字段。
 - **到期自动解封**：所有命令读取状态时，`release_at` 已过的条目视为失效；`block` / `unblock` 写入时顺带清除过期条目。不需要常驻进程。
 
 命令：

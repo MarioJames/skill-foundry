@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_CONFIG, EFFORTS, type Config, addDuration, loadSchema, parseReleaseAt, run, validateConfig } from "../scripts/agents-config.ts";
+import { DEFAULT_CONFIG, EFFORTS, type Config, loadSchema, parseReleaseAt, run, validateConfig } from "../scripts/agents-config.ts";
 import { lintSchema, validate } from "../scripts/lib/json-schema.ts";
 
 const roots: string[] = [];
@@ -40,8 +40,6 @@ const rememberVariants = (home: string, variant: Record<string, string>) => {
 /** Everything enabled, so tag routing sees all five workers. */
 const enableQoder = (c: any) => { c.engines.qoder.enabled = true; c.workers.qoder_worker.enabled = true; };
 const enableAll = (c: any) => { enableGrok(c); enableOpencode(c); enableQoder(c); };
-/** Drops every block_ttl so a block without --release-at stays until unblock (keeps skip reasons free of release_at). */
-const noTtl = (c: any) => { for (const e of Object.values<any>(c.engines)) delete e.block_ttl; };
 const CODEX_BYPASS = "--dangerously-bypass-approvals-and-sandbox";
 
 // ---- schema and structure ----
@@ -295,22 +293,21 @@ test("block writes a state file atomically and replaces the same (engine, model)
   const f = fixture();
   const first = f.cli(["block", "--engine", "codex", "--model", "gpt-6.1-sol", "--reason", "usage limit", "--release-at", "2026-10-17T03:00:00-04:00", "--by", "claude_owner"]);
   expect(first.code).toBe(0);
-  expect(first.json.block).toEqual({ engine: "codex", model: "gpt-6.1-sol", reason: "usage limit", since: "2026-10-16T12:00:00.000Z", release_at: "2026-10-17T03:00:00-04:00", by: "claude_owner", release_source: "explicit" });
+  expect(first.json.block).toEqual({ engine: "codex", model: "gpt-6.1-sol", reason: "usage limit", since: "2026-10-16T12:00:00.000Z", release_at: "2026-10-17T03:00:00-04:00", by: "claude_owner" });
   f.cli(["block", "--engine", "codex", "--model", "gpt-6.1-sol", "--reason", "again", "--release-at", "+3h"]);
   f.cli(["block", "--engine", "claude", "--reason", "account quota"]);
   const state = JSON.parse(readFileSync(f.stateFile, "utf8"));
   expect(state.version).toBe(1);
   expect(state.blocks).toHaveLength(2);
   expect(state.blocks[0]).toMatchObject({ engine: "codex", reason: "again", release_at: "2026-10-16T15:00:00.000Z" });
-  expect(state.blocks[1].release_at).toBe("2026-10-16T17:00:00.000Z");
-  expect(state.blocks[0].release_source).toBeUndefined();
+  expect(state.blocks[1].release_at).toBeUndefined();
   expect(readdirSync(join(f.root, "state"))).toEqual(["availability.json"]);
   expect(f.cli(["block", "--engine", "ghost", "--reason", "x"]).code).toBe(1);
   expect(f.cli(["block", "--engine", "codex"]).code).toBe(1);
   expect(f.cli(["block", "--engine", "codex", "--reason", "x", "--release-at", "2026-10-16T11:00:00Z"]).stderr).toContain("future");
   expect(f.cli(["block", "--engine", "codex", "--reason", "x", "--release-at", "tomorrow"]).code).toBe(1);
 });
-test("relative --release-at parsing shares addDuration with block_ttl", () => {
+test("relative --release-at parsing", () => {
   const now = Date.parse(NOW);
   expect(parseReleaseAt("+2h", now)).toBe("2026-10-16T14:00:00.000Z");
   expect(parseReleaseAt("+30m", now)).toBe("2026-10-16T12:30:00.000Z");
@@ -318,46 +315,26 @@ test("relative --release-at parsing shares addDuration with block_ttl", () => {
   expect(parseReleaseAt("2026-10-17T03:00:00-04:00", now)).toBe("2026-10-17T03:00:00-04:00");
   expect(() => parseReleaseAt("+2w", now)).toThrow();
   expect(() => parseReleaseAt("+0h", now)).toThrow();
-  expect(addDuration("5h", now)).toBe("2026-10-16T17:00:00.000Z");
-  expect(addDuration("+5h", now)).toBeUndefined();
-  expect(addDuration("0m", now)).toBeUndefined();
+  expect(() => parseReleaseAt("5h", now)).toThrow();
 });
-test("block_ttl in config must match <n>m|h|d", () => {
-  for (const ttl of ["0h", "5", "5w", "+5h", "05h", "h", "", 5]) {
-    const config = base(); config.engines.claude.block_ttl = ttl;
-    expect(paths(config)).toEqual(["$.engines.claude.block_ttl"]);
-  }
-  for (const ttl of ["30m", "5h", "1d"]) {
-    const config = base(); config.engines.claude.block_ttl = ttl;
-    expect(paths(config)).toEqual([]);
-  }
-  expect(base().engines.claude.block_ttl).toBe("5h");
-  expect(base().engines.codex.block_ttl).toBe("5h");
-  expect(base().engines.opencode.block_ttl).toBe("1h");
-  expect(base().engines.qoder.block_ttl).toBe("1h");
-  expect(base().engines.grok.block_ttl).toBeUndefined();
+test("block_ttl is no longer a config field", () => {
+  const config = base(); config.engines.claude.block_ttl = "5h";
+  expect(paths(config)).toEqual(["$.engines.claude.block_ttl"]);
+  for (const engine of Object.values<any>(base().engines)) expect(engine.block_ttl).toBeUndefined();
 });
-test("block release_at: --release-at beats block_ttl, block_ttl beats none, release_source is output only", () => {
+test("block without --release-at writes no release_at and never auto-releases", () => {
   const f = fixture();
-  const explicit = f.cli(["block", "--engine", "claude", "--reason", "limit", "--release-at", "+2h"]).json.block;
-  expect(explicit).toMatchObject({ release_at: "2026-10-16T14:00:00.000Z", release_source: "explicit" });
-  const ttl = f.cli(["block", "--engine", "codex", "--reason", "limit"]).json.block;
-  expect(ttl).toMatchObject({ release_at: "2026-10-16T17:00:00.000Z", release_source: "block_ttl" });
-  const none = f.cli(["block", "--engine", "grok", "--reason", "limit"]).json.block;
+  const none = f.cli(["block", "--engine", "codex", "--reason", "limit"]).json.block;
   expect(none.release_at).toBeUndefined();
-  expect(none.release_source).toBe("none");
+  expect(none.release_source).toBeUndefined();
+  const explicit = f.cli(["block", "--engine", "claude", "--reason", "limit", "--release-at", "+2h"]).json.block;
+  expect(explicit).toMatchObject({ release_at: "2026-10-16T14:00:00.000Z" });
+  expect(explicit.release_source).toBeUndefined();
   const state = JSON.parse(readFileSync(f.stateFile, "utf8"));
   for (const block of state.blocks) expect(block.release_source).toBeUndefined();
-  // A block_ttl block releases itself; a block without release_at never does.
-  expect(f.cli(["status"], "2026-10-16T16:59:59Z").json.workers.codex_worker.status).toBe("blocked");
-  expect(f.cli(["status"], "2026-10-16T17:00:01Z").json.workers.codex_worker.status).toBe("available");
-  expect(f.cli(["status"], "2027-10-16T12:00:00Z").json.blocks.map((b: any) => b.engine)).toEqual(["grok"]);
-  // Engines without block_ttl keep none; removing block_ttl from the config switches the source.
-  const bare = fixture(c => { delete c.engines.codex.block_ttl; });
-  const bareBlock = bare.cli(["block", "--engine", "codex", "--reason", "limit"]).json.block;
-  expect(bareBlock.release_at).toBeUndefined();
-  expect(bareBlock.release_source).toBe("none");
-  expect(bare.cli(["status"], "2027-10-16T12:00:00Z").json.workers.codex_worker.status).toBe("blocked");
+  expect(f.cli(["status"], "2027-10-16T12:00:00Z").json.blocks.map((b: any) => b.engine)).toEqual(["codex"]);
+  expect(f.cli(["status"], "2027-10-16T12:00:00Z").json.workers.codex_worker.status).toBe("blocked");
+  expect(f.cli(["status"], "2026-10-16T14:00:01Z").json.workers.claude_worker.status).toBe("available");
 });
 test("state files reject the legacy until field and release_source", () => {
   const f = fixture();
@@ -441,7 +418,7 @@ test("invalid state file is reported with paths", () => {
   expect(f.cli(["status"]).stderr).toContain("duplicate");
 });
 test("resolve without --worker takes the first available worker in order and falls over when blocked", () => {
-  const f = fixture(noTtl);
+  const f = fixture();
   expect(f.cli(["resolve", "--owner", "claude_owner"]).json).toMatchObject({ worker: "claude_worker", dispatch: "native", selected_by: "order", skipped: [], warnings: [] });
   f.cli(["block", "--engine", "claude", "--model", "sonnet", "--reason", "limit"]);
   const next = f.cli(["resolve", "--owner", "claude_owner"]).json;
@@ -454,7 +431,7 @@ test("resolve without --worker takes the first available worker in order and fal
   expect(f.cli(["resolve", "--owner", "codex_owner"]).json).toMatchObject({ worker: "codex_worker", dispatch: "native" });
 });
 test("resolve lists every unavailable candidate and exits non-zero", () => {
-  const f = fixture(c => { noTtl(c); c.owners.claude_owner.workers = ["opencode_worker", "codex_worker", "claude_worker"]; });
+  const f = fixture(c => { c.owners.claude_owner.workers = ["opencode_worker", "codex_worker", "claude_worker"]; });
   f.cli(["block", "--engine", "codex", "--reason", "account quota"]);
   f.cli(["block", "--engine", "claude", "--model", "sonnet", "--reason", "limit"]);
   const result = f.cli(["resolve", "--owner", "claude_owner"]);
@@ -494,7 +471,7 @@ test("resolve --tag prefers the first available tagged candidate over earlier un
   expect(f.cli(["resolve", "--owner", "codex_owner", "--tag", "mechanical"]).json).toMatchObject({ worker: "opencode_worker" });
 });
 test("resolve --tag falls back in order with a warning when no tagged candidate is usable", () => {
-  const f = fixture(c => { enableAll(c); noTtl(c); });
+  const f = fixture(enableAll);
   const unknown = f.cli(["resolve", "--owner", "claude_owner", "--tag", "nonexistent"]).json;
   expect(unknown).toMatchObject({ worker: "claude_worker", selected_by: "order", skipped: [], warnings: ["无可用的 nonexistent 标签候选，已按顺序回退"] });
   f.cli(["block", "--engine", "codex", "--reason", "account quota"]);
@@ -502,7 +479,7 @@ test("resolve --tag falls back in order with a warning when no tagged candidate 
   expect(blocked).toMatchObject({ worker: "claude_worker", selected_by: "order", warnings: ["无可用的 backend 标签候选，已按顺序回退"] });
   expect(blocked.skipped).toEqual([{ worker: "codex_worker", reason: "blocked (codex: account quota)" }]);
   // a blocked earlier tagged candidate is skipped in favour of a later tagged one
-  const g = fixture(c => { enableAll(c); noTtl(c); c.workers.claude_worker.tags.push("backend"); });
+  const g = fixture(c => { enableAll(c); c.workers.claude_worker.tags.push("backend"); });
   g.cli(["block", "--engine", "claude", "--model", "sonnet", "--reason", "limit"]);
   const later = g.cli(["resolve", "--owner", "claude_owner", "--tag", "backend"]).json;
   expect(later).toMatchObject({ worker: "codex_worker", selected_by: "tag", warnings: [] });

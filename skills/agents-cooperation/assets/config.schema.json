@@ -105,11 +105,6 @@
         "native_subagents": {
           "description": "Whether the engine can spawn sub-agents natively. Only claude and codex can.",
           "type": "boolean"
-        },
-        "block_ttl": {
-          "description": "Default cooldown for a quota block on this engine when no reset time is given, e.g. 5h or 30m; counted from the block time. Omitted means such a block stays until unblock.",
-          "type": "string",
-          "pattern": "^[1-9][0-9]*[mhd]$"
         }
       },
       "if": {

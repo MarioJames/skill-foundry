@@ -35,7 +35,7 @@ const INTERACTIVE: Record<string, (m: string, e: string) => string[]> = {
 export class CliError extends Error {
   constructor(message: string, public issues: Issue[] = []) { super(message); }
 }
-export interface Engine { enabled: boolean; kind: string; native_subagents?: boolean; block_ttl?: string }
+export interface Engine { enabled: boolean; kind: string; native_subagents?: boolean }
 export interface Owner { enabled: boolean; engine: string; model: string; effort: string; workers: string[]; max_parallel: number }
 export interface Worker { enabled: boolean; engine: string; model: string; effort: string; description?: string; tags?: string[] }
 export interface Config { version: 1; engines: Record<string, Engine>; owners: Record<string, Owner>; workers: Record<string, Worker> }
@@ -130,15 +130,10 @@ export function writeState(path: string, state: State): void {
   try { writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", { mode: 0o600 }); renameSync(tmp, path); }
   catch (error) { rmSync(tmp, { force: true }); throw error; }
 }
-/** The one parser for relative durations: "<n>m|h|d" (n >= 1), as in an engine's block_ttl and, with a leading "+", in --release-at. */
-export function addDuration(spec: string, now: number): string | undefined {
-  const match = /^([1-9][0-9]*)([mhd])$/.exec(spec);
-  if (!match) return undefined;
-  return new Date(now + Number(match[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[match[2] as "m" | "h" | "d"]).toISOString();
-}
+/** --release-at: an ISO 8601 timestamp with timezone (returned as given), or +<n>m|h|d counted from now (n >= 1). */
 export function parseReleaseAt(value: string, now: number): string {
-  const relative = value.startsWith("+") ? addDuration(value.slice(1), now) : undefined;
-  if (relative) return relative;
+  const relative = /^\+([1-9][0-9]*)([mhd])$/.exec(value);
+  if (relative) return new Date(now + Number(relative[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[relative[2] as "m" | "h" | "d"]).toISOString();
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(value) || Number.isNaN(stamp(value))) {
     throw new CliError(`invalid --release-at ${value}; use ISO 8601 with timezone or +<n>m|h|d`);
   }
@@ -287,21 +282,15 @@ export function run(args: string[], env: Record<string, string | undefined> = pr
         const engine = need("engine", values.engine);
         if (!config.engines[engine]) throw new CliError(`unknown engine ${engine}`);
         const entry: Block = { engine, ...(values.model ? { model: values.model } : {}), reason: need("reason", values.reason), since: new Date(now).toISOString() };
-        // release_at priority: --release-at (parsed from the error) > engine block_ttl (from now) > none (stays blocked until a manual unblock).
-        const ttl = config.engines[engine]!.block_ttl;
-        let source: "explicit" | "block_ttl" | "none" = "none";
+        // Without --release-at no release_at is written: the block stays until a manual unblock.
         if (values["release-at"]) {
           entry.release_at = parseReleaseAt(values["release-at"], now);
           if (stamp(entry.release_at) <= now) throw new CliError("--release-at must be in the future");
-          source = "explicit";
-        } else if (ttl) {
-          entry.release_at = addDuration(ttl, now)!;
-          source = "block_ttl";
         }
         if (values.by) entry.by = values.by;
         const kept = blocks.filter(b => !(b.engine === engine && b.model === entry.model));
         writeState(file, { version: 1, blocks: [...kept, entry] });
-        return out({ block: { ...entry, release_source: source }, purged_expired: state.blocks.length - blocks.length });
+        return out({ block: entry, purged_expired: state.blocks.length - blocks.length });
       }
       case "unblock": {
         const engine = need("engine", values.engine);
