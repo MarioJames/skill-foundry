@@ -130,7 +130,7 @@ test("dangling references are reported", () => {
   const worker = base(); worker.workers.opencode_worker.engine = "ghost";
   expect(paths(worker)).toEqual(["$.workers.opencode_worker.engine"]);
   const workers = base(); workers.owners.claude_owner.workers.push("ghost_worker");
-  expect(paths(workers)).toEqual(["$.owners.claude_owner.workers[5]"]);
+  expect(paths(workers)).toEqual(["$.owners.claude_owner.workers[4]"]);
   const enabledButEngineOff = base(); enabledButEngineOff.owners.claude_owner.workers = ["opencode_worker"]; enabledButEngineOff.workers.opencode_worker.enabled = true;
   expect(paths(enabledButEngineOff)).toEqual(["$.owners.claude_owner.workers"]);
 });
@@ -151,6 +151,14 @@ test("every owner needs a native engine; enabled owners also need an enabled eng
     off.owners.grok_owner = { enabled: false, engine: "grok", model: "grok-4.7", effort: "high", workers: ["grok_worker"], max_parallel: 1 };
     expect(paths(off)).toEqual(["$.owners.grok_owner.engine"]);
   }
+});
+test("listing a worker from another owner's engine is allowed; the defaults simply do not", () => {
+  const claude = base(); claude.owners.claude_owner.workers.push("codex_worker");
+  expect(paths(claude)).toEqual([]);
+  const codex = base(); codex.owners.codex_owner.workers.splice(1, 0, "claude_worker");
+  expect(paths(codex)).toEqual([]);
+  expect(base().owners.claude_owner.workers).not.toContain("codex_worker");
+  expect(base().owners.codex_owner.workers).not.toContain("claude_worker");
 });
 test("each engine has at most one enabled owner", () => {
   const config = base();
@@ -184,11 +192,11 @@ test("resolve: cross-engine worker is a herdr interactive pane for each kind", (
   const f = fixture(c => { enableGrok(c); enableQoder(c); enableOpencode(c); });
   rememberVariants(f.home, { "opencode/glm-5.3-flash-free": "max" });
   const interactive = (owner: string, worker: string) => f.cli(["resolve", "--owner", owner, "--worker", worker]).json;
-  expect(interactive("claude_owner", "codex_worker")).toMatchObject({ dispatch: "herdr", mode: "interactive", kind: "codex", argv: ["-m", "gpt-6.1-sol", "-c", "model_reasoning_effort=high", CODEX_BYPASS] });
   expect(interactive("claude_owner", "qoder_worker")).toMatchObject({ dispatch: "herdr", mode: "interactive", kind: "qodercli", argv: ["-m", "Qwen3.8-Flash", "--reasoning-effort", "xhigh", "--permission-mode", "bypass_permissions"] });
-  expect(interactive("codex_owner", "claude_worker")).toMatchObject({ kind: "claude", argv: ["--model", "sonnet", "--effort", "high", "--permission-mode", "bypassPermissions"] });
   expect(interactive("claude_owner", "grok_worker")).toMatchObject({ kind: "grok", argv: ["-m", "grok-4.7", "--effort", "high", "--permission-mode", "bypassPermissions"] });
   expect(interactive("claude_owner", "opencode_worker")).toMatchObject({ dispatch: "herdr", mode: "interactive", kind: "opencode", argv: OPENCODE_ARGV, warnings: [] });
+  expect(interactive("claude_owner", "codex_worker")).toMatchObject({ dispatch: "herdr", mode: "interactive", kind: "codex", argv: ["-m", "gpt-6.1-sol", "-c", "model_reasoning_effort=high", CODEX_BYPASS] });
+  expect(interactive("codex_owner", "claude_worker")).toMatchObject({ kind: "claude", argv: ["--model", "sonnet", "--effort", "high", "--permission-mode", "bypassPermissions"] });
 });
 test("every heterogeneous launch argv carries its kind's explicit no-approval flag", () => {
   const f = fixture(enableAll);
@@ -242,7 +250,7 @@ test("resolve: opencode variant is verified against the TUI's remembered value w
   expect(readFileSync(file, "utf8")).toBe(before);
   expect(readdirSync(join(f.home, ".local", "state", "opencode"))).toEqual(["model.json"]);
   // other kinds never touch it
-  expect(f.cli(["resolve", "--owner", "claude_owner", "--worker", "codex_worker"]).json.warnings).toEqual([]);
+  expect(f.cli(["resolve", "--owner", "codex_owner", "--worker", "codex_worker"]).json.warnings).toEqual([]);
 });
 test("resolve: grok worker is always a herdr interactive pane, never native", () => {
   const f = fixture(enableGrok);
@@ -255,9 +263,9 @@ test("resolve: grok worker is always a herdr interactive pane, never native", ()
 });
 test("resolve: disabled owner, worker and engine are rejected", () => {
   const f = fixture();
-  const offline = fixture(c => { c.workers.codex_worker.enabled = false; });
-  expect(offline.cli(["resolve", "--owner", "claude_owner", "--worker", "codex_worker"])).toMatchObject({ code: 1 });
-  expect(offline.cli(["resolve", "--owner", "claude_owner", "--worker", "codex_worker"]).stderr).toContain("disabled");
+  const offline = fixture(c => { c.engines.qoder.enabled = true; });
+  expect(offline.cli(["resolve", "--owner", "claude_owner", "--worker", "qoder_worker"])).toMatchObject({ code: 1 });
+  expect(offline.cli(["resolve", "--owner", "claude_owner", "--worker", "qoder_worker"]).stderr).toContain("disabled");
   expect(f.cli(["resolve", "--owner", "claude_owner", "--worker", "opencode_worker"]).stderr).toContain("disabled");
   const engine = fixture(c => { c.workers.opencode_worker.enabled = true; });
   expect(engine.cli(["resolve", "--owner", "claude_owner", "--worker", "opencode_worker"]).stderr).toContain("engine_disabled");
@@ -268,11 +276,11 @@ test("resolve: disabled owner, worker and engine are rejected", () => {
   expect(unknown.stderr).toContain("--class must be one of mechanical|routine|judgment");
 });
 test("resolve: worker outside the owner's workers list works with a warning", () => {
-  const f = fixture(c => { c.owners.claude_owner.workers = ["claude_worker"]; });
-  const result = f.cli(["resolve", "--owner", "claude_owner", "--worker", "codex_worker"]).json;
+  const f = fixture(c => { enableQoder(c); c.owners.claude_owner.workers = ["claude_worker"]; });
+  const result = f.cli(["resolve", "--owner", "claude_owner", "--worker", "qoder_worker"]).json;
   expect(result.dispatch).toBe("herdr");
   expect(result.warnings).toHaveLength(1);
-  expect(result.warnings[0]).toContain("codex_worker");
+  expect(result.warnings[0]).toContain("qoder_worker");
 });
 test("resolve --owner --peer builds the collaborating owner's interactive argv", () => {
   const f = fixture();
@@ -371,8 +379,11 @@ test("engine-level block makes every owner and worker on the engine unavailable"
   const show = f.cli(["show"]).json;
   expect(show.config.owners.codex_owner.availability.status).toBe("blocked");
   expect(show.config.workers.claude_worker.availability).toEqual({ status: "available" });
-  expect(show.config.owners.claude_owner.workers).toEqual(["claude_worker", "qoder_worker", "opencode_worker", "codex_worker", "grok_worker"]);
-  expect(f.cli(["resolve", "--owner", "claude_owner", "--worker", "codex_worker"]).code).toBe(1);
+  expect(show.config.owners.claude_owner.workers).toEqual(["claude_worker", "qoder_worker", "opencode_worker", "grok_worker"]);
+  expect(show.config.owners.codex_owner.workers).toEqual(["codex_worker", "qoder_worker", "opencode_worker", "grok_worker"]);
+  const refused = f.cli(["resolve", "--owner", "codex_owner", "--worker", "codex_worker"]);
+  expect(refused.code).toBe(1);
+  expect(refused.stderr).toContain("owner codex_owner unavailable");
 });
 test("expired blocks are ignored on read and purged on the next write", () => {
   const f = fixture();
@@ -383,7 +394,7 @@ test("expired blocks are ignored on read and purged on the next write", () => {
   const late = f.cli(["status"], "2026-10-16T14:00:00Z").json;
   expect(late.blocks).toEqual([]);
   expect(late.workers.codex_worker).toEqual({ status: "available" });
-  expect(f.cli(["resolve", "--owner", "claude_owner", "--worker", "codex_worker"], "2026-10-16T15:00:00Z").code).toBe(0);
+  expect(f.cli(["resolve", "--owner", "codex_owner", "--worker", "codex_worker"], "2026-10-16T15:00:00Z").code).toBe(0);
   // reading does not rewrite the file
   expect(JSON.parse(readFileSync(f.stateFile, "utf8")).blocks).toHaveLength(1);
   const write = f.cli(["block", "--engine", "claude", "--reason", "other"], "2026-10-16T15:00:00Z");
@@ -428,11 +439,11 @@ test("resolve by pool requires --class", () => {
   }
 });
 test("resolve --class judgment takes the first available non-free worker in order and falls over when blocked", () => {
-  const f = fixture();
+  const f = fixture(enableGrok);
   expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "judgment"]).json).toMatchObject({ worker: "claude_worker", class: "judgment", dispatch: "native", selected_by: "order", skipped: [], warnings: [] });
   f.cli(["block", "--engine", "claude", "--model", "sonnet", "--reason", "limit"]);
   const next = f.cli(["resolve", "--owner", "claude_owner", "--class", "judgment"]).json;
-  expect(next).toMatchObject({ worker: "codex_worker", dispatch: "herdr", mode: "interactive", selected_by: "order" });
+  expect(next).toMatchObject({ worker: "grok_worker", dispatch: "herdr", mode: "interactive", selected_by: "order" });
   // free workers are not judgment candidates, so they are neither chosen nor listed as skipped
   expect(next.skipped).toEqual([{ worker: "claude_worker", reason: "blocked (claude/sonnet: limit)" }]);
   // After the reset time the first choice is back with no manual unblock.
@@ -442,20 +453,20 @@ test("resolve --class judgment takes the first available non-free worker in orde
   expect(f.cli(["resolve", "--owner", "codex_owner", "--class", "judgment"]).json).toMatchObject({ worker: "codex_worker", dispatch: "native" });
 });
 test("resolve lists every unavailable candidate and exits non-zero", () => {
-  const f = fixture(c => { c.owners.claude_owner.workers = ["opencode_worker", "codex_worker", "claude_worker"]; });
-  f.cli(["block", "--engine", "codex", "--reason", "account quota"]);
+  const f = fixture(c => { c.owners.claude_owner.workers = ["opencode_worker", "grok_worker", "claude_worker"]; enableGrok(c); });
+  f.cli(["block", "--engine", "grok", "--reason", "account quota"]);
   f.cli(["block", "--engine", "claude", "--model", "sonnet", "--reason", "limit"]);
   const result = f.cli(["resolve", "--owner", "claude_owner", "--class", "mechanical"]);
   expect(result.code).toBe(1);
   expect(result.stderr).toContain("opencode_worker: disabled");
-  expect(result.stderr).toContain("codex_worker: blocked (codex: account quota)");
+  expect(result.stderr).toContain("grok_worker: blocked (grok: account quota)");
   expect(result.stderr).toContain("claude_worker: blocked (claude/sonnet: limit)");
   expect(result.stdout).toBe("");
   // judgment only considers (and lists) non-free workers
   const judgment = f.cli(["resolve", "--owner", "claude_owner", "--class", "judgment"]);
   expect(judgment.code).toBe(1);
   expect(judgment.stderr).not.toContain("opencode_worker");
-  expect(judgment.stderr).toContain("codex_worker: blocked");
+  expect(judgment.stderr).toContain("grok_worker: blocked");
 });
 test("show lists worker order and availability without legacy defaults", () => {
   const owners = fixture().cli(["show"]).json.config.owners;
@@ -505,20 +516,20 @@ test("resolve --class routine picks the routine worker and never the mechanical 
   expect(f.cli(["resolve", "--owner", "codex_owner", "--class", "routine"]).json).toMatchObject({ worker: "codex_worker", selected_by: "order", warnings: ["无可用免费 worker，已按 judgment 回退"] });
 });
 test("resolve --class mechanical falls back to judgment with a warning when no free worker is usable", () => {
-  const f = fixture();
+  const f = fixture(enableGrok);
   const result = f.cli(["resolve", "--owner", "claude_owner", "--class", "mechanical"]).json;
   expect(result).toMatchObject({ worker: "claude_worker", class: "mechanical", dispatch: "native", selected_by: "order", warnings: ["无可用免费 worker，已按 judgment 回退"] });
   expect(result.skipped).toEqual([{ worker: "opencode_worker", reason: "disabled" }, { worker: "qoder_worker", reason: "disabled" }]);
   f.cli(["block", "--engine", "claude", "--model", "sonnet", "--reason", "limit"]);
-  expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "mechanical"]).json).toMatchObject({ worker: "codex_worker", selected_by: "order" });
+  expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "mechanical"]).json).toMatchObject({ worker: "grok_worker", selected_by: "order" });
 });
 test("resolve --class judgment never selects a free worker, even when paid workers are blocked", () => {
   // free workers listed first and enabled
-  const f = fixture(c => { enableAll(c); c.owners.claude_owner.workers = ["opencode_worker", "qoder_worker", "claude_worker", "codex_worker"]; });
+  const f = fixture(c => { enableAll(c); c.owners.claude_owner.workers = ["opencode_worker", "qoder_worker", "claude_worker", "grok_worker"]; });
   expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "judgment"]).json).toMatchObject({ worker: "claude_worker", selected_by: "order", skipped: [] });
   f.cli(["block", "--engine", "claude", "--model", "sonnet", "--reason", "limit"]);
-  expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "judgment"]).json.worker).toBe("codex_worker");
-  f.cli(["block", "--engine", "codex", "--reason", "limit"]);
+  expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "judgment"]).json.worker).toBe("grok_worker");
+  f.cli(["block", "--engine", "grok", "--reason", "limit"]);
   const none = f.cli(["resolve", "--owner", "claude_owner", "--class", "judgment"]);
   expect(none.code).toBe(1);
   expect(none.stdout).toBe("");
@@ -528,58 +539,99 @@ test("resolve --class judgment never selects a free worker, even when paid worke
   const onlyFree = fixture(c => { enableAll(c); c.owners.claude_owner.workers = ["opencode_worker", "qoder_worker"]; });
   expect(onlyFree.cli(["resolve", "--owner", "claude_owner", "--class", "judgment"]).code).toBe(1);
 });
-test("resolve --class judgment --tag picks a heterogeneous tagged worker, else the owner's native worker without a warning", () => {
+const pickTag = (f: ReturnType<typeof fixture>, owner: string, tag: string) => f.cli(["resolve", "--owner", owner, "--class", "judgment", "--tag", tag]).json;
+test("resolve --class judgment --tag picks a tagged heterogeneous worker, else the owner's native worker", () => {
   const f = fixture(enableAll);
-  const pick = (owner: string, tag: string) => f.cli(["resolve", "--owner", owner, "--class", "judgment", "--tag", tag]).json;
-  expect(pick("claude_owner", "backend")).toMatchObject({ worker: "codex_worker", class: "judgment", dispatch: "herdr", selected_by: "tag", skipped: [], warnings: [] });
-  expect(pick("claude_owner", "research")).toMatchObject({ worker: "grok_worker", dispatch: "herdr", selected_by: "tag" });
-  // a tag carried only by the native worker needs no tag match: native default, no warning
-  expect(pick("claude_owner", "frontend")).toMatchObject({ worker: "claude_worker", dispatch: "native", selected_by: "native", skipped: [], warnings: [] });
-  expect(pick("codex_owner", "frontend")).toMatchObject({ worker: "claude_worker", dispatch: "herdr", selected_by: "tag", warnings: [] });
-  expect(pick("codex_owner", "backend")).toMatchObject({ worker: "codex_worker", dispatch: "native", selected_by: "native", warnings: [] });
+  for (const owner of ["claude_owner", "codex_owner"]) {
+    expect(pickTag(f, owner, "research")).toMatchObject({ worker: "grok_worker", class: "judgment", dispatch: "herdr", selected_by: "tag", skipped: [], warnings: [] });
+    expect(pickTag(f, owner, "research").peer_suggestion).toBeUndefined();
+  }
+  // a tag carried only by the native worker, or by nobody, selects the native default without warnings
+  expect(pickTag(f, "claude_owner", "frontend")).toMatchObject({ worker: "claude_worker", dispatch: "native", selected_by: "native", skipped: [], warnings: [] });
+  expect(pickTag(f, "codex_owner", "backend")).toMatchObject({ worker: "codex_worker", dispatch: "native", selected_by: "native", warnings: [] });
+  expect(pickTag(f, "codex_owner", "test")).toMatchObject({ worker: "codex_worker", selected_by: "native", warnings: [] });
+  expect(pickTag(f, "claude_owner", "nonexistent")).toMatchObject({ worker: "claude_worker", selected_by: "native", skipped: [], warnings: [] });
   // tags describe model strengths; test is gone and long-test lives on codex_worker
   for (const worker of Object.values<any>(base().workers)) expect(worker.tags).not.toContain("test");
   expect(base().workers.codex_worker.tags).toEqual(["backend", "algorithm", "refactor", "long-test"]);
-  expect(pick("claude_owner", "long-test")).toMatchObject({ worker: "codex_worker", selected_by: "tag" });
-  expect(pick("codex_owner", "test")).toMatchObject({ worker: "codex_worker", dispatch: "native", selected_by: "native", warnings: [] });
   // free workers never match a domain tag
   const free = fixture(c => { enableAll(c); c.workers.opencode_worker.tags.push("sweep"); });
-  expect(free.cli(["resolve", "--owner", "claude_owner", "--class", "judgment", "--tag", "sweep"]).json).toMatchObject({ worker: "claude_worker", selected_by: "native" });
+  expect(pickTag(free, "claude_owner", "sweep")).toMatchObject({ worker: "claude_worker", selected_by: "native" });
   // without --tag the first available non-free worker wins and is reported as order
   expect(f.cli(["resolve", "--owner", "codex_owner", "--class", "judgment"]).json).toMatchObject({ worker: "codex_worker", selected_by: "order" });
 });
-test("resolve --class judgment --tag falls to the native worker, then to order with a warning", () => {
+test("resolve --class judgment --tag suggests assigning to the other owner when its workers are not listed", () => {
   const f = fixture(enableAll);
-  const unknown = f.cli(["resolve", "--owner", "claude_owner", "--class", "judgment", "--tag", "nonexistent"]).json;
-  expect(unknown).toMatchObject({ worker: "claude_worker", selected_by: "native", skipped: [], warnings: [] });
-  // tagged heterogeneous worker blocked: native default, the skipped candidate is recorded
-  f.cli(["block", "--engine", "codex", "--reason", "account quota"]);
-  const blocked = f.cli(["resolve", "--owner", "claude_owner", "--class", "judgment", "--tag", "backend"]).json;
+  const reason = (tag: string, owner: string) => `${tag} 是 ${owner} 侧 worker 的强项，可经 assign 交给该 owner`;
+  const backend = pickTag(f, "claude_owner", "backend");
+  expect(backend).toMatchObject({ worker: "claude_worker", dispatch: "native", selected_by: "native", skipped: [], warnings: [], peer_suggestion: { owner: "codex_owner", reason: reason("backend", "codex_owner") } });
+  expect(pickTag(f, "claude_owner", "long-test").peer_suggestion).toEqual({ owner: "codex_owner", reason: reason("long-test", "codex_owner") });
+  expect(pickTag(f, "codex_owner", "frontend")).toMatchObject({ worker: "codex_worker", dispatch: "native", selected_by: "native", warnings: [], peer_suggestion: { owner: "claude_owner", reason: reason("frontend", "claude_owner") } });
+  // the native worker already carries the tag, or nobody does: no suggestion
+  expect(pickTag(f, "claude_owner", "frontend").peer_suggestion).toBeUndefined();
+  expect(pickTag(f, "codex_owner", "backend").peer_suggestion).toBeUndefined();
+  expect(pickTag(f, "claude_owner", "nonexistent").peer_suggestion).toBeUndefined();
+  // no suggestion without --tag, for other classes, or for explicit workers
+  expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "judgment"]).json.peer_suggestion).toBeUndefined();
+  expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "routine"]).json.peer_suggestion).toBeUndefined();
+  // a blocked or disabled peer owner is not suggested
+  const blocked = fixture(enableAll);
+  blocked.cli(["block", "--engine", "codex", "--model", "gpt-6-astra", "--reason", "limit"]);
+  expect(pickTag(blocked, "claude_owner", "backend")).toMatchObject({ worker: "claude_worker", selected_by: "native", warnings: [] });
+  expect(pickTag(blocked, "claude_owner", "backend").peer_suggestion).toBeUndefined();
+  const disabled = fixture(c => { enableAll(c); c.owners.codex_owner.enabled = false; });
+  expect(pickTag(disabled, "claude_owner", "backend").peer_suggestion).toBeUndefined();
+  // the suggestion never replaces the selection: a tagged heterogeneous worker still wins
+  const both = fixture(c => { enableAll(c); c.workers.grok_worker.tags.push("backend"); });
+  const hit = pickTag(both, "claude_owner", "backend");
+  expect(hit).toMatchObject({ worker: "grok_worker", selected_by: "tag" });
+  expect(hit.peer_suggestion).toBeUndefined();
+});
+test("resolve --class judgment --tag selects a listed worker of the other owner's engine and gives no peer_suggestion", () => {
+  const f = fixture(c => { enableAll(c); c.owners.claude_owner.workers.push("codex_worker"); c.owners.codex_owner.workers.push("claude_worker"); });
+  const backend = pickTag(f, "claude_owner", "backend");
+  expect(backend).toMatchObject({ worker: "codex_worker", dispatch: "herdr", selected_by: "tag", skipped: [], warnings: [] });
+  expect(backend.peer_suggestion).toBeUndefined();
+  expect(pickTag(f, "codex_owner", "frontend")).toMatchObject({ worker: "claude_worker", dispatch: "herdr", selected_by: "tag" });
+  expect(pickTag(f, "codex_owner", "frontend").peer_suggestion).toBeUndefined();
+  // blocked listed worker: native fallback with the heterogeneous-candidate warning; the blocked owner is not suggested
+  f.cli(["block", "--engine", "codex", "--reason", "limit"]);
+  const blocked = pickTag(f, "claude_owner", "backend");
   expect(blocked).toMatchObject({ worker: "claude_worker", selected_by: "native", warnings: ["带 backend 标签的异构候选不可用，已回落到本引擎原生 worker"] });
-  expect(blocked.skipped).toEqual([{ worker: "codex_worker", reason: "blocked (codex: account quota)" }]);
-  // a disabled tagged heterogeneous candidate warns the same way (grok_worker is disabled by default)
-  const disabled = fixture().cli(["resolve", "--owner", "claude_owner", "--class", "judgment", "--tag", "research"]).json;
+  expect(blocked.skipped).toEqual([{ worker: "codex_worker", reason: "blocked (codex: limit)" }]);
+  expect(blocked.peer_suggestion).toBeUndefined();
+});
+test("resolve --class judgment --tag warns when a tagged heterogeneous candidate is unavailable, and falls back in order when native is too", () => {
+  // disabled grok_worker (default): native fallback with a warning
+  const disabled = pickTag(fixture(), "claude_owner", "research");
   expect(disabled).toMatchObject({ worker: "claude_worker", selected_by: "native", warnings: ["带 research 标签的异构候选不可用，已回落到本引擎原生 worker"] });
   expect(disabled.skipped).toEqual([{ worker: "grok_worker", reason: "disabled" }]);
+  // blocked grok_worker: same warning
+  const f = fixture(enableAll);
+  f.cli(["block", "--engine", "grok", "--reason", "limit"]);
+  const blocked = pickTag(f, "claude_owner", "research");
+  expect(blocked).toMatchObject({ worker: "claude_worker", selected_by: "native", warnings: ["带 research 标签的异构候选不可用，已回落到本引擎原生 worker"] });
+  expect(blocked.skipped).toEqual([{ worker: "grok_worker", reason: "blocked (grok: limit)" }]);
   // a blocked earlier tagged candidate is skipped in favour of a later tagged one
-  const g = fixture(c => { enableAll(c); c.workers.grok_worker.tags.push("backend"); });
-  g.cli(["block", "--engine", "codex", "--reason", "limit"]);
-  const later = g.cli(["resolve", "--owner", "claude_owner", "--class", "judgment", "--tag", "backend"]).json;
-  expect(later).toMatchObject({ worker: "grok_worker", selected_by: "tag", warnings: [] });
-  expect(later.skipped).toEqual([{ worker: "codex_worker", reason: "blocked (codex: limit)" }]);
-  // native unavailable too: order fallback with a warning, free workers still excluded
-  g.cli(["block", "--engine", "grok", "--reason", "limit"]);
+  const g = fixture(c => { enableAll(c); c.workers.grok2_worker = { ...c.workers.grok_worker, model: "grok-4.8" }; c.owners.claude_owner.workers.push("grok2_worker"); });
+  g.cli(["block", "--engine", "grok", "--model", "grok-4.7", "--reason", "limit"]);
+  const later = pickTag(g, "claude_owner", "research");
+  expect(later).toMatchObject({ worker: "grok2_worker", selected_by: "tag", warnings: [] });
+  expect(later.skipped).toEqual([{ worker: "grok_worker", reason: "blocked (grok/grok-4.7: limit)" }]);
+  // everything blocked still fails with the candidate list
   g.cli(["block", "--engine", "claude", "--model", "sonnet", "--reason", "limit"]);
-  const none = g.cli(["resolve", "--owner", "claude_owner", "--class", "judgment", "--tag", "backend"]);
+  g.cli(["block", "--engine", "grok", "--model", "grok-4.8", "--reason", "limit"]);
+  const none = g.cli(["resolve", "--owner", "claude_owner", "--class", "judgment", "--tag", "research"]);
   expect(none.code).toBe(1);
-  expect(none.stderr).toContain("codex_worker: blocked");
+  expect(none.stderr).toContain("grok_worker: blocked");
   expect(none.stderr).not.toContain("opencode_worker");
-  const h = fixture(enableAll);
+  // native unavailable too: order fallback with the tag warning
+  const h = fixture(c => { enableAll(c); c.workers.grok2_worker = { ...c.workers.grok_worker, model: "grok-4.8", tags: ["other"] }; c.owners.claude_owner.workers.push("grok2_worker"); });
   h.cli(["block", "--engine", "claude", "--model", "sonnet", "--reason", "limit"]);
-  h.cli(["block", "--engine", "codex", "--reason", "limit"]);
-  const order = h.cli(["resolve", "--owner", "claude_owner", "--class", "judgment", "--tag", "frontend"]).json;
-  expect(order).toMatchObject({ worker: "grok_worker", selected_by: "order", warnings: ["无可用的 frontend 标签候选，已按顺序回退"] });
-  expect(order.skipped).toEqual([{ worker: "claude_worker", reason: "blocked (claude/sonnet: limit)" }, { worker: "codex_worker", reason: "blocked (codex: limit)" }]);
+  h.cli(["block", "--engine", "grok", "--model", "grok-4.7", "--reason", "limit"]);
+  const order = pickTag(h, "claude_owner", "research");
+  expect(order).toMatchObject({ worker: "grok2_worker", selected_by: "order", warnings: ["无可用的 research 标签候选，已按顺序回退"] });
+  expect(order.skipped).toEqual([{ worker: "grok_worker", reason: "blocked (grok/grok-4.7: limit)" }, { worker: "claude_worker", reason: "blocked (claude/sonnet: limit)" }]);
 });
 test("resolve rejects invalid --class/--tag/--worker/--peer combinations", () => {
   const f = fixture(enableAll);
@@ -601,10 +653,21 @@ test("resolve rejects invalid --class/--tag/--worker/--peer combinations", () =>
   fail(["--peer", "codex_owner", "--tag", "backend"], "--peer cannot be combined");
   fail(["--worker", "codex_worker", "--peer", "codex_owner"], "--peer cannot be combined");
 });
+test("resolve --worker may start the other owner's engine worker on request (herdr), with a not-in-list warning", () => {
+  const f = fixture(enableAll);
+  const claude = f.cli(["resolve", "--owner", "claude_owner", "--worker", "codex_worker"]);
+  expect(claude.code).toBe(0);
+  expect(claude.json).toMatchObject({ worker: "codex_worker", dispatch: "herdr", mode: "interactive", kind: "codex", selected_by: "worker" });
+  expect(claude.json.warnings).toEqual(["worker codex_worker 不在 owner claude_owner 的 workers 列表中"]);
+  expect(f.cli(["resolve", "--owner", "codex_owner", "--worker", "claude_worker"]).json).toMatchObject({ worker: "claude_worker", dispatch: "herdr", kind: "claude", selected_by: "worker" });
+  // a listed worker resolves without the warning
+  const listed = fixture(c => { c.owners.claude_owner.workers.push("codex_worker"); });
+  expect(listed.cli(["resolve", "--owner", "claude_owner", "--worker", "codex_worker"]).json.warnings).toEqual([]);
+});
 test("resolve --worker needs no --class and reports selected_by worker", () => {
   const f = fixture(enableAll);
-  const result = f.cli(["resolve", "--owner", "claude_owner", "--worker", "codex_worker"]).json;
-  expect(result).toMatchObject({ worker: "codex_worker", selected_by: "worker" });
+  const result = f.cli(["resolve", "--owner", "claude_owner", "--worker", "grok_worker"]).json;
+  expect(result).toMatchObject({ worker: "grok_worker", selected_by: "worker" });
   expect(result.class).toBeUndefined();
   expect(f.cli(["resolve", "--owner", "claude_owner", "--worker", "opencode_worker"]).json.selected_by).toBe("worker");
   expect(f.cli(["resolve", "--owner", "claude_owner", "--peer", "codex_owner"]).json.class).toBeUndefined();
@@ -615,17 +678,28 @@ test("default config marks only the free workers with class tags, and pins them 
   expect(workers.opencode_worker.tags).toEqual(["mechanical"]);
   for (const id of ["claude_worker", "codex_worker", "grok_worker"]) expect(workers[id].tags.filter((t: string) => t === "mechanical" || t === "routine")).toEqual([]);
 });
-test("a worker cannot carry both class tags, and class workers must not share the owner's engine", () => {
+test("a worker cannot carry both class tags", () => {
   const both = base(); both.workers.opencode_worker.tags = ["mechanical", "routine"];
   expect(paths(both)).toEqual(["$.workers.opencode_worker.tags"]);
-  // class workers run on a different engine than the owner that lists them
-  const same = base(); same.workers.claude_worker.tags.push("routine");
-  expect(paths(same)).toEqual(["$.owners.claude_owner.workers[0]"]);
-  const sameCodex = base(); sameCodex.workers.codex_worker.tags.push("mechanical");
-  expect(paths(sameCodex)).toEqual(["$.owners.codex_owner.workers[0]"]);
-  // a free worker living on another engine than both owners is fine, whichever class
+  // either class is fine on any engine, including the owner's own
   const ok = base(); ok.workers.qoder_worker.tags = ["mechanical"]; ok.workers.opencode_worker.tags = ["routine"];
   expect(paths(ok)).toEqual([]);
+  const same = base(); same.workers.claude_worker.tags.push("routine");
+  expect(paths(same)).toEqual([]);
+});
+test("a class worker on the owner's own engine is dispatched natively and stays out of judgment", () => {
+  const f = fixture(c => {
+    c.workers.cheap_worker = { enabled: true, engine: "claude", model: "haiku", effort: "low", tags: ["routine"] };
+    c.owners.claude_owner.workers.push("cheap_worker");
+  });
+  const routine = f.cli(["resolve", "--owner", "claude_owner", "--class", "routine"]).json;
+  expect(routine).toMatchObject({ worker: "cheap_worker", class: "routine", dispatch: "native", tool: "Agent", params: { model: "haiku", effort: "low", subagent_type: "general-purpose" }, selected_by: "class", warnings: [] });
+  // mechanical falls to the routine worker, judgment never picks it
+  expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "mechanical"]).json).toMatchObject({ worker: "cheap_worker", dispatch: "native", selected_by: "class" });
+  expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "judgment"]).json.worker).toBe("claude_worker");
+  // once it is unavailable routine falls back to judgment with the usual warning
+  f.cli(["block", "--engine", "claude", "--model", "haiku", "--reason", "limit"]);
+  expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "routine"]).json).toMatchObject({ worker: "claude_worker", selected_by: "order", warnings: ["无可用免费 worker，已按 judgment 回退"] });
 });
 
 // ---- process-level behaviour ----

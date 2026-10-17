@@ -26,7 +26,8 @@ Worker 即子 agent，无论由宿主内置工具还是 Herdr 启动。层级最
 
 - **位置**：`~/.config/agents-cooperation/config.json`（`AGENTS_COOPERATION_CONFIG` 或脚本 `--config` 可覆盖）；不存在时使用 `assets/config.default.json`，它是唯一默认来源，也是用户复制的起点。结构由 `assets/config.schema.json` 定义，不做多层合并。
 - **先 `show`**：首次调度前运行 `bun <skill>/scripts/agents-config.ts show`，按宿主引擎找到自己的 enabled owner（每个引擎至多一个），读取它的 `workers` 列表、模型、`availability` 和并行上限。宿主没有可用的 owner 配置时停下，向用户或接单 owner 说明。
-- **派发前 `resolve`**：`resolve --owner <owner-id> --class mechanical|routine|judgment [--tag <领域>]`，`--class` 必填，取值见[包类别](#包类别)；`--tag` 只能和 `--class judgment` 一起用。`--worker <worker-id>` 只用于用户指定 worker 或续接同一包，台账写明原因，不与 `--class` 同用。输出含 `class`、`selected_by`（`class`、`tag`、`native`、`order` 或 `worker`）和被跳过的 `skipped`；派发方式、工具、模型、effort 和 argv 照抄不改，`warnings` 必读。仍须核对子 agent 实际运行的模型，不符合时停掉重派，台账“角色·模型”列按实际模型填写。
+- **派发前 `resolve`**：`resolve --owner <owner-id> --class mechanical|routine|judgment [--tag <领域>]`，`--class` 必填，取值见[包类别](#包类别)；`--tag` 只能和 `--class judgment` 一起用。`--worker <worker-id>` 只用于用户指定 worker 或续接同一包，台账写明原因，不与 `--class` 同用；指定的 worker 不在该 owner 的 `workers` 列表中时仍可启动，输出 `warnings`。输出含 `class`、`selected_by`（`class`、`tag`、`native`、`order` 或 `worker`）和被跳过的 `skipped`；派发方式、工具、模型、effort 和 argv 照抄不改，`warnings` 必读。仍须核对子 agent 实际运行的模型，不符合时停掉重派，台账“角色·模型”列按实际模型填写。
+- **约束走配置**：调度约束一律通过配置表达（`workers` 列表、`enabled`、`tags`、`max_parallel`、block），技能和脚本不另设硬编码限制。
 - **改配置**：修改后先运行 `validate` 并通过，再用 `show` 确认生效；不通过不得继续沿用。
 - **默认值**：模型和 effort 的默认值来自 `assets/config.default.json`；用户当轮指定时以用户为准。其他技能对某类 worker 另有规定时以那个技能为准，例如 browser-harness 规定 Codex 验收 worker 用 `gpt-6.1-sol` medium，这类覆盖直接传给宿主工具，不改配置。
 
@@ -68,7 +69,7 @@ herdr 派发依赖 Herdr；不可用时跨引擎 worker 无法派发，改用同
 
   典型类别：跑测试并汇总、lint 与格式修复、按既定规则批量修改、只读检索与清点、按清单核对。执行中发现需要判断时，worker 停止并回报，由 owner 改派。`resolve` 依次取可用的 mechanical worker、routine worker，都没有时按 judgment 回退。
 - **`routine`（常规实现包）**：方案已冻结、写入范围明确、需要多轮但不含设计判断的常规实现。`resolve` 取可用的 routine worker，没有时按 judgment 回退，不落到 mechanical worker。
-- **`judgment`**：其余包，包括涉及设计判断、跨模块接口或高风险的包。候选池排除所有免费 worker，不带 `--tag` 时按 `workers` 顺序取第一个可用的（默认即本引擎原生 worker）。带 `--tag <领域>` 时只在异构 worker（引擎与 owner 不同）中取第一个带该标签的可用候选；没有命中就回落到本引擎原生 worker，`selected_by: native`：标签只在原生 worker 上或没有带该标签的异构候选时不出 `warnings`；有带该标签的异构候选但因 block 或 disabled 被跳过时，`warnings` 写明“带 <标签> 标签的异构候选不可用，已回落到本引擎原生 worker”；原生也不可用时才按顺序回退并在 `warnings` 说明。
+- **`judgment`**：其余包，包括涉及设计判断、跨模块接口或高风险的包。候选池排除所有免费 worker，不带 `--tag` 时按 `workers` 顺序取第一个可用的（默认即本引擎原生 worker）。带 `--tag <领域>` 时只在 owner 自己的 `workers` 里引擎与 owner 不同的异构 worker 中取第一个带该标签的可用候选；没有命中就回落到本引擎原生 worker，`selected_by: native`：标签只在原生 worker 上或没有带该标签的异构候选时不出 `warnings`；有带该标签的异构候选但因 block 或 disabled 被跳过时，`warnings` 写明“带 <标签> 标签的异构候选不可用，已回落到本引擎原生 worker”；原生也不可用时才按顺序回退并在 `warnings` 说明。owner 能派哪些 worker 完全由 `workers` 列表决定，默认配置不把对方 owner 引擎的 worker 列进来：回落到原生 worker 时，若该标签是另一个可用 enabled owner 侧 worker 的强项，输出 `peer_suggestion: { owner, reason }`，不算 `warnings`；原生 worker 自带该标签、对方 owner 被 block 或 disabled 时不给。收到 `peer_suggestion` 时，按[协作协议](references/peer-protocol.md) `type: assign` 把该包交给那个 owner，由它按类别调度自己的 worker；没有可用协作 owner（Herdr 不可用、对方被 block）时交给本引擎原生 worker，并在台账写明。
 - 回退到 judgment 时 `warnings` 写明“无可用免费 worker，已按 judgment 回退”，不视为失败。免费 worker 的产出与其他 worker 一样要走验收（查 diff、复跑验证）。
 
 ### 额度耗尽
@@ -136,7 +137,7 @@ owner 在以下时机，先执行本节再继续长步骤或等待：首次接�
 **并行开发**：方案已冻结，且至少有两个写入范围不重叠的工作包。
 
 - 接单 owner 把工作包分成两侧，各自拆给自己的子 agent；协作 owner 接到 `type: assign` 后同样调度自己的子 agent。共享接口要先实现或先冻结，再开放依赖它的包。
-- judgment 包默认交给本引擎原生 worker，不带 `--tag`；只有包的领域是另一引擎模型的强项时才带 `--class judgment --tag <领域>` 选异构 worker（如 Claude 侧的后端逻辑、算法用 `backend`，Codex 侧的前端、UI 和浏览器验收用 `frontend`），标签由配置里 `workers.<id>.tags` 维护，不写死在本技能里。mechanical、routine 包不按领域选，直接走免费 worker。某一侧遇到额度不足或 429 时，按[额度耗尽](#额度耗尽)处理：单个子 agent 受限则 `resolve` 重新选，owner 自身受限则整包转给另一侧，都是整包转移，不在单个包内部来回切换。
+- judgment 包默认交给本引擎原生 worker，不带 `--tag`；只有包的领域是另一引擎模型的强项时才带 `--class judgment --tag <领域>`（如 Claude 侧的后端逻辑、算法用 `backend`，Codex 侧的前端、UI 和浏览器验收用 `frontend`），标签由配置里 `workers.<id>.tags` 维护，不写死在本技能里。按配置的 `workers` 列表派发，默认配置不列对方 owner 引擎的 worker，这类领域的包按 `peer_suggestion` 经协作 owner 协议 `type: assign` 交给对方 owner，由它按类别调度自己的 worker；没有可用协作 owner 时交给本引擎原生 worker，台账写明；用户把对方 worker 加进 `workers` 后，标签照常命中它；grok 等异构 worker 的标签同理。mechanical、routine 包不按领域选，直接走免费 worker。某一侧遇到额度不足或 429 时，按[额度耗尽](#额度耗尽)处理：单个子 agent 受限则 `resolve` 重新选，owner 自身受限则整包转给另一侧，都是整包转移，不在单个包内部来回切换。
 - 三层 review：子 agent 自验（测试、类型检查）→ 各自 owner review 自己的子 agent → 交叉 review（对方审本侧 diff，集成后的整体 diff 两侧都审）。review 方只出 findings，由负责该部分的一侧修复；按本阶段预算上限进行，仍有分歧时由接单 owner 裁决，分歧涉及必审条件时才进入 ChatGPT 结果校验预算。
 
 **普通调度**：其余开发任务。owner 不写代码，全部派给子 agent，以便随时接收和路由新任务。只做 owner 自己的 review，不做交叉 review，除非改动高风险。

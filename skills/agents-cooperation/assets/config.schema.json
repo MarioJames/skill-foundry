@@ -196,7 +196,7 @@
           "type": "string"
         },
         "tags": {
-          "description": "mechanical and routine are reserved class tags: a worker carrying one is a free worker that resolve --class mechanical|routine picks first (at most one of the two, and never on the owner's own engine). Every other tag is a domain tag describing the model's strengths; resolve --class judgment --tag <t> uses it only to pick a heterogeneous worker (a different engine than the owner), falling back to the owner's native worker.",
+          "description": "mechanical and routine are reserved class tags: a worker carrying one is a free worker that resolve --class mechanical|routine picks first (at most one of the two; any engine, native when it matches the owner's). Every other tag is a domain tag describing the model's strengths; resolve --class judgment --tag <t> uses it only to pick a heterogeneous worker (a different engine than the owner), falling back to the owner's native worker.",
           "type": "array",
           "uniqueItems": true,
           "items": {

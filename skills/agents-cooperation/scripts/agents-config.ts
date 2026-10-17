@@ -84,10 +84,6 @@ export function validateConfig(config: unknown, schema: Schema = loadSchema(CONF
     else owned.set(owner.engine, id);
     const hasWorker = owner.workers.some(w => { const a = c.workers[w]; return a?.enabled && c.engines[a.engine]?.enabled; });
     if (!hasWorker) bad(`${at}.workers`, "enabled owner needs at least one enabled worker on an enabled engine");
-    owner.workers.forEach((worker, i) => {
-      const a = c.workers[worker];
-      if (a && isFree(a) && a.engine === owner.engine) bad(`${at}.workers[${i}]`, `class worker ${worker} must not run on owner engine ${owner.engine}`);
-    });
   }
   // Kinds that can host native sub-agents come from the schema (engine.then), not from a second table here.
   const nativeKinds: string[] = schema.$defs?.engine?.then?.properties?.kind?.enum ?? [];
@@ -191,6 +187,17 @@ function requireOwner(config: Config, blocks: Block[], id: string, what = "owner
   if (a.status !== "available") throw new CliError(`${what} ${id} unavailable: ${describeUnavailable(a)}`);
   return owner;
 }
+/** The tag is another available enabled owner's strength and the owner's own native workers lack it: suggest handing the package over via assign. */
+function peerSuggestion(config: Config, blocks: Block[], owner: Owner, listed: Worker[], tag: string): { owner: string; reason: string } | undefined {
+  if (listed.some(w => w.engine === owner.engine && w.tags?.includes(tag))) return undefined;
+  for (const [id, other] of Object.entries(config.owners)) {
+    if (other.engine === owner.engine || availabilityOf(config, blocks, other).status !== "available") continue;
+    if (Object.values(config.workers).some(w => w.engine === other.engine && !isFree(w) && w.tags?.includes(tag))) {
+      return { owner: id, reason: `${tag} 是 ${id} 侧 worker 的强项，可经 assign 交给该 owner` };
+    }
+  }
+  return undefined;
+}
 export function resolveDispatch(config: Config, blocks: Block[], opts: { owner: string; worker?: string; class?: string; tag?: string; peer?: string }, home: string = homedir()): Dispatch {
   const owner = requireOwner(config, blocks, opts.owner);
   if (opts.peer !== undefined) {
@@ -241,7 +248,8 @@ export function resolveDispatch(config: Config, blocks: Block[], opts: { owner: 
     else if (opts.tag !== undefined) warnings.push(`无可用的 ${opts.tag} 标签候选，已按顺序回退`);
   }
   const skipped = sequence.slice(0, sequence.indexOf(hit)).filter(s => !usable(s.c)).map(s => ({ worker: s.c.id, reason: describeUnavailable(s.c.availability) }));
-  return { ...launch(config, opts.owner, hit.c.id, warnings, home), class: cls, selected_by: hit.by, skipped };
+  const suggestion = hit.by === "native" && opts.tag !== undefined ? peerSuggestion(config, blocks, owner, paid.map(c => c.worker), opts.tag) : undefined;
+  return { ...launch(config, opts.owner, hit.c.id, warnings, home), class: cls, selected_by: hit.by, skipped, ...(suggestion ? { peer_suggestion: suggestion } : {}) };
 }
 
 // ---- CLI ----
@@ -268,8 +276,8 @@ const USAGE = `Usage: bun agents-config.ts <command> [options]
   show                             Print the effective config with availability
   resolve --owner <id> --class mechanical|routine|judgment [--tag <domain>] | --worker <id> | --peer <owner-id>
                                    (--class is required for pool selection: mechanical -> mechanical worker, then routine worker, then judgment;
-                                    routine -> routine worker, then judgment; judgment -> non-free workers in order, --tag <domain> prefers a tagged
-                                    heterogeneous worker, else the owner's native worker;
+                                    routine -> routine worker, then judgment; judgment -> non-free workers in order, --tag <domain> prefers a tagged heterogeneous worker, else the
+                                    owner's native worker (peer_suggestion names another owner whose workers are strong at the tag when the owner's list has no such worker);
                                     --tag only with judgment; --worker only for a user-chosen worker or continuing the same package)
   block --engine <id> [--model <m>] [--release-at <ISO8601|+<n>m|h|d>] --reason <text> [--by <owner-id>]
   unblock --engine <id> [--model <m>]
