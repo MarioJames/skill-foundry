@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "agents-cooperation config",
-  "description": "Owner agent scheduling config. Structure lives here; cross-object rules (references, kind-specific effort sets, one enabled owner per engine, parallel limits) are enforced by scripts/agents-config.ts validate.",
+  "description": "Owner agent scheduling config. Structure lives here; cross-object rules (references, kind-specific effort sets, launch support per class, one enabled owner per engine, parallel limits) are enforced by scripts/agents-config.ts validate.",
   "type": "object",
   "required": [
     "version",
     "engines",
     "owners",
-    "agents"
+    "workers"
   ],
   "additionalProperties": false,
   "properties": {
@@ -37,14 +37,14 @@
         "$ref": "#/$defs/owner"
       }
     },
-    "agents": {
-      "description": "Sub-agents keyed by agent id; every id ends with _worker, regardless of class.",
+    "workers": {
+      "description": "Workers keyed by worker id; every id ends with _worker, regardless of class.",
       "type": "object",
       "propertyNames": {
         "pattern": "^[a-z][a-z0-9_]{0,32}_worker$"
       },
       "additionalProperties": {
-        "$ref": "#/$defs/agent"
+        "$ref": "#/$defs/worker"
       }
     }
   },
@@ -53,12 +53,12 @@
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]{0,39}$"
     },
-    "agentId": {
+    "workerId": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]{0,32}_worker$"
     },
     "effort": {
-      "description": "Engine-native effort. Allowed set depends on the engine kind: claude low|medium|high|xhigh|max; codex minimal|low|medium|high|xhigh|max; pi off|minimal|low|medium|high|xhigh|max; grok none|minimal|low|medium|high|xhigh|max; other kinds any non-empty string. Checked by the script.",
+      "description": "Engine-native effort. Allowed set depends on the engine kind: claude low|medium|high|xhigh|max; codex minimal|low|medium|high|xhigh|max; grok none|minimal|low|medium|high|xhigh|max; other kinds (e.g. opencode, whose --variant is provider/model specific) any non-empty string. Checked by the script.",
       "type": "string",
       "minLength": 1
     },
@@ -155,22 +155,27 @@
           "$ref": "#/$defs/effort"
         },
         "workers": {
-          "description": "Sub-agent ids in priority order; may mix class worker and task.",
+          "description": "Worker ids in priority order; may mix class worker and task.",
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
           "items": {
-            "$ref": "#/$defs/agentId"
+            "$ref": "#/$defs/workerId"
           }
         },
         "max_parallel": {
-          "description": "Cap on sub-agents (worker and task) running concurrently for this owner; the owner enforces it by counting running ledger entries.",
+          "description": "Cap on workers (class worker and task) running concurrently for this owner; the owner enforces it by counting running ledger entries.",
           "type": "integer",
           "minimum": 1
+        },
+        "prefer_task": {
+          "description": "When true, a work package that satisfies the task contract must be resolved with --class task first and only falls back to --class worker when no task worker is available. Omitted means true.",
+          "type": "boolean",
+          "default": true
         }
       }
     },
-    "agent": {
+    "worker": {
       "type": "object",
       "required": [
         "enabled",
@@ -191,7 +196,8 @@
           "enum": [
             "worker",
             "task"
-          ]
+          ],
+          "description": "worker: long-lived session (native sub-agent or herdr interactive pane); task: one-shot herdr run bound by the task contract."
         },
         "model": {
           "type": "string",
@@ -202,6 +208,15 @@
         },
         "description": {
           "type": "string"
+        },
+        "tags": {
+          "description": "Domain tags used by resolve --class <c> --tag <t> to prefer a matching worker.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,31}$"
+          }
         }
       }
     }

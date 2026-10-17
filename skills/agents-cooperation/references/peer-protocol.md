@@ -20,7 +20,7 @@ herdr agent start owner-<engine-id> --kind <kind> --pane <pane> -- <argv>
 默认配置下 `resolve` 的 argv 示例（以实际输出为准）：
 
 ```sh
-herdr agent start owner-codex --kind codex --pane <pane> -- -m gpt-6-astra -c model_reasoning_effort=high
+herdr agent start owner-codex --kind codex --pane <pane> -- -m gpt-6-astra -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox
 herdr agent start owner-claude --kind claude --pane <pane> -- --model claude-opus-5-5 --effort high --permission-mode bypassPermissions
 ```
 

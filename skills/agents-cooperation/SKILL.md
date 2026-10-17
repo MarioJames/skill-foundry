@@ -27,7 +27,7 @@ Worker 与 task agent 统称子 agent。层级最多两级：owner → 子 agent
 
 - **位置**：`~/.config/agents-cooperation/config.json`（`AGENTS_COOPERATION_CONFIG` 或脚本 `--config` 可覆盖）；不存在时使用 `assets/config.default.json`，它是唯一默认来源，也是用户复制的起点。结构由 `assets/config.schema.json` 定义，不做多层合并。
 - **先 `show`**：首次调度前运行 `bun <skill>/scripts/agents-config.ts show`，按宿主引擎找到自己的 enabled owner（每个引擎至多一个），读取它的 `workers` 列表、模型、`availability` 和并行上限。宿主没有可用的 owner 配置时停下，向用户或接单 owner 说明。
-- **派发前 `resolve`**：`resolve --owner <owner-id> --agent <agent-id>` 指定子 agent，或 `--class worker|task` 按 `workers` 顺序取第一个可用的子 agent。输出的派发方式、工具、模型、effort 和 argv 照抄不改，`warnings` 必读。仍须核对子 agent 实际运行的模型，不符合时停掉重派，台账“角色·模型”列按实际模型填写。
+- **派发前 `resolve`**：`resolve --owner <owner-id> --worker <worker-id>` 指定子 agent，或 `--class worker|task [--tag <tag>]` 按 `workers` 顺序取第一个可用的子 agent；带 `--tag` 时先取第一个带该标签的可用候选，没有时按原顺序回退并在 `warnings` 说明（`--tag` 只能与 `--class` 同用）。输出的派发方式、工具、模型、effort 和 argv 照抄不改，`warnings` 必读。仍须核对子 agent 实际运行的模型，不符合时停掉重派，台账“角色·模型”列按实际模型填写。
 - **改配置**：修改后先运行 `validate` 并通过，再用 `show` 确认生效；不通过不得继续沿用。
 - **默认值**：模型和 effort 的默认值来自 `assets/config.default.json`；用户当轮指定时以用户为准。其他技能对某类 worker 另有规定时以那个技能为准，例如 browser-harness 规定 Codex 验收 worker 用 `gpt-6.1-sol` medium，这类覆盖直接传给宿主工具，不改配置。
 
@@ -49,6 +49,8 @@ native 派发约束（`resolve` 输出已包含这些参数）：内置子 agent
 
 核对实际模型：Claude Code 看子 agent 转录中的 `message.model`，Codex 看子会话的 `turn_context`；herdr 派发看 pane 中 CLI 显示的模型。
 
+免审批：所有 herdr 启动的异构 agent 都在 argv 中显式免审批，不依赖用户全局配置；原生子 agent 沿用 owner 会话的权限模式。写入范围靠交接或任务文件约束与 owner 验收 diff 保证。
+
 herdr 派发依赖 Herdr；不可用时跨引擎 worker 和 task agent 无法派发，改用同引擎 native worker，也没有可用的就标阻塞，不改为亲自动手。启动、信任提示和清理按 [协作协议](references/peer-protocol.md) 与 `herdr` 技能；oneshot 与 interactive 的具体流程见 [配置说明](references/config.md#herdr-派发流程)。
 
 ### 并行上限
@@ -65,6 +67,16 @@ herdr 派发依赖 Herdr；不可用时跨引擎 worker 和 task agent 无法派
 4. 不需要续接上下文，一次执行完成。
 
 典型：按既定规则批量改名、改文案、改配置，跑测试并汇总，只读检索与清点。不满足任一条，或执行中发现需要判断时，task agent 停止并回报，由 owner 改派 worker。task agent 的产出与 worker 同样要走验收（查 diff、复跑验证）。
+
+**优先使用 task（`prefer_task`）**：owner 配置的 `prefer_task` 缺省为 `true`（`show` 输出带生效值）。
+
+- 为 `true` 时，工作包满足 task 契约必须先 `resolve --class task`，只有没有可用 task agent（`resolve` 非零退出）时才退回 `--class worker`，台账写明选择及原因。
+- owner 拆包时主动把可机械化的部分拆成满足契约的独立包，不并入需要判断的 worker 包。典型类别：跑测试并汇总、lint 与格式修复、按既定规则批量修改、只读检索与清点、按清单核对。
+- 为 `false` 时 task agent 只是可选项，按工作包性质自行选择。
+
+### 常规实现包优先用免费 worker
+
+方案已冻结、写入范围明确、需要多轮但不含设计判断的常规实现包，用 `resolve --class worker --tag routine` 优先派给免费 worker（默认配置中的 `qoder_worker`，Qwen3.8-Flash）。排除条件：涉及设计判断、跨模块接口或高风险的包不带 `routine` 标签，按领域标签或顺序选；满足 task 契约的包仍按 `prefer_task` 先走 task。没有带 `routine` 的可用 worker 时 `resolve` 按顺序回退并给出 `warnings`，不视为失败。
 
 ### 额度耗尽
 
@@ -97,7 +109,7 @@ owner 在以下时机，先执行本节再继续长步骤或等待：首次接�
    | 任务 | 角色·模型 | 状态 | 最近进展 | 阻塞/风险 |
    | --- | --- | --- | --- | --- |
 
-   列名保持不变。“角色·模型”写明具体执行者：子 agent 写配置 id 加实际模型，如 `claude_worker·sonnet`、`codex_worker·gpt-6.1-sol`、`pi_worker·kimi-k3`；owner 写 `owner·claude-opus-5-5`，协作 owner 写 `协作owner·gpt-6-astra`；不要只写“Worker”。状态取值：待派发 / 运行中 / 待验收 / 已验收 / 失败 / 阻塞 / stale。纯状态询问且工作集合没变时，直接给台账。
+   列名保持不变。“角色·模型”写明具体执行者：子 agent 写配置 id 加实际模型，如 `claude_worker·sonnet`、`codex_worker·gpt-6.1-sol`、`opencode_worker·glm-5.3-flash-free`；owner 写 `owner·claude-opus-5-5`，协作 owner 写 `协作owner·gpt-6-astra`；不要只写“Worker”。状态取值：待派发 / 运行中 / 待验收 / 已验收 / 失败 / 阻塞 / stale。纯状态询问且工作集合没变时，直接给台账。
 
 子 agent 运行期间 owner 看不到其过程，因此每次用户消息和每次回报都要刷新台账。仍有运行中工作时，用宿主的定时唤醒（如 ScheduleWakeup）做 20–30 分钟一次的心跳；超过约 30 分钟没有回报的标为 stale，主动查看输出，必要时停掉重派。
 
@@ -131,7 +143,7 @@ owner 在以下时机，先执行本节再继续长步骤或等待：首次接�
 **并行开发**：方案已冻结，且至少有两个写入范围不重叠的工作包。
 
 - 接单 owner 把工作包分成两侧，各自拆给自己的子 agent；协作 owner 接到 `type: assign` 后同样调度自己的子 agent。共享接口要先实现或先冻结，再开放依赖它的包。
-- 分侧参考：前端、UI 和浏览器验收（lobe-design / browser-harness）偏 Claude 侧；后端逻辑、算法和长时间测试循环偏 Codex 侧。某一侧遇到额度不足或 429 时，按[额度耗尽](#额度耗尽)处理：单个子 agent 受限则 `resolve --class` 改选，owner 自身受限则整包转给另一侧，都是整包转移，不在单个包内部来回切换。
+- 按领域选子 agent：派发时按工作包领域带 `--tag`（如前端、UI 和浏览器验收用 `frontend` / `browser`，后端逻辑、算法和长时间测试循环用 `backend` / `algorithm` / `test`），标签由配置里 `workers.<id>.tags` 维护，不写死在本技能里；某个工作包没有匹配标签时不带 `--tag`，按顺序选。某一侧遇到额度不足或 429 时，按[额度耗尽](#额度耗尽)处理：单个子 agent 受限则 `resolve --class` 改选，owner 自身受限则整包转给另一侧，都是整包转移，不在单个包内部来回切换。
 - 三层 review：子 agent 自验（测试、类型检查）→ 各自 owner review 自己的子 agent → 交叉 review（对方审本侧 diff，集成后的整体 diff 两侧都审）。review 方只出 findings，由负责该部分的一侧修复；按本阶段预算上限进行，仍有分歧时由接单 owner 裁决，分歧涉及必审条件时才进入 ChatGPT 结果校验预算。
 
 **普通调度**：其余开发任务。owner 不写代码，全部派给子 agent，以便随时接收和路由新任务。只做 owner 自己的 review，不做交叉 review，除非改动高风险。
