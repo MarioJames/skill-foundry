@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "agents-cooperation availability state",
-  "description": "Runtime quota blocks, kept apart from config.json. Entries whose until has passed are treated as expired.",
+  "description": "Runtime quota blocks, kept apart from config.json. Entries whose release_at has passed are treated as expired.",
   "type": "object",
   "required": ["version", "blocks"],
   "additionalProperties": false,
@@ -27,7 +27,7 @@
         "model": { "description": "Omitted means the whole engine (account-level quota).", "type": "string", "minLength": 1 },
         "reason": { "type": "string", "minLength": 1 },
         "since": { "$ref": "#/$defs/timestamp" },
-        "until": { "description": "Omitted means the reset time is unknown; stays until unblock.", "$ref": "#/$defs/timestamp" },
+        "release_at": { "description": "Omitted means no release time is set; stays blocked until a manual unblock.", "$ref": "#/$defs/timestamp" },
         "by": { "type": "string", "minLength": 1 }
       }
     }

@@ -26,11 +26,11 @@ herdr agent start owner-claude --kind claude --pane <pane> -- --model claude-opu
 
 同一任务从讨论、开发到交叉 review 复用同一个协作 owner 会话，以保留上下文。Herdr 不可用、启动失败或没有可用的协作 owner（未配置、disabled、被 block）时，接单 owner 在台账中说明原因，用自己的子 agent 独立完成，不改走其他入口。降级只免除 owner 讨论；分级为必审时不免除 [ChatGPT 审查门槛](#chatgpt-审查门槛)，接单 owner 自己的子 agent 也只在门槛满足后实施依赖该方案的工作。
 
-- 在从未启动过该 CLI 的目录里，两个 CLI 都会先弹出目录信任提示，`agent start` 因此返回 `agent_not_ready`（blocked）；`-c` 配置覆盖和权限参数都跳不过这个提示。处理步骤：先用 `herdr agent read <owner> --source visible` 确认确实是信任提示，再按 CLI 选择信任，信任结果由 CLI 自己持久化：
-  - Codex（"Trust this folder?"，默认选项就是 Trust and continue）：`herdr agent send-keys <owner> enter`
-  - Claude（"Is this a project you created or one you trust?"，默认选项是 No, exit，直接回车会退出）：`herdr agent send-keys <owner> down`，读屏确认 `❯ Yes, I trust this folder` 后再 `enter`
+- 新目录里 claude、codex 都会先弹目录信任提示（不按前缀继承），`agent start` 因此返回 `agent_not_ready`（blocked）；`-c` 配置覆盖和权限参数都跳不过。先用 `herdr agent read <owner> --source visible` 确认确实是信任提示，再选择信任，结果由 CLI 自己持久化：
+  - Codex（“Trust this folder?”，默认选项就是 Trust and continue）：`herdr agent send-keys <owner> enter`
+  - Claude（默认选项是 No, exit，直接回车会退出）：`herdr agent send-keys <owner> down`，读屏确认 `❯ Yes, I trust this folder` 后再 `enter`
 
-  之后用 `herdr agent list` 确认状态变为 idle/done，再发 prompt。只信任用户指定的目标项目目录；来源不明的仓库停下来问用户。如果 blocked 不是信任提示，按读屏内容判断，不要盲目按键。worker 使用的其他 CLI（如 qodercli 的信任提示状态报 idle 而非 blocked）见[配置说明](config.md#herdr-派发流程)。
+  之后用 `herdr agent list` 确认状态变为 idle/done，再发 prompt。只信任用户指定的目标项目目录；来源不明的仓库停下来问用户。各 CLI 的完整对照（含 qodercli、grok、opencode）见[配置说明的信任提示表](config.md#herdr-派发流程)。
 - `route-lane` 需要已验证的调用方 pane。在 Herdr 之外（例如普通 tmux）运行时，归属校验会失败，这时直接走上面的降级路径。
 
 ## 消息

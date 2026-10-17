@@ -5,7 +5,7 @@ description: 直接面对用户的 Agent 收到开发、修复、重构或跨项
 
 # Agents Cooperation
 
-owner 自己调度，不调用外部判定器。每个引擎（Claude Code、Codex、Grok 等）的宿主安装同一份技能，规则对称，角色由消息来源决定，不由厂商决定。
+owner 自己调度，不调用外部判定器。每个引擎（Claude Code、Codex 等）的宿主安装同一份技能，规则对称，角色由消息来源决定，不由厂商决定。
 
 owner 是 brain，子 agent 是 executor。owner 使用的高价模型（默认 `claude-opus-5-5`、`gpt-6-astra`）额度消耗快，只负责方案设计、review 和调度；项目文件的一切改动都交给子 agent。
 
@@ -43,7 +43,6 @@ native 派发约束（`resolve` 输出已包含这些参数）：内置子 agent
 
 - **Claude Code**：`Agent` 工具同时传 `model` 和 `effort`，`subagent_type` 用 `general-purpose` 或具体类型，不用 `fork`，因为 fork 会忽略 `model` 覆盖，固定沿用父模型。
 - **Codex**：`spawn_agent` 同时传 `model`、`reasoning_effort` 和 `fork_turns: "none"`；覆盖模型时不能带完整历史 `all`。
-- **Grok**：`spawn_subagent` 不支持按次设置 effort，子 agent 沿用 owner 会话的 effort；`model` 参数在全 xAI 模型目录且开启 `subagent_model_inheritance` 时会被隐藏，此时模型沿用父会话，必须核对实际模型。
 
 核对实际模型：Claude Code 看子 agent 转录中的 `message.model`，Codex 看子会话的 `turn_context`；herdr 派发看 pane 中 CLI 显示的模型。
 
@@ -77,9 +76,9 @@ herdr 派发依赖 Herdr；不可用时跨引擎 worker 无法派发，改用同
 
 运行状态与配置分离，记录在 `~/.local/state/agents-cooperation/availability.json`，只用 `block` / `unblock` / `status` 读写。
 
-- 派发、herdr prompt 或子 agent 结果中出现额度耗尽信号（429、usage limit、quota exceeded、credit 或额度不足、提示需等待到某时刻的 rate limit）时，owner 立即执行 `block --engine <id> [--model <m>] [--until <时间>] --reason <原因> --by <owner-id>`：报错能解析出重置时间就写 `--until`，否则省略；报错只针对某个模型时带 `--model`，账户级额度不带。
+- 派发、herdr prompt 或子 agent 结果中出现额度耗尽信号（429、usage limit、quota exceeded、credit 或额度不足、提示需等待到某时刻的 rate limit）时，owner 立即执行 `block --engine <id> [--model <m>] [--release-at <时间>] --reason <原因> --by <owner-id>`：报错能解析出重置时间就写 `--release-at`，否则省略，由该引擎配置的 `block_ttl` 给出默认冷却时长（默认配置：claude、codex 为 5h，opencode、qoder 为 1h，grok 不设；引擎没有 `block_ttl` 时不自动解封，直到手动 `unblock`）；报错只针对某个模型时带 `--model`，账户级额度不带。
 - 然后用 `resolve --owner <owner-id> [--tag <tag>]` 重新选子 agent，把未完成的工作包整包改派（整包转移，不在包内来回切换），台账写明 block 与改派。
-- 到期自动解封：`until` 之后该条目视为失效，新派发自动可用，不需要手动 `unblock`。有 `until` 且仍有依赖该引擎的待派发工作时，可用宿主定时唤醒在 `until` 之后复查 `status`。
+- 到期自动解封：`release_at` 之后该条目视为失效，新派发自动可用，不需要手动 `unblock`。有 `release_at` 且仍有依赖该引擎的待派发工作时，可用宿主定时唤醒在 `release_at` 之后复查 `status`。
 - owner 自身被 block 时，它的原生子 agent 随之不可派发；协作 owner 被 block 时降级为单 owner（等同 Herdr 不可用）。
 - 不得因 block 而改为亲自动手。
 

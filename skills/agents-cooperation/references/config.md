@@ -6,10 +6,10 @@ SKILL.md 的“调度配置”写规则，本文写字段、派发推导、herdr
 
 - 配置：`~/.config/agents-cooperation/config.json`；`AGENTS_COOPERATION_CONFIG` 或脚本 `--config <path>` 覆盖。不存在时使用 `<skill>/assets/config.default.json`。不做多层合并。
 - 默认配置是唯一默认来源，也是用户复制的起点，按模型特点初始化：
-  - 引擎：claude、codex 为 enabled 且 native；grok（native）、opencode（`kind: opencode`）与 qoder（`kind: qodercli`）为 `enabled: false` 的示例。
-  - owner：`claude_owner`（claude-opus-5-5，high）、`codex_owner`（gpt-6-astra，high）为 enabled，`max_parallel` 4；`grok_owner`（grok-4.7，high）为 `enabled: false`。`workers` 顺序：`claude_owner` 为 `claude_worker`、`qoder_worker`、`opencode_worker`、`codex_worker`、`grok_worker`；`codex_owner` 为 `codex_worker`、`qoder_worker`、`opencode_worker`、`claude_worker`、`grok_worker`；`grok_owner` 为 `grok_worker`、`qoder_worker`、`opencode_worker`、`claude_worker`、`codex_worker`。即本引擎的原生 worker 第一位，免费 worker 紧随其后。
+  - 引擎：claude、codex 为 enabled 且 native；grok、opencode（`kind: opencode`）与 qoder（`kind: qodercli`）为 `enabled: false` 的示例。
+  - owner：`claude_owner`（claude-opus-5-5，high）、`codex_owner`（gpt-6-astra，high）为 enabled，`max_parallel` 4。`workers` 顺序：`claude_owner` 为 `claude_worker`、`qoder_worker`、`opencode_worker`、`codex_worker`、`grok_worker`；`codex_owner` 为 `codex_worker`、`qoder_worker`、`opencode_worker`、`claude_worker`、`grok_worker`。grok 不当 owner（`native_subagents` 为 false），只作 herdr worker。即本引擎的原生 worker 第一位，免费 worker 紧随其后。
   - worker：`claude_worker`（claude / sonnet / high，tags `frontend` `ui` `browser` `docs`）、`codex_worker`（codex / gpt-6.1-sol / high，tags `backend` `algorithm` `test` `refactor`）为 enabled；`grok_worker`（grok / grok-4.7 / high，tags `research`）、`qoder_worker`（qoder / `Qwen3.8-Flash` / xhigh，tags `routine` `test` `lint` `scaffold`，免费模型，用于方案已冻结且范围明确的常规实现）与 `opencode_worker`（opencode / `opencode/glm-5.3-flash-free` / max，tags `mechanical` `test` `lint` `sweep`，免费模型，用于机械性包）为 `enabled: false`。
-  - 用户配置按需启用：启用 `opencode`、`qoder` 引擎与 `opencode_worker`、`qoder_worker`；grok 引擎启用后 `grok_owner`、`grok_worker` 仍可保持 disabled。
+  - 用户配置按需启用：启用 `opencode`、`qoder` 引擎与 `opencode_worker`、`qoder_worker`；启用 `grok` 引擎与 `grok_worker` 后，它作为 herdr worker 使用。
 - 结构由 `<skill>/assets/config.schema.json`（JSON Schema draft 2020-12）定义，配置用 `"$schema"` 指向它；校验器直接读取 schema，字段表不在脚本里重复。
 
 ## 字段
@@ -22,7 +22,8 @@ SKILL.md 的“调度配置”写规则，本文写字段、派发推导、herdr
     "<engine-id>": {
       "enabled": true,
       "kind": "claude",              // herdr agent start --kind 的合法值之一（claude、codex、grok、opencode、qodercli）
-      "native_subagents": true       // 仅 kind 为 claude、codex、grok 时可为 true
+      "native_subagents": true,      // 仅 kind 为 claude、codex 时可为 true
+      "block_ttl": "5h"              // 可选，匹配 ^[1-9][0-9]*[mhd]$；该引擎 block 未给出重置时间时的默认冷却时长
     }
   },
   "owners": {
@@ -48,11 +49,11 @@ SKILL.md 的“调度配置”写规则，本文写字段、派发推导、herdr
 }
 ```
 
-- **命名**：engine、owner、worker 的 id 匹配 `^[a-z][a-z0-9_]{0,39}$`；`workers` 下所有 key 以 `_worker` 结尾。默认命名：引擎 `claude` `codex` `grok` `opencode` `qoder`，owner `claude_owner` `codex_owner` `grok_owner`，worker `claude_worker` `codex_worker` `grok_worker` `opencode_worker` `qoder_worker`。顶层字段是 `workers`，不接受旧字段 `agents`（报未知字段）。
+- **命名**：engine、owner、worker 的 id 匹配 `^[a-z][a-z0-9_]{0,39}$`；`workers` 下所有 key 以 `_worker` 结尾。默认命名：引擎 `claude` `codex` `grok` `opencode` `qoder`，owner `claude_owner` `codex_owner`，worker `claude_worker` `codex_worker` `grok_worker` `opencode_worker` `qoder_worker`。顶层字段是 `workers`，不接受旧字段 `agents`（报未知字段）。
 - **tags**：可选，字符串数组，每项匹配 `^[a-z][a-z0-9-]{0,31}$` 且不重复，标记该 worker 擅长的领域，只用于 `resolve --tag`（见下文）。标签集合由配置维护，技能规则不写死标签名。
 - **未知字段**：所有对象禁止多余字段，顶层只额外允许 `$schema`；旧配置中残留的 worker 分类字段和 owner 任务优先字段同样报未知字段。
 - **effort**：schema 只要求非空字符串，合法取值由脚本按引擎 kind 校验，是引擎原生语义，不做跨引擎统一：claude `low|medium|high|xhigh|max`；codex `minimal|low|medium|high|xhigh|max`；grok `none|minimal|low|medium|high|xhigh|max`；qodercli `auto|none|low|medium|high|xhigh|max|ultracode`；opencode 的 effort 对应模型的 variant，是 provider 与模型相关的值（如 `opencode/glm-5.3-flash-free` 为 `low|high|max`），不在常量表内、按任意非空字符串处理，以 `opencode models <provider> --verbose` 输出的 variants 为准；TUI 不能按次指定 variant，实际取值见下文“opencode 的约束”。
-- **语义校验**：引用必须存在；enabled owner 的引擎必须 enabled 且 `native_subagents: true`；`workers` 中每个 id 存在，enabled owner 至少有一个 enabled、引擎 enabled 的 worker；每个引擎至多一个 enabled owner（宿主据此识别自己的 owner）；每个 worker 的引擎 kind 必须有 interactive 构建器或属于 native kind（claude、codex、grok），opencode 与 qodercli 都有 interactive 构建器；`native_subagents: true` 只允许 claude、codex、grok（opencode、qodercli 不可为 true）。
+- **语义校验**：引用必须存在；每个 owner（不论 enabled）的引擎都必须 `native_subagents: true`，enabled owner 的引擎还必须 enabled；`workers` 中每个 id 存在，enabled owner 至少有一个 enabled、引擎 enabled 的 worker；每个引擎至多一个 enabled owner（宿主据此识别自己的 owner）；每个 worker 的引擎 kind 必须有 interactive 构建器或属于 native kind（claude、codex），grok、opencode 与 qodercli 都有 interactive 构建器；`native_subagents: true` 只允许 claude、codex（grok、opencode、qodercli 不可为 true）。
 
 ## 派发方式推导
 
@@ -67,7 +68,6 @@ SKILL.md 的“调度配置”写规则，本文写字段、派发推导、herdr
 
 - **native + claude**：`tool: Agent`，`params` 含 `model`、`effort`、`subagent_type: general-purpose`。只读类型可替换 `subagent_type`，`model` 与 `effort` 保持不变；不用 `fork`。
 - **native + codex**：`tool: spawn_agent`，`params` 含 `model`、`reasoning_effort`、`fork_turns: "none"`。
-- **native + grok**：`tool: spawn_subagent`，`params` 含 `model`、`subagent_type`，并带 `warnings`：grok 不支持按次设置 effort，子 agent 沿用 owner 会话的 effort。另外，`model` 参数在全 xAI 模型目录且开启 `subagent_model_inheritance` 时会被隐藏，此时模型沿用父会话，派发后必须核对实际模型。
 - **herdr interactive**：`mode: interactive`、`kind`、`argv`；argv 是 `herdr agent start <name> --kind <kind> --pane <pane> -- <argv>` 中 `--` 之后的部分。
 - **`--peer`**：`resolve --owner <self> --peer <owner-id>` 输出协作 owner 的 herdr interactive argv，用法见 [协作协议](peer-protocol.md#启动协作-owner)。
 - **拒绝**：owner 或 worker 不存在、disabled、所属引擎 disabled、被 block 时非零退出。`--worker` 显式指定的子 agent 不在该 owner 的 `workers` 列表中也允许，但输出 `warnings`。输出中的子 agent 字段为 `worker`，`status` 输出 `workers`，`skipped[]` 的条目用 `worker` 标识。
@@ -88,7 +88,7 @@ SKILL.md 的“调度配置”写规则，本文写字段、派发推导、herdr
 
 **免审批**：所有 herdr 启动的异构 agent 都在 argv 中显式免审批（claude、grok `--permission-mode bypassPermissions`，codex `--dangerously-bypass-approvals-and-sandbox`，qodercli `--permission-mode bypass_permissions`，opencode `--auto`），不依赖用户全局配置；原生子 agent 沿用 owner 会话的权限模式，不由本配置控制。免审批意味着写入范围只靠交接文件约束，由 owner 验收 diff 保证。
 
-qodercli 的约束：`effort` 取 effort 校验中的值，免费模型 `Qwen3.8-Flash` 默认 `xhigh`；首次进入目录会弹信任提示且状态报 idle，处理见下文“Herdr 派发流程”。
+qodercli 的约束：`effort` 取 effort 校验中的值，免费模型 `Qwen3.8-Flash` 默认 `xhigh`；信任范围之外的目录会弹信任提示且状态报 idle，见下文“Herdr 派发流程”的信任提示表。
 
 opencode 的约束：
 
@@ -111,11 +111,17 @@ herdr worker 指引擎与 owner 不同、经 Herdr pane 启动的 worker。每�
    ```sh
    herdr agent start <name> --kind <kind> --pane <pane> -- <argv>
    ```
-3. **信任提示**：在从未启动过该 CLI 的目录里，各 CLI 可能先弹目录信任提示，只信任用户指定的目标项目目录，来源不明的仓库停下来问用户。启动后先用 `herdr agent read <name> --source visible` 读屏确认，再发 prompt；不是信任提示的 blocked 按读屏内容判断，不要盲目按键。
-   - claude、codex：按 [协作协议](peer-protocol.md#启动协作-owner) 的步骤处理，`agent start` 会返回 `agent_not_ready`（blocked）。
-   - qodercli：首次进入目录弹 “Trust folder”，默认选项就是 Trust，`herdr agent send-keys <name> enter`。**陷阱**：此时 herdr 状态报 idle 而不是 blocked，`agent start` 看起来成功，直接发 prompt 会把内容送进信任对话框，所以 qodercli 启动后必须读屏确认，不能只看状态。
-   - opencode：实测无信任提示，仍读屏确认模型和 variant（状态栏如 `· max`），与 `resolve` 的 `warnings` 对照。
-   - 其他 CLI：以读屏为准。
+3. **信任提示**：各 CLI 对新目录的信任提示不同（实测见下表），都无法用启动参数跳过。只信任用户指定的目标项目目录，来源不明的仓库停下来问用户。启动后先用 `herdr agent read <name> --source visible` 读屏确认，再发 prompt；不是信任提示的 blocked 按读屏内容判断，不要盲目按键。
+
+   | CLI | 新目录是否弹提示 | 默认选项与处理 | herdr 状态 |
+   | --- | --- | --- | --- |
+   | claude | 都弹（“Quick safety check … trust”），不按前缀继承 | 默认 No, exit：`send-keys <name> down`，读屏确认选中 `Yes, I trust this folder` 后再 `enter` | blocked（`agent start` 返回 `agent_not_ready`） |
+   | codex | 都弹（“Trust this folder?”），不按前缀继承 | 默认 Trust and continue：`send-keys <name> enter` | blocked（同上） |
+   | qodercli | 按 `~/.qoder/settings.json` 的 `permissions.trustDirectories` 前缀继承：已信任目录（本机含 `/home/mocha`，其下项目与默认位于 `~/.local/share/cow-workspace` 的视图）不弹，`/tmp` 等范围之外弹 “Trust folder” | 默认 Trust：读屏确认后 `send-keys <name> enter`；`--dangerously-skip-permissions` 与 `--permission-mode bypass_permissions` 都跳不过 | **idle**：`agent start` 看起来成功，直接发 prompt 会进信任对话框，必须读屏，不能只看状态 |
+   | grok | 不弹 | 直接就绪；状态栏显示模型与 effort（如 `Grok 4.7 (low) · always-approve`），与 `resolve` 对照 | 就绪 |
+   | opencode | 不弹（实测 `/tmp`） | 读屏确认模型和 variant（如 `· max`），与 `resolve` 的 `warnings` 对照 | 就绪 |
+
+   其他 CLI 以读屏为准。Claude 与 Codex 作为协作 owner 启动时同样按此表，见 [协作协议](peer-protocol.md#启动协作-owner)。
 4. **发送信封**：任务内容写成消息目录下的任务文件，prompt 只带任务文件和回复文件路径，格式沿用协作协议的信封风格；worker 守则同 SKILL.md 的“子 agent 交接”。
 
    ```text
@@ -156,29 +162,31 @@ herdr worker 指引擎与 owner 不同、经 Herdr pane 启动的 worker。每�
 ```json
 { "version": 1, "blocks": [
   { "engine": "codex", "model": "gpt-6-astra", "reason": "usage limit",
-    "since": "2026-10-16T22:00:00-04:00", "until": "2026-10-17T03:00:00-04:00", "by": "claude_owner" }
+    "since": "2026-10-16T22:00:00-04:00", "release_at": "2026-10-17T03:00:00-04:00", "by": "claude_owner" }
 ] }
 ```
 
-- `model` 省略 = 整个引擎（账户级额度）；有值 = 该引擎下使用该 model 的 owner 与子 agent。`until` 省略 = 重置时间未知，直到手动 `unblock`。同一 (engine, model) 只保留一条，再次 `block` 覆盖。
-- **到期自动解封**：所有命令读取状态时，`until` 已过的条目视为失效；`block` / `unblock` 写入时顺带清除过期条目。不需要常驻进程。
+- `model` 省略 = 整个引擎（账户级额度）；有值 = 该引擎下使用该 model 的 owner 与子 agent。`release_at` 省略 = 没有解封时间，直到手动 `unblock`。同一 (engine, model) 只保留一条，再次 `block` 覆盖。条目存在即表示 blocked。
+- **release_at 取值优先级**：`--release-at`（从报错解析出的重置时间，`explicit`）> 该引擎配置的 `block_ttl`（从 block 时刻起算，`block_ttl`）> 不写（`none`，不自动解封，直到手动 `unblock`）。`block` 的输出在条目上附 `release_source`，取值 `explicit` | `block_ttl` | `none`，只出现在命令输出里，不写入状态文件。
+- **block_ttl 默认值**：`claude`、`codex` 为 `5h`（订阅额度窗口）；`opencode`、`qoder` 为 `1h`（免费模型限流）；`grok` 不设。`block_ttl` 与 `--release-at` 的相对时间（`+<n>m|h|d`）用同一个解析函数，n 必须 ≥1。
+- **到期自动解封**：所有命令读取状态时，`release_at` 已过的条目视为失效；`block` / `unblock` 写入时顺带清除过期条目。不需要常驻进程。
 
 命令：
 
 | 命令 | 作用 |
 | --- | --- |
-| `block --engine <id> [--model <m>] [--until <ISO8601 \| +<n>m \| +<n>h \| +<n>d>] --reason <text> [--by <owner-id>]` | 写入 block，engine 必须存在于配置；输出写入后的条目 |
+| `block --engine <id> [--model <m>] [--release-at <ISO8601 \| +<n>m \| +<n>h \| +<n>d>] --reason <text> [--by <owner-id>]` | 写入 block，engine 必须存在于配置；输出写入后的条目 |
 | `unblock --engine <id> [--model <m>]` | 删除精确匹配的条目，输出删除数量 |
 | `status` | 当前有效的 block 列表，以及每个 owner 和子 agent 的可用性 |
 
-可用性判定（`resolve`、`show`、`status` 共用）依次为：`disabled`（自身 enabled=false）→ `engine_disabled` → `blocked`（引擎级或 engine+model 级，附 `until` 和 `reason`）→ `available`；`show` 输出中每个 owner 和子 agent 都带 `availability`。
+可用性判定（`resolve`、`show`、`status` 共用）依次为：`disabled`（自身 enabled=false）→ `engine_disabled` → `blocked`（引擎级或 engine+model 级，附 `release_at` 和 `reason`）→ `available`；`show` 输出中每个 owner 和子 agent 都带 `availability`。
 
 传播：
 
 - owner 被 block 时，以它为发起方的 `resolve --owner` 一律拒绝，它的原生子 agent 随之不可派发；同引擎但不同 model 且未被 block 的子 agent，仍可被其他 owner 经 herdr 使用。
 - 引擎级 block 则该引擎上的 owner 与子 agent 全部不可用。
 
-owner 的处置步骤见 SKILL.md 的“额度耗尽”：识别信号、`block`（能解析出重置时间就写 `--until`；报错只针对某个模型时带 `--model`）、`resolve --owner <owner-id> [--tag <tag>]` 重选、整包改派并写台账。协作 owner 被 block 时降级为单 owner。
+owner 的处置步骤见 SKILL.md 的“额度耗尽”：识别信号、`block`（能解析出重置时间就写 `--release-at`；报错只针对某个模型时带 `--model`）、`resolve --owner <owner-id> [--tag <tag>]` 重选、整包改派并写台账。协作 owner 被 block 时降级为单 owner。
 
 ## 修改配置
 

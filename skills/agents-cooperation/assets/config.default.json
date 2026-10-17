@@ -2,11 +2,11 @@
   "$schema": "./config.schema.json",
   "version": 1,
   "engines": {
-    "claude": { "enabled": true, "kind": "claude", "native_subagents": true },
-    "codex": { "enabled": true, "kind": "codex", "native_subagents": true },
-    "grok": { "enabled": false, "kind": "grok", "native_subagents": true },
-    "opencode": { "enabled": false, "kind": "opencode", "native_subagents": false },
-    "qoder": { "enabled": false, "kind": "qodercli", "native_subagents": false }
+    "claude": { "enabled": true, "kind": "claude", "native_subagents": true, "block_ttl": "5h" },
+    "codex": { "enabled": true, "kind": "codex", "native_subagents": true, "block_ttl": "5h" },
+    "grok": { "enabled": false, "kind": "grok", "native_subagents": false },
+    "opencode": { "enabled": false, "kind": "opencode", "native_subagents": false, "block_ttl": "1h" },
+    "qoder": { "enabled": false, "kind": "qodercli", "native_subagents": false, "block_ttl": "1h" }
   },
   "owners": {
     "claude_owner": {
@@ -23,14 +23,6 @@
       "model": "gpt-6-astra",
       "effort": "high",
       "workers": ["codex_worker", "qoder_worker", "opencode_worker", "claude_worker", "grok_worker"],
-      "max_parallel": 4
-    },
-    "grok_owner": {
-      "enabled": false,
-      "engine": "grok",
-      "model": "grok-4.7",
-      "effort": "high",
-      "workers": ["grok_worker", "qoder_worker", "opencode_worker", "claude_worker", "codex_worker"],
       "max_parallel": 4
     }
   },

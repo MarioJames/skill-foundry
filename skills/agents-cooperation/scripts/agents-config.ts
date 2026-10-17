@@ -31,18 +31,17 @@ const INTERACTIVE: Record<string, (m: string, e: string) => string[]> = {
   qodercli: (m, e) => ["-m", m, "--reasoning-effort", e, ...QODER_BYPASS],
   grok: (m, e) => ["-m", m, "--effort", e, ...BYPASS],
 };
-const GROK_EFFORT_WARNING = "grok spawn_subagent 不支持按次设置 effort，子 agent 沿用 owner 会话的 effort";
 
 export class CliError extends Error {
   constructor(message: string, public issues: Issue[] = []) { super(message); }
 }
-export interface Engine { enabled: boolean; kind: string; native_subagents?: boolean }
+export interface Engine { enabled: boolean; kind: string; native_subagents?: boolean; block_ttl?: string }
 export interface Owner { enabled: boolean; engine: string; model: string; effort: string; workers: string[]; max_parallel: number }
 export interface Worker { enabled: boolean; engine: string; model: string; effort: string; description?: string; tags?: string[] }
 export interface Config { version: 1; engines: Record<string, Engine>; owners: Record<string, Owner>; workers: Record<string, Worker> }
-export interface Block { engine: string; model?: string; reason: string; since: string; until?: string; by?: string }
+export interface Block { engine: string; model?: string; reason: string; since: string; release_at?: string; by?: string }
 export interface State { version: 1; blocks: Block[] }
-export interface Availability { status: "available" | "disabled" | "engine_disabled" | "blocked"; engine?: string; model?: string; reason?: string; until?: string }
+export interface Availability { status: "available" | "disabled" | "engine_disabled" | "blocked"; engine?: string; model?: string; reason?: string; release_at?: string }
 
 const readJson = (path: string): any => {
   try { return JSON.parse(readFileSync(path, "utf8")); }
@@ -72,9 +71,9 @@ export function validateConfig(config: unknown, schema: Schema = loadSchema(CONF
     if (!engine) bad(`${at}.engine`, `unknown engine ${owner.engine}`);
     else checkEffort(at, owner.engine, owner.effort);
     owner.workers.forEach((worker, i) => { if (!c.workers[worker]) bad(`${at}.workers[${i}]`, `unknown worker ${worker}`); });
+    if (engine && !engine.native_subagents) bad(`${at}.engine`, `engine ${owner.engine} must set native_subagents: true to host an owner`);
     if (!owner.enabled) continue;
     if (engine && !engine.enabled) bad(`${at}.engine`, `engine ${owner.engine} is disabled`);
-    if (engine && !engine.native_subagents) bad(`${at}.engine`, `engine ${owner.engine} must set native_subagents: true to host an owner`);
     const other = owned.get(owner.engine);
     if (other) bad(at, `engine ${owner.engine} already has enabled owner ${other}`);
     else owned.set(owner.engine, id);
@@ -96,17 +95,17 @@ export function validateConfig(config: unknown, schema: Schema = loadSchema(CONF
 // ---- availability ----
 const stamp = (value: string) => Date.parse(value);
 export function activeBlocks(state: State, now: number): Block[] {
-  return state.blocks.filter(b => !b.until || stamp(b.until) > now);
+  return state.blocks.filter(b => !b.release_at || stamp(b.release_at) > now);
 }
 export function availabilityOf(config: Config, blocks: Block[], entity: Owner | Worker): Availability {
   if (!entity.enabled) return { status: "disabled" };
   if (!config.engines[entity.engine]?.enabled) return { status: "engine_disabled" };
   const hit = blocks.find(b => b.engine === entity.engine && (b.model === undefined || b.model === entity.model));
-  if (hit) return { status: "blocked", engine: hit.engine, ...(hit.model ? { model: hit.model } : {}), reason: hit.reason, ...(hit.until ? { until: hit.until } : {}) };
+  if (hit) return { status: "blocked", engine: hit.engine, ...(hit.model ? { model: hit.model } : {}), reason: hit.reason, ...(hit.release_at ? { release_at: hit.release_at } : {}) };
   return { status: "available" };
 }
 const describeUnavailable = (a: Availability) =>
-  a.status === "blocked" ? `blocked (${a.model ? `${a.engine}/${a.model}` : a.engine}: ${a.reason}${a.until ? `, until ${a.until}` : ""})` : a.status;
+  a.status === "blocked" ? `blocked (${a.model ? `${a.engine}/${a.model}` : a.engine}: ${a.reason}${a.release_at ? `, release_at ${a.release_at}` : ""})` : a.status;
 export function validateState(state: unknown, schema: Schema = loadSchema(STATE_SCHEMA)): Issue[] {
   const issues = validate(schema, state);
   if (issues.length) return issues;
@@ -131,11 +130,17 @@ export function writeState(path: string, state: State): void {
   try { writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", { mode: 0o600 }); renameSync(tmp, path); }
   catch (error) { rmSync(tmp, { force: true }); throw error; }
 }
-export function parseUntil(value: string, now: number): string {
-  const relative = /^\+(\d+)([mhd])$/.exec(value);
-  if (relative) return new Date(now + Number(relative[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[relative[2] as "m" | "h" | "d"]).toISOString();
+/** The one parser for relative durations: "<n>m|h|d" (n >= 1), as in an engine's block_ttl and, with a leading "+", in --release-at. */
+export function addDuration(spec: string, now: number): string | undefined {
+  const match = /^([1-9][0-9]*)([mhd])$/.exec(spec);
+  if (!match) return undefined;
+  return new Date(now + Number(match[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[match[2] as "m" | "h" | "d"]).toISOString();
+}
+export function parseReleaseAt(value: string, now: number): string {
+  const relative = value.startsWith("+") ? addDuration(value.slice(1), now) : undefined;
+  if (relative) return relative;
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(value) || Number.isNaN(stamp(value))) {
-    throw new CliError(`invalid --until ${value}; use ISO 8601 with timezone or +<n>m|h|d`);
+    throw new CliError(`invalid --release-at ${value}; use ISO 8601 with timezone or +<n>m|h|d`);
   }
   return value;
 }
@@ -163,7 +168,6 @@ function launch(config: Config, ownerId: string, workerId: string, warnings: str
     switch (engine.kind) {
       case "claude": return { ...base, dispatch: "native", tool: "Agent", params: { ...params, effort: worker.effort, subagent_type: "general-purpose" }, warnings };
       case "codex": return { ...base, dispatch: "native", tool: "spawn_agent", params: { ...params, reasoning_effort: worker.effort, fork_turns: "none" }, warnings };
-      case "grok": return { ...base, dispatch: "native", tool: "spawn_subagent", params: { ...params, subagent_type: "general-purpose" }, warnings: [...warnings, GROK_EFFORT_WARNING] };
       default: throw new CliError(`kind ${engine.kind} has no native sub-agent tool`);
     }
   }
@@ -237,7 +241,7 @@ const USAGE = `Usage: bun agents-config.ts <command> [options]
   show                             Print the effective config with availability
   resolve --owner <id> --worker <id> | [--tag <t>] | --peer <owner-id>
                                    (no --worker/--peer: first available worker in order, or first tagged one with --tag)
-  block --engine <id> [--model <m>] [--until <ISO8601|+<n>m|h|d>] --reason <text> [--by <owner-id>]
+  block --engine <id> [--model <m>] [--release-at <ISO8601|+<n>m|h|d>] --reason <text> [--by <owner-id>]
   unblock --engine <id> [--model <m>]
   status                           Print active blocks and per-owner/worker availability
 Common: --config <path> --state <path>; env AGENTS_COOPERATION_CONFIG, AGENTS_COOPERATION_STATE, AGENTS_COOPERATION_NOW (tests only)`;
@@ -246,7 +250,7 @@ export function run(args: string[], env: Record<string, string | undefined> = pr
   try {
     const { values, positionals } = parseArgs({
       args, allowPositionals: true,
-      options: { config: { type: "string" }, state: { type: "string" }, owner: { type: "string" }, worker: { type: "string" }, tag: { type: "string" }, peer: { type: "string" }, engine: { type: "string" }, model: { type: "string" }, until: { type: "string" }, reason: { type: "string" }, by: { type: "string" }, help: { type: "boolean", short: "h" } },
+      options: { config: { type: "string" }, state: { type: "string" }, owner: { type: "string" }, worker: { type: "string" }, tag: { type: "string" }, peer: { type: "string" }, engine: { type: "string" }, model: { type: "string" }, "release-at": { type: "string" }, reason: { type: "string" }, by: { type: "string" }, help: { type: "boolean", short: "h" } },
     });
     const command = positionals[0];
     if (values.help || !command) return { code: values.help ? 0 : 2, stdout: values.help ? USAGE + "\n" : "", stderr: values.help ? "" : USAGE + "\n" };
@@ -283,14 +287,21 @@ export function run(args: string[], env: Record<string, string | undefined> = pr
         const engine = need("engine", values.engine);
         if (!config.engines[engine]) throw new CliError(`unknown engine ${engine}`);
         const entry: Block = { engine, ...(values.model ? { model: values.model } : {}), reason: need("reason", values.reason), since: new Date(now).toISOString() };
-        if (values.until) {
-          entry.until = parseUntil(values.until, now);
-          if (stamp(entry.until) <= now) throw new CliError("--until must be in the future");
+        // release_at priority: --release-at (parsed from the error) > engine block_ttl (from now) > none (stays blocked until a manual unblock).
+        const ttl = config.engines[engine]!.block_ttl;
+        let source: "explicit" | "block_ttl" | "none" = "none";
+        if (values["release-at"]) {
+          entry.release_at = parseReleaseAt(values["release-at"], now);
+          if (stamp(entry.release_at) <= now) throw new CliError("--release-at must be in the future");
+          source = "explicit";
+        } else if (ttl) {
+          entry.release_at = addDuration(ttl, now)!;
+          source = "block_ttl";
         }
         if (values.by) entry.by = values.by;
         const kept = blocks.filter(b => !(b.engine === engine && b.model === entry.model));
         writeState(file, { version: 1, blocks: [...kept, entry] });
-        return out({ block: entry, purged_expired: state.blocks.length - blocks.length });
+        return out({ block: { ...entry, release_source: source }, purged_expired: state.blocks.length - blocks.length });
       }
       case "unblock": {
         const engine = need("engine", values.engine);
