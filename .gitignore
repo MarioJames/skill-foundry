@@ -36,3 +36,8 @@ skills/feature-acceptance/tests/*
 skills/debian-testvm/tests/*
 !skills/debian-testvm/tests/testvm.test.ts
 !skills/debian-testvm/tests/doctor.test.ts
+
+# Ship the owner/agent dispatch config validator and resolver contract.
+!skills/agents-cooperation/tests/
+skills/agents-cooperation/tests/*
+!skills/agents-cooperation/tests/agents-config.test.ts

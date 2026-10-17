@@ -1,116 +1,159 @@
 ---
 name: agents-cooperation
-description: 直接面对用户的 Agent 收到开发、修复、重构或跨项目任务，收到追加/变更指令或子 Agent 结果时立即使用，无需用户点名；收到带 [agents-cooperation] 信封的 pane 消息时以副 Agent 身份使用。主/副 Agent 只做方案、review 和调度，不亲自改文件；自行判定讨论、并行开发或普通调度模式，用宿主内置子 Agent 执行，经 Herdr pane 与另一主 Agent 文字协作并交叉 review。只读问答不触发。
+description: 直接面对用户的 Agent 收到开发、修复、重构或跨项目任务，收到追加/变更指令或子 agent 结果时立即使用，无需用户点名；收到带 [agents-cooperation] 信封的 pane 消息时以协作 owner 身份使用。owner 只做方案、review 和调度，不亲自改文件；自行判定讨论、并行开发或普通调度模式，按本地配置（~/.config/agents-cooperation/config.json）选择 worker 与 task agent，用宿主内置子 agent 或 Herdr 执行，经 Herdr pane 与另一 owner 文字协作并交叉 review。只读问答不触发。
 ---
 
 # Agents Cooperation
 
-主模型自己调度，不调用外部判定器。Claude Code 与 Codex 两侧安装同一份技能，规则对称，角色由消息来源决定，不由厂商决定。
+owner 自己调度，不调用外部判定器。每个引擎（Claude Code、Codex、Grok 等）的宿主安装同一份技能，规则对称，角色由消息来源决定，不由厂商决定。
 
-主/副 Agent 是 brain，worker 是 executor。主/副 Agent 使用的 `gpt-6-astra`、`claude-opus-5-5` 额度消耗快，只负责方案设计、review 和调度；项目文件的一切改动都交给 worker。
+owner 是 brain，子 agent 是 executor。owner 使用的高价模型（默认 `claude-opus-5-5`、`gpt-6-astra`）额度消耗快，只负责方案设计、review 和调度；项目文件的一切改动都交给子 agent。
 
 ## 角色
 
 | 角色 | 如何识别 | 职责 |
 | --- | --- | --- |
-| **主 Agent** | 直接收到用户需求的会话 | 唯一对用户负责：判定模式、方案设计、拆分与路由、维护台账并汇报、review 与最终验收、本地提交；不亲自改项目文件 |
-| **副 Agent** | 收到带 `[agents-cooperation]` 信封、`to: 副agent` 的 pane 消息 | 方案讨论、承接主 Agent 分配的工作包并调度自己的 worker、交叉 review；只向主 Agent 回报，不亲自改项目文件 |
-| **Worker** | 由主或副 Agent 通过宿主内置子 Agent 工具创建 | 执行交接的单个工作包，是唯一改动项目文件的角色；不再派发，不提交，不与用户或另一侧沟通 |
+| **Owner** | 任何按本技能调度的顶层会话：直接收到用户需求，或收到带 `[agents-cooperation]` 信封的 pane 消息 | 对自己承接的工作包端到端负责：拆分、派发子 agent、进度管理、review 与验收；不亲自改项目文件 |
+| **接单 owner** | 直接收到用户需求的 owner | 在 owner 职责之外承担三项：对用户沟通与台账汇报、分歧裁决（拍板、冻结）、最终集成与本地提交。这是职责分工，不是更高地位 |
+| **协作 owner** | 收到带 `[agents-cooperation]` 信封、`to: 协作owner` 的 pane 消息 | 对 `assign` 给它的工作包同样端到端负责：调度自己的子 agent、自审、验收后回报；参与方案讨论和交叉 review；只向接单 owner 回报，不提交，不直接与用户沟通 |
+| **Worker** | owner 派发，配置中 `class: worker` | 执行交接的单个工作包，可多轮，是改动项目文件的角色；不再派发，不提交，不与用户或另一侧沟通 |
+| **Task agent** | owner 派发，配置中 `class: task` | 一次性执行满足 [task 契约](#task-契约) 的简单工作包，同样改文件或只读；不再派发，不提交 |
 
-层级最多两级：主/副 Agent → worker。两个主级 Agent 之间只有文字沟通，各自的 worker 由各自调度，不跨侧指挥对方的 worker。
+Worker 与 task agent 统称子 agent。层级最多两级：owner → 子 agent。两个 owner 之间只有文字沟通，各自的子 agent 由各自调度，不跨侧指挥对方的子 agent。
 
-默认模型（用户当轮指定时以用户为准）：
+## 调度配置
 
-| 宿主 | 主/副 Agent | Worker |
-| --- | --- | --- |
-| Claude Code | `claude-opus-5-5`，effort high | `sonnet`（Sonnet 5.5），effort high |
-| Codex | `gpt-6-astra`，reasoning high | `gpt-6.1-sol`，reasoning high |
+模型、effort、引擎启用、子 agent 池和并行上限来自配置，不写死在本技能里。字段、示例和 block 细节见 [配置说明](references/config.md)。
 
-内置子 Agent 不传参数时继承父会话的模型，也就是主 Agent 的模型，所以每次派发都必须显式传入模型和推理强度。这条同样适用于 `Explore`、`Plan` 等只读子 Agent，以及 SendMessage 续接之外的每一次新建：
+- **位置**：`~/.config/agents-cooperation/config.json`（`AGENTS_COOPERATION_CONFIG` 或脚本 `--config` 可覆盖）；不存在时使用 `assets/config.default.json`，它是唯一默认来源，也是用户复制的起点。结构由 `assets/config.schema.json` 定义，不做多层合并。
+- **先 `show`**：首次调度前运行 `bun <skill>/scripts/agents-config.ts show`，按宿主引擎找到自己的 enabled owner（每个引擎至多一个），读取它的 `workers` 列表、模型、`availability` 和并行上限。宿主没有可用的 owner 配置时停下，向用户或接单 owner 说明。
+- **派发前 `resolve`**：`resolve --owner <owner-id> --agent <agent-id>` 指定子 agent，或 `--class worker|task` 按 `workers` 顺序取第一个可用的子 agent。输出的派发方式、工具、模型、effort 和 argv 照抄不改，`warnings` 必读。仍须核对子 agent 实际运行的模型，不符合时停掉重派，台账“角色·模型”列按实际模型填写。
+- **改配置**：修改后先运行 `validate` 并通过，再用 `show` 确认生效；不通过不得继续沿用。
+- **默认值**：模型和 effort 的默认值来自 `assets/config.default.json`；用户当轮指定时以用户为准。其他技能对某类 worker 另有规定时以那个技能为准，例如 browser-harness 规定 Codex 验收 worker 用 `gpt-6.1-sol` medium，这类覆盖直接传给宿主工具，不改配置。
 
-- **Claude Code**：`Agent` 工具同时传 `model: "sonnet"` 和 `effort: "high"`，`subagent_type` 用 `general-purpose` 或具体类型，不用 `fork`，因为 fork 会忽略 `model` 覆盖，固定沿用父模型。
-- **Codex**：`spawn_agent` 同时传 `model: "gpt-6.1-sol"`、`reasoning_effort: "high"` 和 `fork_turns: "none"`；覆盖模型时不能带完整历史 `all`。
+### 派发方式
 
-其他技能对某类 worker 另有规定时以那个技能为准，例如 browser-harness 规定 Codex 验收 worker 用 `gpt-6.1-sol` medium。派发后核对子 Agent 实际运行的模型：Claude Code 看子 Agent 转录中的 `message.model`，Codex 看子会话的 `turn_context`。不符合时停掉重派，台账“角色·模型”列按实际模型填写。
+不写入配置，由 owner 与子 agent 的引擎关系推导，`resolve` 已给出结果：
+
+| 子 agent | 方式 |
+| --- | --- |
+| class `worker`，引擎与 owner 相同 | **native**：owner 用宿主内置子 agent 工具创建 |
+| class `worker`，引擎与 owner 不同 | **herdr interactive**：在 Herdr pane 中启动对方引擎的 CLI，交接内容走消息文件，可多轮 |
+| class `task`（无论引擎） | **herdr oneshot**：在 Herdr pane 中一次性 headless 运行，任务写入任务文件，结果写入结果文件 |
+
+native 派发约束（`resolve` 输出已包含这些参数）：内置子 agent 不传参数时继承父会话的模型，也就是 owner 的模型，所以每次新建都必须显式传入模型和 effort，`Explore`、`Plan` 等只读子 agent 同样；SendMessage 续接不算新建。
+
+- **Claude Code**：`Agent` 工具同时传 `model` 和 `effort`，`subagent_type` 用 `general-purpose` 或具体类型，不用 `fork`，因为 fork 会忽略 `model` 覆盖，固定沿用父模型。
+- **Codex**：`spawn_agent` 同时传 `model`、`reasoning_effort` 和 `fork_turns: "none"`；覆盖模型时不能带完整历史 `all`。
+- **Grok**：`spawn_subagent` 不支持按次设置 effort，子 agent 沿用 owner 会话的 effort；`model` 参数在全 xAI 模型目录且开启 `subagent_model_inheritance` 时会被隐藏，此时模型沿用父会话，必须核对实际模型。
+
+核对实际模型：Claude Code 看子 agent 转录中的 `message.model`，Codex 看子会话的 `turn_context`；herdr 派发看 pane 中 CLI 显示的模型。
+
+herdr 派发依赖 Herdr；不可用时跨引擎 worker 和 task agent 无法派发，改用同引擎 native worker，也没有可用的就标阻塞，不改为亲自动手。启动、信任提示和清理按 [协作协议](references/peer-protocol.md) 与 `herdr` 技能；oneshot 与 interactive 的具体流程见 [配置说明](references/config.md#herdr-派发流程)。
+
+### 并行上限
+
+只有 owner 级一层：`owners.<id>.max_parallel`（必填，≥1）是该 owner 同时运行的子 agent 上限，worker 与 task agent 合计。owner 按自己台账中“运行中”的条目计数，达到上限时新包标“待派发”，不突破。不设全局或引擎级上限，因为各 owner 观测不到对方的子 agent，无法准确计数；额度和速率压力交给[额度耗尽](#额度耗尽)的 block 机制处理。
+
+### Task 契约
+
+同时满足以下四条才可交给 task agent：
+
+1. 不含设计决策，方案和规则已给定；
+2. 写入范围是明确的文件清单（只读任务则为空）；
+3. 结果可由一条命令或明确检查项验证；
+4. 不需要续接上下文，一次执行完成。
+
+典型：按既定规则批量改名、改文案、改配置，跑测试并汇总，只读检索与清点。不满足任一条，或执行中发现需要判断时，task agent 停止并回报，由 owner 改派 worker。task agent 的产出与 worker 同样要走验收（查 diff、复跑验证）。
+
+### 额度耗尽
+
+运行状态与配置分离，记录在 `~/.local/state/agents-cooperation/availability.json`，只用 `block` / `unblock` / `status` 读写。
+
+- 派发、herdr prompt 或子 agent 结果中出现额度耗尽信号（429、usage limit、quota exceeded、credit 或额度不足、提示需等待到某时刻的 rate limit）时，owner 立即执行 `block --engine <id> [--model <m>] [--until <时间>] --reason <原因> --by <owner-id>`：报错能解析出重置时间就写 `--until`，否则省略；报错只针对某个模型时带 `--model`，账户级额度不带。
+- 然后用 `resolve --class` 重新选子 agent，把未完成的工作包整包改派（整包转移，不在包内来回切换），台账写明 block 与改派。
+- 到期自动解封：`until` 之后该条目视为失效，新派发自动可用，不需要手动 `unblock`。有 `until` 且仍有依赖该引擎的待派发工作时，可用宿主定时唤醒在 `until` 之后复查 `status`。
+- owner 自身被 block 时，它的原生子 agent 随之不可派发；协作 owner 被 block 时降级为单 owner（等同 Herdr 不可用）。
+- 不得因 block 而改为亲自动手。
 
 ## 硬门槛
 
-主 Agent 必须遵守以下规则，它们不是可选建议：
+owner 必须遵守以下规则，它们不是可选建议：
 
 - 输出第一张台账之前，不写方案、不派发。第一张台账上方写一行 `模式：方案讨论（ChatGPT：必审 | 免审）| 并行开发 | 普通调度 —— 理由`。之后每次向用户汇报进度都附上台账表格，不能只写一段文字。
-- 命中方案讨论条件时，不跳过主/副讨论直接拍板；分级为必审时，不跳过 ChatGPT 审查，处置意见后由主 Agent 拍板。用户说“定了不用再问我”，只是免去向用户确认，不免除这两项。Herdr 不可用时按协议降级（只免除主/副讨论），并在台账中写明原因。
-- 主/副 Agent 在任何模式下都不亲自改动项目文件：不用 Edit/Write/NotebookEdit/apply_patch，也不用 sed、heredoc、脚本、格式化或 codemod 命令写入源码、测试、配置和文档。新增、修改、删除、修复 review findings、解决合并冲突，无论大小都派给 worker。主/副 Agent 自己只做：读代码和定位文件、运行只读命令和验证命令、在消息目录写协作消息和方案文档、维护台账、Git 暂存与提交。
-- 无法创建 worker（工具不可用、额度耗尽、派发反复失败）时，停下并在台账中写明阻塞、向用户报告，不改为亲自动手。
+- 命中方案讨论条件时，不跳过 owner 讨论直接拍板；分级为必审时，不跳过 ChatGPT 审查，处置意见后由接单 owner 拍板。用户说“定了不用再问我”，只是免去向用户确认，不免除这两项。Herdr 不可用或没有可用的协作 owner 时按协议降级（只免除 owner 讨论），并在台账中写明原因。
+- owner 在任何模式下都不亲自改动项目文件：不用 Edit/Write/NotebookEdit/apply_patch，也不用 sed、heredoc、脚本、格式化或 codemod 命令写入源码、测试、配置和文档。新增、修改、删除、修复 review findings、解决合并冲突，无论大小都派给子 agent。owner 自己只做：读代码和定位文件、运行只读命令和验证命令、在消息目录写协作消息和方案文档、维护台账、Git 暂存与提交（提交仅限接单 owner）。
+- 无法创建子 agent（工具不可用、额度耗尽且 `resolve` 无可用候选、派发反复失败）时，停下并在台账中写明阻塞、向用户报告，不改为亲自动手。
 - “任务小”“只改一行”“自己做更快”“只涉及一个项目”都不能作为跳过上述规则的理由。
 
 ## 触发与台账
 
-主 Agent 在以下时机，先执行本节再继续长步骤或等待：首次接到开发类任务、收到追加或变更指令、拆出新工作包、收到 worker 或副 Agent 的结果（完成、失败、阻塞）、心跳到期。
+owner 在以下时机，先执行本节再继续长步骤或等待：首次接到开发类任务、收到追加或变更指令、拆出新工作包、收到子 agent 或协作 owner 的结果（完成、失败、阻塞）、心跳到期。
 
 1. **盘点**：合并新指令、进行中的工作、未推进的待办和积压问题。每项记录所有者、写入范围、依赖和阻塞，不先以“任务小”“同项目”为由筛掉。
-2. **路由**：按下文判定模式与载体。新任务的写入范围和某个运行中 worker 重叠时，追加给它（Claude Code 用 SendMessage 续接）或排在它之后；不重叠时新开 worker。替换或取消只停掉被替换的工作：先确认它已停止并核对部分产物，再移交写入权。
+2. **路由**：按下文判定模式与载体。新任务的写入范围和某个运行中子 agent 重叠时，追加给它（Claude Code 用 SendMessage 续接）或排在它之后；不重叠时新开子 agent。替换或取消只停掉被替换的工作：先确认它已停止并核对部分产物，再移交写入权。
 3. **输出台账**：每个触发点都输出一张台账，它同时就是给用户的进度汇报：
 
    | 任务 | 角色·模型 | 状态 | 最近进展 | 阻塞/风险 |
    | --- | --- | --- | --- | --- |
 
-   列名保持不变。“角色·模型”写明具体执行者，如 `worker·gpt-6.1-sol`、`worker·sonnet`、`副agent·claude-opus-5-5`、`主agent`；不要只写“Worker”。状态取值：待派发 / 运行中 / 待验收 / 已验收 / 失败 / 阻塞 / stale。纯状态询问且工作集合没变时，直接给台账。
+   列名保持不变。“角色·模型”写明具体执行者：子 agent 写配置 id 加实际模型，如 `claude_worker·sonnet`、`codex_worker·gpt-6.1-sol`、`pi_worker·kimi-k3`；owner 写 `owner·claude-opus-5-5`，协作 owner 写 `协作owner·gpt-6-astra`；不要只写“Worker”。状态取值：待派发 / 运行中 / 待验收 / 已验收 / 失败 / 阻塞 / stale。纯状态询问且工作集合没变时，直接给台账。
 
-worker 运行期间主 Agent 看不到其过程，因此每次用户消息和每次回报都要刷新台账。仍有运行中工作时，用宿主的定时唤醒（如 ScheduleWakeup）做 20–30 分钟一次的心跳；超过约 30 分钟没有回报的标为 stale，主动查看输出，必要时停掉重派。
+子 agent 运行期间 owner 看不到其过程，因此每次用户消息和每次回报都要刷新台账。仍有运行中工作时，用宿主的定时唤醒（如 ScheduleWakeup）做 20–30 分钟一次的心跳；超过约 30 分钟没有回报的标为 stale，主动查看输出，必要时停掉重派。
 
 ## 模式判定
 
 **方案讨论**：存在多个可行方案；涉及跨模块接口、schema/迁移、权限安全或其他不可逆决策；需求有歧义，且无法从代码和常识补全。
 
 - **分级**：进入方案讨论时判定 ChatGPT 分级，写进模式行。
-  - **必审**：命中任一项——权限安全（认证授权、租户隔离、密钥与凭据）；会改动已有持久数据的 schema/迁移；回退代价高的核心架构、存储选型或跨服务契约；不可逆的外部效果（删除持久数据、对外发布等）；主/副讨论用尽预算仍在共享接口或架构约束上僵持；用户点名要求 ChatGPT 审查。
-  - **免审**：其余方案讨论。流程为主/副讨论 → 主 Agent 冻结 → 实施；不送 ChatGPT，不占 ChatGPT 预算；`decision-log.md` 照常记录讨论与冻结。
+  - **必审**：命中任一项——权限安全（认证授权、租户隔离、密钥与凭据）；会改动已有持久数据的 schema/迁移；回退代价高的核心架构、存储选型或跨服务契约；不可逆的外部效果（删除持久数据、对外发布等）；owner 讨论用尽预算仍在共享接口或架构约束上僵持；用户点名要求 ChatGPT 审查。
+  - **免审**：其余方案讨论。流程为 owner 讨论 → 接单 owner 冻结 → 实施；不送 ChatGPT，不占 ChatGPT 预算；`decision-log.md` 照常记录讨论与冻结。
   - 需求歧义无法从代码和常识补全时先问用户，不交给 ChatGPT 判定。
-  - **升级**：讨论、实施或 review 中发现命中必审条件的约束时，升级为必审：暂停直接依赖该决策的工作包，送审并处置后再继续，已完成部分按处置结果核对。必审不能由主 Agent 自行降级，只有用户可以豁免。
-- **必审流程**：主/副讨论 → ChatGPT 方案审查（必经门槛，通过 `chatgpt-review` 送审，无需额外确认）→ 主 Agent 处置意见并冻结 → 实施。门槛是“完成必需审查并处置意见”，不是“取得模型同意”。第 1 轮无阻断即冻结；阻断意见全按审查给出的修正采纳且未引入未受审设计时可直接冻结，有驳回、替代方案或新设计时进入下一轮（若还有预算）。只有共享接口、写入范围、架构约束实质变化才回副 Agent 讨论，占用原讨论预算。讨论细则见 [协作协议](references/peer-protocol.md)。
-- **轮次预算**（默认上限；用户当轮另行指定时以用户为准，主 Agent 不得自行调高）：
+  - **升级**：讨论、实施或 review 中发现命中必审条件的约束时，升级为必审：暂停直接依赖该决策的工作包，送审并处置后再继续，已完成部分按处置结果核对。必审不能由接单 owner 自行降级，只有用户可以豁免。
+- **必审流程**：owner 讨论 → ChatGPT 方案审查（必经门槛，通过 `chatgpt-review` 送审，无需额外确认）→ 接单 owner 处置意见并冻结 → 实施。门槛是“完成必需审查并处置意见”，不是“取得模型同意”。第 1 轮无阻断即冻结；阻断意见全按审查给出的修正采纳且未引入未受审设计时可直接冻结，有驳回、替代方案或新设计时进入下一轮（若还有预算）。只有共享接口、写入范围、架构约束实质变化才回协作 owner 讨论，占用原讨论预算。讨论细则见 [协作协议](references/peer-protocol.md)。
+- **轮次预算**（默认上限；用户当轮另行指定时以用户为准，接单 owner 不得自行调高）：
 
   | 阶段 | 上限 |
   | --- | --- |
-  | 主/副讨论 | 3 |
+  | owner 讨论 | 3 |
   | 交叉 review | 2 |
   | ChatGPT 方案审查 | 2 |
   | ChatGPT 结果校验 | 2 |
 
-  ChatGPT 两行只在必审时占用。先占号后发送，修订、换会话、换副 Agent 都不重置；预算为零时只能裁决、阻塞或结束。计数与等待细则见 [ChatGPT 审查门槛](references/peer-protocol.md#chatgpt-审查门槛)。
-- **主 Agent 裁决**：任一轮可凭本地证据驳回误报；末轮后可落实修订、驳回、在授权范围内接受残余风险。替换核心方案或使审查前提失效，视为新受审候选，占用原预算。轮次耗尽本身不是实施依据，违反用户验收要求、缺失授权或超出材料发送范围的问题不能靠裁决放行，需改变目标或范围时交用户。“ChatGPT 未通过·主 Agent 裁决”写进台账的最近进展/风险列，不写成已通过。
-- **门槛覆盖执行分支**：依赖讨论方案的工作包，交接和 `type: assign` 必须携带已放行的不可变方案引用，没有引用不得实施；必审方案要求 ChatGPT 门槛放行后的引用，免审方案携带主 Agent 冻结版本的引用即可。必审时只有直接依赖该决策的工作包等待放行，不依赖它的工作包、只读探索和准备工作照常推进。Convorel 缺失、登录或人工验证阻塞时标阻塞，等用户处理或明确豁免，不自动免除。
+  ChatGPT 两行只在必审时占用。先占号后发送，修订、换会话、换协作 owner 都不重置；预算为零时只能裁决、阻塞或结束。计数与等待细则见 [ChatGPT 审查门槛](references/peer-protocol.md#chatgpt-审查门槛)。
+- **接单 owner 裁决**：任一轮可凭本地证据驳回误报；末轮后可落实修订、驳回、在授权范围内接受残余风险。替换核心方案或使审查前提失效，视为新受审候选，占用原预算。轮次耗尽本身不是实施依据，违反用户验收要求、缺失授权或超出材料发送范围的问题不能靠裁决放行，需改变目标或范围时交用户。“ChatGPT 未通过·接单 owner 裁决”写进台账的最近进展/风险列，不写成已通过。
+- **门槛覆盖执行分支**：依赖讨论方案的工作包，交接和 `type: assign` 必须携带已放行的不可变方案引用，没有引用不得实施；必审方案要求 ChatGPT 门槛放行后的引用，免审方案携带接单 owner 冻结版本的引用即可。必审时只有直接依赖该决策的工作包等待放行，不依赖它的工作包、只读探索和准备工作照常推进。Convorel 缺失、登录或人工验证阻塞时标阻塞，等用户处理或明确豁免，不自动免除。
 - **结果校验**：必审类改动在本地提交前做一轮 ChatGPT 结果校验（占结果校验预算），与本地验收并行，不串行等待；免审类不做。
-- **调用 ChatGPT 审查**：每轮通过 `chatgpt-review` 送审一次，完整读取并处置后结束这一轮；是否修订、再审、占用哪个预算，只由本技能的预算和主 Agent 决定，收到“未通过”不自动再发。
+- **调用 ChatGPT 审查**：每轮通过 `chatgpt-review` 送审一次，完整读取并处置后结束这一轮；是否修订、再审、占用哪个预算，只由本技能的预算和接单 owner 决定，收到“未通过”不自动再发。
 - **留痕**：每个需求一份 `decision-log.md`（含分级与依据），每版方案完整保存为消息文件，必审的送审记录引用 Convorel 的 task/run 与内容版本。格式见 [decision-log](references/peer-protocol.md#decision-log)。
-- 产出冻结的方案文档：工作包、共享接口与类型、每个包的写入范围、验收标准、谁负责哪一侧。仅目标或范围变化需要用户决定，其余分歧由主 Agent 裁决。
+- 产出冻结的方案文档：工作包、共享接口与类型、每个包的写入范围、验收标准、谁负责哪一侧。仅目标或范围变化需要用户决定，其余分歧由接单 owner 裁决。
 
 **并行开发**：方案已冻结，且至少有两个写入范围不重叠的工作包。
 
-- 主 Agent 把工作包分成两侧，各自拆给自己的 worker；副 Agent 接到 `type: assign` 后同样调度自己的 worker。共享接口要先实现或先冻结，再开放依赖它的包。
-- 分侧参考：前端、UI 和浏览器验收（lobe-design / browser-harness）偏 Claude 侧；后端逻辑、算法和长时间测试循环偏 Codex 侧。某一侧遇到额度不足或 429 时，整包转给另一侧，不在单个包内部来回切换。
-- 三层 review：worker 自验（测试、类型检查）→ 各自父级 review 自己的 worker → 交叉 review（对方审本侧 diff，集成后的整体 diff 两侧都审）。review 方只出 findings，由负责该部分的一侧修复；按本阶段预算上限进行，仍有分歧时由主 Agent 裁决，分歧涉及必审条件时才进入 ChatGPT 结果校验预算。
+- 接单 owner 把工作包分成两侧，各自拆给自己的子 agent；协作 owner 接到 `type: assign` 后同样调度自己的子 agent。共享接口要先实现或先冻结，再开放依赖它的包。
+- 分侧参考：前端、UI 和浏览器验收（lobe-design / browser-harness）偏 Claude 侧；后端逻辑、算法和长时间测试循环偏 Codex 侧。某一侧遇到额度不足或 429 时，按[额度耗尽](#额度耗尽)处理：单个子 agent 受限则 `resolve --class` 改选，owner 自身受限则整包转给另一侧，都是整包转移，不在单个包内部来回切换。
+- 三层 review：子 agent 自验（测试、类型检查）→ 各自 owner review 自己的子 agent → 交叉 review（对方审本侧 diff，集成后的整体 diff 两侧都审）。review 方只出 findings，由负责该部分的一侧修复；按本阶段预算上限进行，仍有分歧时由接单 owner 裁决，分歧涉及必审条件时才进入 ChatGPT 结果校验预算。
 
-**普通调度**：其余开发任务。主 Agent 不写代码，全部派给 worker，以便随时接收和路由新任务。只做父级 review，不做交叉 review，除非改动高风险。
+**普通调度**：其余开发任务。owner 不写代码，全部派给子 agent，以便随时接收和路由新任务。只做 owner 自己的 review，不做交叉 review，除非改动高风险。
 
-- 主 Agent 自己只做只读问答和为调度收集信息（读代码、定位文件）；再小的改动也派发。
+- owner 自己只做只读问答和为调度收集信息（读代码、定位文件）；再小的改动也派发。
 
-**跨项目任务**：内置子 Agent 只在当前项目内工作。目标项目的执行通过 `herdr` 在该项目对应的 space 中启动 Agent CLI，按副 Agent 协议沟通；原会话只负责协调和汇总；用户明确要求原会话承接时，也由原会话派 worker 执行。
+**跨项目任务**：内置子 agent 只在当前项目内工作。目标项目的执行通过 `herdr` 在该项目对应的 space 中启动 Agent CLI，按协作 owner 协议沟通；原会话只负责协调和汇总；用户明确要求原会话承接时，也由原会话派子 agent 执行。
 
-## Worker 交接
+## 子 agent 交接
 
 交接内容必须写清：
 
 - 目标与验收标准；
-- 依赖讨论方案的工作包还须携带主 Agent 已放行的方案引用（不可变的消息文件路径；必审方案为 ChatGPT 门槛放行后的引用，免审方案为主 Agent 冻结版本的引用）；没有引用不得实施，独立工作要说明其不依赖该方案的依据；
+- 依赖讨论方案的工作包还须携带接单 owner 已放行的方案引用（不可变的消息文件路径；必审方案为 ChatGPT 门槛放行后的引用，免审方案为接单 owner 冻结版本的引用）；没有引用不得实施，独立工作要说明其不依赖该方案的依据；
 - 允许写入的文件或目录，以及只读参考范围；
 - 禁止事项：不提交、不推送、不改 Git index 和锁文件以外的共享状态、不清理持久数据、不再派发；
 - 回报格式：改动文件、验证命令及结果、未解决的风险或阻塞；需要越界或补充授权时停下回报，不自行扩大范围。
 
-写入范围不重叠的 worker 可以共享工作树；写入范围重叠，或需要改依赖、锁文件时，用 `cow-workspace` 隔离。文件隔离不隔离数据库、Redis 和对象存储，这些按项目规则单独隔离。
+写入范围不重叠的子 agent 可以共享工作树；写入范围重叠，或需要改依赖、锁文件时，用 `cow-workspace` 隔离。文件隔离不隔离数据库、Redis 和对象存储，这些按项目规则单独隔离。
 
-worker 完成不等于验收通过：父级要亲自查看 diff，复跑关键验证，确认通过后才解锁依赖或移交写入权。发现问题时把 findings 交回原 worker（Claude Code 用 SendMessage 续接）或新派 worker 修复，父级不自己打补丁。失败或取消的 worker 要先核对部分写入，再派 worker 修复、重派或回滚。
+子 agent 完成不等于验收通过：owner 要亲自查看 diff，复跑关键验证，确认通过后才解锁依赖或移交写入权。发现问题时把 findings 交回原子 agent（Claude Code 用 SendMessage 续接）或新派子 agent 修复，owner 不自己打补丁。失败或取消的子 agent 要先核对部分写入，再派子 agent 修复、重派或回滚。
 
 ## 收尾
 
-主 Agent 汇总已验收的交付，统一集成（解决冲突等需要改文件的集成工作同样派给 worker），完成项目要求的验证后做一次本地提交；worker 和副 Agent 都不提交。只释放本任务创建的 worker 和 pane，不关闭用户自己的 pane。按 [任务资源生命周期](../cow-workspace/SKILL.md#task-artifacts-and-resource-lifecycle) 核对每个 worker 的资源闭环，保留最终交付、必要证据和持久业务数据，回收已满足条件的中间产物、CoW 视图与任务基线，不只停止进程。协作消息目录、其中引用的 Convorel 内容版本和送审源码快照属持久证据，不纳入回收；等待进程和 lane 照常清理。最终说明写清交付内容、验证结果、资源释放和保留情况。
+接单 owner 汇总已验收的交付，统一集成（解决冲突等需要改文件的集成工作同样派给子 agent），完成项目要求的验证后做一次本地提交；子 agent 和协作 owner 都不提交。只释放本任务创建的子 agent 和 pane，不关闭用户自己的 pane。按 [任务资源生命周期](../cow-workspace/SKILL.md#task-artifacts-and-resource-lifecycle) 核对每个子 agent 的资源闭环，保留最终交付、必要证据和持久业务数据，回收已满足条件的中间产物、CoW 视图与任务基线，不只停止进程。协作消息目录、其中引用的 Convorel 内容版本和送审源码快照属持久证据，不纳入回收；等待进程和 lane 照常清理。最终说明写清交付内容、验证结果、资源释放和保留情况。

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "agents-cooperation availability state",
+  "description": "Runtime quota blocks, kept apart from config.json. Entries whose until has passed are treated as expired.",
+  "type": "object",
+  "required": ["version", "blocks"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1 },
+    "blocks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/block" }
+    }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "block": {
+      "type": "object",
+      "required": ["engine", "reason", "since"],
+      "additionalProperties": false,
+      "properties": {
+        "engine": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,39}$" },
+        "model": { "description": "Omitted means the whole engine (account-level quota).", "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "since": { "$ref": "#/$defs/timestamp" },
+        "until": { "description": "Omitted means the reset time is unknown; stays until unblock.", "$ref": "#/$defs/timestamp" },
+        "by": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
