@@ -296,6 +296,49 @@ test("resolve --owner --peer builds the collaborating owner's interactive argv",
   expect(f.cli(["resolve", "--owner", "claude_owner", "--peer", "grok_owner"]).stderr).toContain("unknown peer owner");
 });
 
+// ---- herdr hidden session and wait limit ----
+test("herdr settings are required, validated and shown", () => {
+  const missing = base(); delete missing.herdr;
+  expect(validateConfig(missing)).toEqual([{ path: "$.herdr", message: "required property missing" }]);
+  const noSession = base(); delete noSession.herdr.worker_session;
+  expect(paths(noSession)).toEqual(["$.herdr.worker_session"]);
+  const noWait = base(); delete noWait.herdr.max_wait_minutes;
+  expect(paths(noWait)).toEqual(["$.herdr.max_wait_minutes"]);
+  for (const bad of ["", "has space", "a/b", "-lead"]) {
+    const config = base(); config.herdr.worker_session = bad;
+    expect(paths(config)).toEqual(["$.herdr.worker_session"]);
+  }
+  for (const bad of [0, -5, 1.5, "15"]) {
+    const config = base(); config.herdr.max_wait_minutes = bad;
+    expect(paths(config)).toEqual(["$.herdr.max_wait_minutes"]);
+  }
+  const extra = base(); extra.herdr.ttl = 1;
+  expect(paths(extra)).toEqual(["$.herdr.ttl"]);
+  const f = fixture(c => { c.herdr = { worker_session: "hidden-1", max_wait_minutes: 7 }; });
+  expect(f.cli(["show"]).json.config.herdr).toEqual({ worker_session: "hidden-1", max_wait_minutes: 7 });
+  expect(f.cli(["validate"]).code).toBe(0);
+});
+test("resolve: herdr workers carry the hidden session and wait timeout, native ones carry neither", () => {
+  const f = fixture(c => { enableQoder(c); c.herdr = { worker_session: "hidden-1", max_wait_minutes: 7 }; });
+  expect(f.cli(["resolve", "--owner", "claude_owner", "--worker", "qoder_worker"]).json).toMatchObject({ dispatch: "herdr", session: "hidden-1", wait_timeout_ms: 420000 });
+  expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "routine"]).json).toMatchObject({ dispatch: "herdr", session: "hidden-1", wait_timeout_ms: 420000 });
+  expect(f.cli(["resolve", "--owner", "claude_owner", "--worker", "codex_worker"]).json).toMatchObject({ session: "hidden-1", wait_timeout_ms: 420000 });
+  for (const [owner, worker] of [["claude_owner", "claude_worker"], ["codex_owner", "codex_worker"]]) {
+    const native = f.cli(["resolve", "--owner", owner!, "--worker", worker!]).json;
+    expect(native.dispatch).toBe("native");
+    expect(native).not.toHaveProperty("session");
+    expect(native).not.toHaveProperty("wait_timeout_ms");
+  }
+});
+test("resolve --peer keeps the collaborating owner in the main session and carries the wait timeout", () => {
+  const f = fixture(c => { c.herdr = { worker_session: "hidden-1", max_wait_minutes: 7 }; });
+  const peer = f.cli(["resolve", "--owner", "claude_owner", "--peer", "codex_owner"]).json;
+  expect(peer).toMatchObject({ role: "peer_owner", dispatch: "herdr", session: null, wait_timeout_ms: 420000 });
+  const defaults = JSON.parse(readFileSync(DEFAULT_CONFIG, "utf8")).herdr;
+  const d = fixture().cli(["resolve", "--owner", "claude_owner", "--peer", "codex_owner"]).json;
+  expect(d.wait_timeout_ms).toBe(defaults.max_wait_minutes * 60_000);
+});
+
 // ---- block / unblock / status ----
 test("block writes a state file atomically and replaces the same (engine, model)", () => {
   const f = fixture();

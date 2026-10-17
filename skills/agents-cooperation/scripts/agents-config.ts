@@ -43,7 +43,8 @@ export class CliError extends Error {
 export interface Engine { enabled: boolean; kind: string; native_subagents?: boolean }
 export interface Owner { enabled: boolean; engine: string; model: string; effort: string; workers: string[]; max_parallel: number }
 export interface Worker { enabled: boolean; engine: string; model: string; effort: string; description?: string; tags?: string[] }
-export interface Config { version: 1; engines: Record<string, Engine>; owners: Record<string, Owner>; workers: Record<string, Worker> }
+export interface Herdr { worker_session: string; max_wait_minutes: number }
+export interface Config { version: 1; engines: Record<string, Engine>; owners: Record<string, Owner>; workers: Record<string, Worker>; herdr: Herdr }
 export interface Block { engine: string; model?: string; reason: string; since: string; release_at?: string; by?: string }
 export interface State { version: 1; blocks: Block[] }
 export interface Availability { status: "available" | "disabled" | "engine_disabled" | "blocked"; engine?: string; model?: string; reason?: string; release_at?: string }
@@ -173,8 +174,10 @@ function launch(config: Config, ownerId: string, workerId: string, warnings: str
     }
   }
   const variant = engine.kind === "opencode" ? opencodeVariantWarning(home, worker.model, worker.effort) : undefined;
-  return { ...base, dispatch: "herdr", ...interactive(engine.kind, worker.model, worker.effort), warnings: variant ? [...warnings, variant] : warnings };
+  return { ...base, dispatch: "herdr", ...interactive(engine.kind, worker.model, worker.effort), session: config.herdr.worker_session, wait_timeout_ms: waitTimeoutMs(config), warnings: variant ? [...warnings, variant] : warnings };
 }
+/** Longest single herdr wait; every herdr agent prompt --wait / agent wait must pass it as --timeout. */
+const waitTimeoutMs = (config: Config) => config.herdr.max_wait_minutes * 60_000;
 function interactive(kind: string, model: string, effort: string) {
   const build = INTERACTIVE[kind];
   if (!build) throw new CliError(`kind ${kind} does not support building launch argv`);
@@ -205,7 +208,7 @@ export function resolveDispatch(config: Config, blocks: Block[], opts: { owner: 
     if (opts.peer === opts.owner) throw new CliError("--peer must differ from --owner");
     const peer = requireOwner(config, blocks, opts.peer, "peer owner");
     const kind = config.engines[peer.engine]!.kind;
-    return { owner: opts.owner, peer: opts.peer, role: "peer_owner", dispatch: "herdr", ...interactive(kind, peer.model, peer.effort), engine: peer.engine, model: peer.model, effort: peer.effort, warnings: [] };
+    return { owner: opts.owner, peer: opts.peer, role: "peer_owner", dispatch: "herdr", ...interactive(kind, peer.model, peer.effort), engine: peer.engine, model: peer.model, effort: peer.effort, session: null, wait_timeout_ms: waitTimeoutMs(config), warnings: [] };
   }
   if (opts.worker) {
     if (opts.class !== undefined || opts.tag !== undefined) throw new CliError("--worker cannot be combined with --class or --tag");

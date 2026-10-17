@@ -37,7 +37,7 @@ const result = process.argv[3] === 'current' ? {pane} : {
 };
 console.log(JSON.stringify({result}));
 `, { mode: 0o755 });
-      const child = Bun.spawn([process.execPath, resolve("skills/herdr/scripts/resolve-caller.ts")], {
+      const child = Bun.spawn([process.execPath, resolve(import.meta.dir, "../scripts/resolve-caller.ts")], {
         env: { ...process.env, PATH: `${dir}:${process.env.PATH}` }, stdout: "pipe", stderr: "pipe",
       });
       const [stdout, stderr, code] = await Promise.all([

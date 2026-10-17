@@ -81,6 +81,17 @@ export function requireHerdr(): void {
   }
 }
 
+let activeSession: string | null = null;
+
+/** Route every herdr call made through this module to a named session. */
+export function setHerdrSession(name: string | null): void {
+  activeSession = name;
+}
+
+export function herdrCommand(...args: string[]): string[] {
+  return ["herdr", ...(activeSession ? ["--session", activeSession] : []), ...args];
+}
+
 async function capture(command: string[]): Promise<{ stdout: string; stderr: string; status: number }> {
   const child = Bun.spawn(command, { stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, status] = await Promise.all([
@@ -92,7 +103,7 @@ async function capture(command: string[]): Promise<{ stdout: string; stderr: str
 }
 
 export async function herdr(...args: string[]): Promise<any> {
-  const result = await capture(["herdr", ...args]);
+  const result = await capture(herdrCommand(...args));
   if (result.status !== 0) {
     throw new CliError("herdr_failed", [result.stdout, result.stderr].filter(Boolean).join("\n"), result.status);
   }
@@ -104,7 +115,7 @@ export async function herdr(...args: string[]): Promise<any> {
 }
 
 async function herdrWithoutJson(...args: string[]): Promise<void> {
-  const result = await capture(["herdr", ...args]);
+  const result = await capture(herdrCommand(...args));
   if (result.status !== 0) {
     throw new CliError("herdr_failed", [result.stdout, result.stderr].filter(Boolean).join("\n"), result.status);
   }
@@ -149,13 +160,16 @@ function scorePath(
   return null;
 }
 
-export async function probeWorkspace(input: string): Promise<WorkspaceProbe> {
+export async function probeWorkspace(
+  input: string,
+  options: { skipWorkspaces?: boolean } = {},
+): Promise<WorkspaceProbe> {
   const target = normalizeDir(input);
   if (!target) throw new CliError("invalid_cwd", `Target cwd does not exist or is not a directory: ${input}`, 2);
 
   const targetGitRoot = await gitRoot(target);
   const home = normalizeDir(process.env.HOME ?? "/") ?? "/";
-  const listed = await herdr("workspace", "list");
+  const listed = options.skipWorkspaces ? {} : await herdr("workspace", "list");
   const ids = (listed?.result?.workspaces ?? [])
     .map((workspace: any) => workspace?.workspace_id)
     .filter((id: unknown): id is string => typeof id === "string" && id.length > 0);
@@ -347,7 +361,7 @@ export async function createResource(options: {
     try {
       await herdrWithoutJson(kind, "close", id);
     } catch (cleanupError) {
-      throw new CliError("cleanup_failed", `${error instanceof Error ? error.message : error}; rollback failed: ${cleanupError instanceof Error ? cleanupError.message : cleanupError}. Cleanup only this resource: herdr ${kind} close ${id}`);
+      throw new CliError("cleanup_failed", `${error instanceof Error ? error.message : error}; rollback failed: ${cleanupError instanceof Error ? cleanupError.message : cleanupError}. Cleanup only this resource: ${herdrCommand(kind, "close", id).join(" ")}`);
     }
     throw error;
   };
@@ -439,4 +453,97 @@ export async function createResource(options: {
     return rollback(result.workspaceId!, error);
   }
   return result;
+}
+
+
+// Hidden sessions: a named, TUI-less Herdr server so background agents stay out
+// of the user's main session. Only the session `herdr --session` flag differs.
+const SESSION_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/u;
+
+export function parseSessionName(raw: string): string {
+  if (raw === "default") {
+    throw new CliError("invalid_session", "--session must name a hidden session, not the default session", 2);
+  }
+  if (!SESSION_NAME.test(raw)) {
+    throw new CliError("invalid_session", "--session must match [A-Za-z0-9][A-Za-z0-9_-]* (max 63 chars)", 2);
+  }
+  return raw;
+}
+
+export function sessionUnit(name: string): string {
+  return `herdr-session-${name}`;
+}
+
+/** Workspaces of a hidden session, or null when its server is not running. */
+async function listSessionWorkspaces(name: string): Promise<unknown[] | null> {
+  const result = await capture(["herdr", "--session", name, "workspace", "list"]);
+  const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
+  if (result.status !== 0) {
+    if (output.includes("server_not_running")) return null;
+    throw new CliError("herdr_failed", output, result.status);
+  }
+  let workspaces: unknown;
+  try {
+    workspaces = JSON.parse(result.stdout)?.result?.workspaces;
+  } catch {
+    throw new CliError("invalid_herdr_json", "Herdr returned non-JSON output");
+  }
+  if (!Array.isArray(workspaces)) {
+    throw new CliError("verification_failed", `Could not list workspaces in session ${name}`);
+  }
+  return workspaces;
+}
+
+export async function sessionRunning(name: string): Promise<boolean> {
+  return (await listSessionWorkspaces(name)) !== null;
+}
+
+export interface SessionState {
+  name: string;
+  running_before: boolean;
+  started: boolean;
+  unit: string | null;
+}
+
+export async function ensureSession(name: string, timeoutMs = 10_000): Promise<SessionState> {
+  if (await sessionRunning(name)) {
+    return { name, running_before: true, started: false, unit: null };
+  }
+  if (!Bun.which("systemd-run")) {
+    throw new CliError("missing_dependency", "systemd-run is required to start a hidden session; not falling back to a bare server", 127);
+  }
+
+  const unit = sessionUnit(name);
+  const child = Bun.spawn([
+    "systemd-run", "--user", "--scope", "--collect", `--unit=${unit}`,
+    "-p", "MemoryHigh=8G", "-p", "MemoryMax=10G",
+    "--", "herdr", "--session", name, "server",
+  ], { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true });
+  child.unref();
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null && child.exitCode !== 0) break;
+    if (await sessionRunning(name)) {
+      return { name, running_before: false, started: true, unit: `${unit}.scope` };
+    }
+    await Bun.sleep(100);
+  }
+  throw new CliError(
+    "session_start_failed",
+    `Hidden session ${name} did not become available (unit ${unit}.scope). Inspect: systemctl --user status ${unit}.scope`,
+  );
+}
+
+export async function stopSessionIfEmpty(
+  name: string,
+): Promise<{ name: string; stopped: boolean; remaining_workspaces: number }> {
+  const workspaces = await listSessionWorkspaces(name);
+  if (workspaces === null) return { name, stopped: false, remaining_workspaces: 0 };
+  if (workspaces.length > 0) return { name, stopped: false, remaining_workspaces: workspaces.length };
+  const stop = await capture(["herdr", "session", "stop", name]);
+  if (stop.status !== 0) {
+    throw new CliError("herdr_failed", [stop.stdout, stop.stderr].filter(Boolean).join("\n"), stop.status);
+  }
+  return { name, stopped: true, remaining_workspaces: 0 };
 }
