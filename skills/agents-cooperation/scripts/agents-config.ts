@@ -23,22 +23,13 @@ const BYPASS = ["--permission-mode", "bypassPermissions"];
 const CODEX_BYPASS = "--dangerously-bypass-approvals-and-sandbox";
 const QODER_BYPASS = ["--permission-mode", "bypass_permissions"];
 const codexEffort = (e: string) => `model_reasoning_effort=${e}`;
-const TASK_PROMPT = "执行附件中的任务说明，结果按任务文件要求回报";
-const TASK_FILE = "{task_file}";
 const INTERACTIVE: Record<string, (m: string, e: string) => string[]> = {
   claude: (m, e) => ["--model", m, "--effort", e, ...BYPASS],
   codex: (m, e) => ["-m", m, "-c", codexEffort(e), CODEX_BYPASS],
+  // opencode's TUI has no per-launch variant flag; the effort comes from its remembered variant (see opencodeVariantWarning).
+  opencode: (m) => ["-m", m, "--auto"],
   qodercli: (m, e) => ["-m", m, "--reasoning-effort", e, ...QODER_BYPASS],
   grok: (m, e) => ["-m", m, "--effort", e, ...BYPASS],
-};
-const ONESHOT: Record<string, (m: string, e: string) => { argv: string[]; stdin?: string }> = {
-  claude: (m, e) => ({ argv: ["claude", "-p", "--model", m, "--effort", e, ...BYPASS], stdin: TASK_FILE }),
-  codex: (m, e) => ({ argv: ["codex", "exec", "-m", m, "-c", codexEffort(e), CODEX_BYPASS, "-"], stdin: TASK_FILE }),
-  // The message positional must precede -f: -f is an array option and swallows any positional after it.
-  opencode: (m, e) => ({ argv: ["opencode", "run", TASK_PROMPT, "-m", m, "--variant", e, "--format", "json", "--auto", "-f", TASK_FILE] }),
-  // The prompt positional must precede --attachment, mirroring the opencode -f ordering rule.
-  qodercli: (m, e) => ({ argv: ["qodercli", "-p", TASK_PROMPT, "-m", m, "--reasoning-effort", e, ...QODER_BYPASS, "--output-format", "json", "--no-session-persistence", "--attachment", TASK_FILE] }),
-  grok: (m, e) => ({ argv: ["grok", "--prompt-file", TASK_FILE, "-m", m, "--effort", e, ...BYPASS, "--output-format", "json"] }),
 };
 const GROK_EFFORT_WARNING = "grok spawn_subagent 不支持按次设置 effort，子 agent 沿用 owner 会话的 effort";
 
@@ -46,8 +37,8 @@ export class CliError extends Error {
   constructor(message: string, public issues: Issue[] = []) { super(message); }
 }
 export interface Engine { enabled: boolean; kind: string; native_subagents?: boolean }
-export interface Owner { enabled: boolean; engine: string; model: string; effort: string; workers: string[]; max_parallel: number; prefer_task?: boolean }
-export interface Worker { enabled: boolean; engine: string; class: "worker" | "task"; model: string; effort: string; description?: string; tags?: string[] }
+export interface Owner { enabled: boolean; engine: string; model: string; effort: string; workers: string[]; max_parallel: number }
+export interface Worker { enabled: boolean; engine: string; model: string; effort: string; description?: string; tags?: string[] }
 export interface Config { version: 1; engines: Record<string, Engine>; owners: Record<string, Owner>; workers: Record<string, Worker> }
 export interface Block { engine: string; model?: string; reason: string; since: string; until?: string; by?: string }
 export interface State { version: 1; blocks: Block[] }
@@ -87,8 +78,8 @@ export function validateConfig(config: unknown, schema: Schema = loadSchema(CONF
     const other = owned.get(owner.engine);
     if (other) bad(at, `engine ${owner.engine} already has enabled owner ${other}`);
     else owned.set(owner.engine, id);
-    const hasWorker = owner.workers.some(w => { const a = c.workers[w]; return a?.enabled && a.class === "worker" && c.engines[a.engine]?.enabled; });
-    if (!hasWorker) bad(`${at}.workers`, "enabled owner needs at least one enabled class=worker worker on an enabled engine");
+    const hasWorker = owner.workers.some(w => { const a = c.workers[w]; return a?.enabled && c.engines[a.engine]?.enabled; });
+    if (!hasWorker) bad(`${at}.workers`, "enabled owner needs at least one enabled worker on an enabled engine");
   }
   // Kinds that can host native sub-agents come from the schema (engine.then), not from a second table here.
   const nativeKinds: string[] = schema.$defs?.engine?.then?.properties?.kind?.enum ?? [];
@@ -97,8 +88,7 @@ export function validateConfig(config: unknown, schema: Schema = loadSchema(CONF
     const kind = c.engines[worker.engine]?.kind;
     if (!kind) { bad(`${at}.engine`, `unknown engine ${worker.engine}`); continue; }
     checkEffort(at, worker.engine, worker.effort);
-    if (worker.class === "worker" && !INTERACTIVE[kind] && !nativeKinds.includes(kind)) bad(`${at}.class`, `kind ${kind} supports neither interactive launch nor native sub-agents; use class=task`);
-    if (worker.class === "task" && !ONESHOT[kind]) bad(`${at}.class`, `kind ${kind} has no one-shot launch; class=task is unsupported`);
+    if (!INTERACTIVE[kind] && !nativeKinds.includes(kind)) bad(`${at}.engine`, `kind ${kind} supports neither interactive launch nor native sub-agents`);
   }
   return issues;
 }
@@ -152,17 +142,22 @@ export function parseUntil(value: string, now: number): string {
 
 // ---- resolve ----
 export interface Dispatch { [key: string]: unknown; warnings: string[] }
-function launch(config: Config, ownerId: string, workerId: string, warnings: string[]): Dispatch {
+const opencodeFix = (effort: string) => `请在 opencode TUI 中对该模型切换一次 variant 为 ${effort}`;
+/** opencode's TUI cannot take a variant per launch, so read the one it remembers (read-only) and compare with the configured effort. */
+function opencodeVariantWarning(home: string, model: string, effort: string): string | undefined {
+  const file = join(home, ".local", "state", "opencode", "model.json");
+  let variant: unknown;
+  try { variant = JSON.parse(readFileSync(file, "utf8"))?.variant?.[model]; }
+  catch { return `无法核实 opencode variant：${file} 不可读；opencode TUI 使用其记忆的 variant，须与 effort ${effort} 一致`; }
+  if (variant === effort) return undefined;
+  if (typeof variant !== "string") return `opencode 未记忆 ${model} 的 variant，TUI 将使用模型默认值而非配置的 effort ${effort}；${opencodeFix(effort)}`;
+  return `opencode TUI 对 ${model} 记忆的 variant 为 ${variant}，与配置 effort ${effort} 不一致；${opencodeFix(effort)}`;
+}
+function launch(config: Config, ownerId: string, workerId: string, warnings: string[], home: string): Dispatch {
   const owner = config.owners[ownerId]!;
   const worker = config.workers[workerId]!;
   const engine = config.engines[worker.engine]!;
-  const base = { owner: ownerId, worker: workerId, class: worker.class, engine: worker.engine, model: worker.model, effort: worker.effort };
-  if (worker.class === "task") {
-    const build = ONESHOT[engine.kind];
-    if (!build) throw new CliError(`kind ${engine.kind} does not support building one-shot argv`);
-    const { argv, stdin } = build(worker.model, worker.effort);
-    return { ...base, dispatch: "herdr", mode: "oneshot", kind: engine.kind, argv, ...(stdin ? { stdin } : {}), task_file_placeholder: TASK_FILE, warnings };
-  }
+  const base = { owner: ownerId, worker: workerId, engine: worker.engine, model: worker.model, effort: worker.effort };
   if (worker.engine === owner.engine) {
     const params = { model: worker.model };
     switch (engine.kind) {
@@ -172,7 +167,8 @@ function launch(config: Config, ownerId: string, workerId: string, warnings: str
       default: throw new CliError(`kind ${engine.kind} has no native sub-agent tool`);
     }
   }
-  return { ...base, dispatch: "herdr", ...interactive(engine.kind, worker.model, worker.effort), warnings };
+  const variant = engine.kind === "opencode" ? opencodeVariantWarning(home, worker.model, worker.effort) : undefined;
+  return { ...base, dispatch: "herdr", ...interactive(engine.kind, worker.model, worker.effort), warnings: variant ? [...warnings, variant] : warnings };
 }
 function interactive(kind: string, model: string, effort: string) {
   const build = INTERACTIVE[kind];
@@ -186,38 +182,35 @@ function requireOwner(config: Config, blocks: Block[], id: string, what = "owner
   if (a.status !== "available") throw new CliError(`${what} ${id} unavailable: ${describeUnavailable(a)}`);
   return owner;
 }
-export function resolveDispatch(config: Config, blocks: Block[], opts: { owner: string; worker?: string; class?: string; tag?: string; peer?: string }): Dispatch {
+export function resolveDispatch(config: Config, blocks: Block[], opts: { owner: string; worker?: string; tag?: string; peer?: string }, home: string = homedir()): Dispatch {
   const owner = requireOwner(config, blocks, opts.owner);
   if (opts.peer !== undefined) {
-    if (opts.worker || opts.class || opts.tag !== undefined) throw new CliError("--peer cannot be combined with --worker, --class or --tag");
+    if (opts.worker || opts.tag !== undefined) throw new CliError("--peer cannot be combined with --worker or --tag");
     if (opts.peer === opts.owner) throw new CliError("--peer must differ from --owner");
     const peer = requireOwner(config, blocks, opts.peer, "peer owner");
     const kind = config.engines[peer.engine]!.kind;
     return { owner: opts.owner, peer: opts.peer, role: "peer_owner", dispatch: "herdr", ...interactive(kind, peer.model, peer.effort), engine: peer.engine, model: peer.model, effort: peer.effort, warnings: [] };
   }
-  if (!!opts.worker === !!opts.class) throw new CliError("provide exactly one of --worker, --class or --peer");
-  if (opts.tag !== undefined && !opts.class) throw new CliError("--tag requires --class");
   if (opts.worker) {
+    if (opts.tag !== undefined) throw new CliError("--tag cannot be combined with --worker");
     const worker = config.workers[opts.worker];
     if (!worker) throw new CliError(`unknown worker ${opts.worker}`);
     const a = availabilityOf(config, blocks, worker);
     if (a.status !== "available") throw new CliError(`worker ${opts.worker} unavailable: ${describeUnavailable(a)}`);
     const warnings = owner.workers.includes(opts.worker) ? [] : [`worker ${opts.worker} 不在 owner ${opts.owner} 的 workers 列表中`];
-    return launch(config, opts.owner, opts.worker, warnings);
+    return launch(config, opts.owner, opts.worker, warnings, home);
   }
-  if (opts.class !== "worker" && opts.class !== "task") throw new CliError("--class must be worker or task");
-  const candidates = owner.workers
-    .filter(id => config.workers[id]!.class === opts.class)
-    .map(id => ({ id, availability: availabilityOf(config, blocks, config.workers[id]!), tagged: opts.tag !== undefined && !!config.workers[id]!.tags?.includes(opts.tag) }));
+  const candidates = owner.workers.map(id => ({ id, availability: availabilityOf(config, blocks, config.workers[id]!), tagged: opts.tag !== undefined && !!config.workers[id]!.tags?.includes(opts.tag) }));
   const usable = (c: { availability: Availability }) => c.availability.status === "available";
   const warnings: string[] = [];
   let chosen = opts.tag !== undefined ? candidates.find(c => c.tagged && usable(c)) : undefined;
+  const selectedBy = chosen ? "tag" : "order";
   if (opts.tag !== undefined && !chosen) warnings.push(`无可用的 ${opts.tag} 标签候选，已按顺序回退`);
   chosen ??= candidates.find(usable);
-  if (!chosen) throw new CliError(`no available class=${opts.class} worker for owner ${opts.owner}`, candidates.map(c => ({ path: `$.owners.${opts.owner}.workers`, message: `${c.id}: ${describeUnavailable(c.availability)}` })));
+  if (!chosen) throw new CliError(`no available worker for owner ${opts.owner}`, candidates.map(c => ({ path: `$.owners.${opts.owner}.workers`, message: `${c.id}: ${describeUnavailable(c.availability)}` })));
   const at = candidates.indexOf(chosen);
   const skipped = candidates.filter((c, i) => !usable(c) && (i < at || c.tagged)).map(c => ({ worker: c.id, reason: describeUnavailable(c.availability) }));
-  return { ...launch(config, opts.owner, chosen.id, warnings), selected_by: "class", skipped };
+  return { ...launch(config, opts.owner, chosen.id, warnings, home), selected_by: selectedBy, skipped };
 }
 
 // ---- CLI ----
@@ -242,7 +235,8 @@ function loadConfig(path: string, schema: Schema): Config {
 const USAGE = `Usage: bun agents-config.ts <command> [options]
   validate                         Validate the config (structure + semantics)
   show                             Print the effective config with availability
-  resolve --owner <id> --worker <id> | --class worker|task [--tag <t>] | --peer <owner-id>
+  resolve --owner <id> --worker <id> | [--tag <t>] | --peer <owner-id>
+                                   (no --worker/--peer: first available worker in order, or first tagged one with --tag)
   block --engine <id> [--model <m>] [--until <ISO8601|+<n>m|h|d>] --reason <text> [--by <owner-id>]
   unblock --engine <id> [--model <m>]
   status                           Print active blocks and per-owner/worker availability
@@ -252,7 +246,7 @@ export function run(args: string[], env: Record<string, string | undefined> = pr
   try {
     const { values, positionals } = parseArgs({
       args, allowPositionals: true,
-      options: { config: { type: "string" }, state: { type: "string" }, owner: { type: "string" }, worker: { type: "string" }, tag: { type: "string" }, class: { type: "string" }, peer: { type: "string" }, engine: { type: "string" }, model: { type: "string" }, until: { type: "string" }, reason: { type: "string" }, by: { type: "string" }, help: { type: "boolean", short: "h" } },
+      options: { config: { type: "string" }, state: { type: "string" }, owner: { type: "string" }, worker: { type: "string" }, tag: { type: "string" }, peer: { type: "string" }, engine: { type: "string" }, model: { type: "string" }, until: { type: "string" }, reason: { type: "string" }, by: { type: "string" }, help: { type: "boolean", short: "h" } },
     });
     const command = positionals[0];
     if (values.help || !command) return { code: values.help ? 0 : 2, stdout: values.help ? USAGE + "\n" : "", stderr: values.help ? "" : USAGE + "\n" };
@@ -279,16 +273,12 @@ export function run(args: string[], env: Record<string, string | undefined> = pr
     });
     switch (command) {
       case "show": {
-        // Schema `default` annotations fill omitted optional fields, so the schema stays the single source of defaults.
-        const withAvailability = <T extends Owner | Worker>(group: Record<string, T>, def: Schema) =>
-          Object.fromEntries(Object.entries(group).map(([id, e]) => {
-            const defaults = Object.fromEntries(Object.entries<Schema>(def.properties ?? {}).filter(([key, prop]) => "default" in prop && !(key in e)).map(([key, prop]) => [key, prop.default]));
-            return [id, { ...e, ...defaults, availability: availabilityOf(config, blocks, e) }];
-          }));
-        return out({ source, path, state: file, config: { ...config, owners: withAvailability(config.owners, schema.$defs!.owner), workers: withAvailability(config.workers, schema.$defs!.worker) } });
+        const withAvailability = <T extends Owner | Worker>(group: Record<string, T>) =>
+          Object.fromEntries(Object.entries(group).map(([id, e]) => [id, { ...e, availability: availabilityOf(config, blocks, e) }]));
+        return out({ source, path, state: file, config: { ...config, owners: withAvailability(config.owners), workers: withAvailability(config.workers) } });
       }
       case "status": return out({ now: new Date(now).toISOString(), state: file, blocks, ...availability() });
-      case "resolve": return out(resolveDispatch(config, blocks, { owner: need("owner", values.owner), worker: values.worker, class: values.class, tag: values.tag, peer: values.peer }));
+      case "resolve": return out(resolveDispatch(config, blocks, { owner: need("owner", values.owner), worker: values.worker, tag: values.tag, peer: values.peer }, env.HOME ?? homedir()));
       case "block": {
         const engine = need("engine", values.engine);
         if (!config.engines[engine]) throw new CliError(`unknown engine ${engine}`);

@@ -1,6 +1,6 @@
 interface:
   display_name: "Agents Cooperation"
-  short_description: "Owner 只设计、review 和调度，改动全部交给按本地配置选出的 worker 与 task agent；经 Herdr pane 与另一 owner 协作并交叉 review"
-  default_prompt: "使用 $agents-cooperation 盘点全部未完成工作，判定讨论、并行开发或普通调度模式，owner 不亲自改文件；先 show 读取调度配置，派发前 resolve（可带 --tag 按领域选）取模型与方式，prefer_task 开启时满足 task 契约的包先派 task agent，用内置子 agent 或 Herdr 执行，额度耗尽时 block 并改派；必要时经 Herdr pane 与另一 owner 协作和交叉 review，高风险（必审）方案经 ChatGPT 审查，其余方案由 owner 讨论后由接单 owner 冻结，轮次有界并写入 decision-log，并在每个触发点输出台账。"
+  short_description: "Owner 只设计、review 和调度，改动全部交给按本地配置选出的 worker（native 或 Herdr 拉起）；经 Herdr pane 与另一 owner 协作并交叉 review"
+  default_prompt: "使用 $agents-cooperation 盘点全部未完成工作，判定讨论、并行开发或普通调度模式，owner 不亲自改文件；先 show 读取调度配置，派发前 resolve（可带 --tag 按领域选，机械性包带 mechanical、常规实现带 routine 优先走免费 worker）取模型与方式，用内置子 agent 或 Herdr 新建 lane 执行，一次性包验收后关闭 lane，额度耗尽时 block 并改派；必要时经 Herdr pane 与另一 owner 协作和交叉 review，高风险（必审）方案经 ChatGPT 审查，其余方案由 owner 讨论后由接单 owner 冻结，轮次有界并写入 decision-log，并在每个触发点输出台账。"
 policy:
   allow_implicit_invocation: true

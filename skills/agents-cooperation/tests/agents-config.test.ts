@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_CONFIG, EFFORTS, type Config, loadSchema, parseUntil, run, validateConfig } from "../scripts/agents-config.ts";
@@ -11,26 +11,33 @@ const tmp = () => { const root = mkdtempSync(join(tmpdir(), "agents-config-")); 
 const base = (): any => JSON.parse(readFileSync(DEFAULT_CONFIG, "utf8"));
 const NOW = "2026-10-16T12:00:00Z";
 
-/** Fixture: temp config + state with an injected clock. */
+/** Fixture: temp config + state + HOME (so opencode's remembered variants are never read from the real home) with an injected clock. */
 function fixture(mutate: (config: any) => void = () => {}) {
   const root = tmp();
   const config = base(); mutate(config);
   const configFile = join(root, "config.json");
   const stateFile = join(root, "state", "availability.json");
+  const home = join(root, "home");
   writeFileSync(configFile, JSON.stringify(config));
   const cli = (args: string[], now = NOW) => {
-    const result = run([...args, "--config", configFile, "--state", stateFile], { AGENTS_COOPERATION_NOW: now });
+    const result = run([...args, "--config", configFile, "--state", stateFile], { AGENTS_COOPERATION_NOW: now, HOME: home });
     return { ...result, json: result.stdout ? JSON.parse(result.stdout) : undefined };
   };
-  return { root, configFile, stateFile, cli };
+  return { root, home, configFile, stateFile, cli };
 }
 const paths = (config: unknown) => validateConfig(config).map(i => i.path);
 const enableGrok = (c: any) => {
   c.engines.grok.enabled = true; c.owners.grok_owner.enabled = true; c.workers.grok_worker.enabled = true;
 };
 const enableOpencode = (c: any) => { c.engines.opencode.enabled = true; c.workers.opencode_worker.enabled = true; };
-const OPENCODE_ARGV = ["opencode", "run", "执行附件中的任务说明，结果按任务文件要求回报", "-m", "opencode/glm-5.3-flash-free", "--variant", "max", "--format", "json", "--auto", "-f", "{task_file}"];
-/** Everything enabled, so tag/class routing sees all four workers. */
+const OPENCODE_ARGV = ["-m", "opencode/glm-5.3-flash-free", "--auto"];
+/** Writes the opencode TUI's remembered per-model variants under the fixture HOME. */
+const rememberVariants = (home: string, variant: Record<string, string>) => {
+  const dir = join(home, ".local", "state", "opencode");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "model.json"), JSON.stringify({ recent: [], favorite: [], variant }));
+};
+/** Everything enabled, so tag routing sees all five workers. */
 const enableQoder = (c: any) => { c.engines.qoder.enabled = true; c.workers.qoder_worker.enabled = true; };
 const enableAll = (c: any) => { enableGrok(c); enableOpencode(c); enableQoder(c); };
 const CODEX_BYPASS = "--dangerously-bypass-approvals-and-sandbox";
@@ -64,6 +71,12 @@ test("structural errors carry JSON paths", () => {
   expect(paths(zero)).toEqual(["$.owners.claude_owner.max_parallel"]);
   const id = base(); id.engines.Bad = id.engines.claude;
   expect(paths(id)).toContain("$.engines.Bad");
+});
+test("class and prefer_task are no longer fields", () => {
+  const worker = base(); worker.workers.claude_worker.class = "worker";
+  expect(paths(worker)).toEqual(["$.workers.claude_worker.class"]);
+  const owner = base(); owner.owners.claude_owner.prefer_task = true;
+  expect(paths(owner)).toEqual(["$.owners.claude_owner.prefer_task"]);
 });
 test("worker ids must end with _worker", () => {
   const config = base(); config.workers.helper = config.workers.opencode_worker;
@@ -116,13 +129,15 @@ test("dangling references are reported", () => {
   expect(paths(worker)).toEqual(["$.workers.opencode_worker.engine"]);
   const workers = base(); workers.owners.claude_owner.workers.push("ghost_worker");
   expect(paths(workers)).toEqual(["$.owners.claude_owner.workers[5]"]);
+  const enabledButEngineOff = base(); enabledButEngineOff.owners.claude_owner.workers = ["opencode_worker"]; enabledButEngineOff.workers.opencode_worker.enabled = true;
+  expect(paths(enabledButEngineOff)).toEqual(["$.owners.claude_owner.workers"]);
 });
-test("enabled owner needs a native engine, an enabled engine and a usable class=worker worker", () => {
+test("enabled owner needs a native engine, an enabled engine and a usable worker", () => {
   const native = base(); native.engines.claude.native_subagents = false;
   expect(paths(native)).toEqual(["$.owners.claude_owner.engine"]);
   const disabled = base(); disabled.engines.claude.enabled = false;
   expect(paths(disabled)).toContain("$.owners.claude_owner.engine");
-  const noWorker = base(); noWorker.owners.claude_owner.workers = ["opencode_worker"]; enableOpencode(noWorker);
+  const noWorker = base(); noWorker.owners.claude_owner.workers = ["opencode_worker"];
   expect(paths(noWorker)).toEqual(["$.owners.claude_owner.workers"]);
   const offline = base(); offline.workers.claude_worker.enabled = false; offline.workers.codex_worker.enabled = false;
   expect(paths(offline)).toEqual(["$.owners.claude_owner.workers", "$.owners.codex_owner.workers"]);
@@ -158,66 +173,68 @@ test("resolve: claude and codex native dispatch", () => {
   expect(codex.json).toMatchObject({ dispatch: "native", tool: "spawn_agent", params: { model: "gpt-6.1-sol", reasoning_effort: "high", fork_turns: "none" } });
 });
 test("resolve: cross-engine worker is a herdr interactive pane for each kind", () => {
-  const f = fixture(c => { enableGrok(c); enableQoder(c); });
+  const f = fixture(c => { enableGrok(c); enableQoder(c); enableOpencode(c); });
+  rememberVariants(f.home, { "opencode/glm-5.3-flash-free": "max" });
   const interactive = (owner: string, worker: string) => f.cli(["resolve", "--owner", owner, "--worker", worker]).json;
   expect(interactive("claude_owner", "codex_worker")).toMatchObject({ dispatch: "herdr", mode: "interactive", kind: "codex", argv: ["-m", "gpt-6.1-sol", "-c", "model_reasoning_effort=high", CODEX_BYPASS] });
   expect(interactive("claude_owner", "qoder_worker")).toMatchObject({ dispatch: "herdr", mode: "interactive", kind: "qodercli", argv: ["-m", "Qwen3.8-Flash", "--reasoning-effort", "xhigh", "--permission-mode", "bypass_permissions"] });
   expect(interactive("codex_owner", "claude_worker")).toMatchObject({ kind: "claude", argv: ["--model", "sonnet", "--effort", "high", "--permission-mode", "bypassPermissions"] });
   expect(interactive("claude_owner", "grok_worker")).toMatchObject({ kind: "grok", argv: ["-m", "grok-4.7", "--effort", "high", "--permission-mode", "bypassPermissions"] });
+  expect(interactive("claude_owner", "opencode_worker")).toMatchObject({ dispatch: "herdr", mode: "interactive", kind: "opencode", argv: OPENCODE_ARGV, warnings: [] });
 });
 test("every heterogeneous launch argv carries its kind's explicit no-approval flag", () => {
   const f = fixture(enableAll);
   const argv = (owner: string, worker: string) => f.cli(["resolve", "--owner", owner, "--worker", worker]).json.argv as string[];
   const pair = (a: string[], flag: string, value: string) => a[a.indexOf(flag) + 1] === value && a.includes(flag);
-  // interactive: claude/codex/grok/qodercli (opencode has no interactive launch)
   expect(pair(argv("codex_owner", "claude_worker"), "--permission-mode", "bypassPermissions")).toBe(true);
   expect(argv("claude_owner", "codex_worker")).toContain(CODEX_BYPASS);
   expect(pair(argv("claude_owner", "grok_worker"), "--permission-mode", "bypassPermissions")).toBe(true);
   expect(pair(argv("claude_owner", "qoder_worker"), "--permission-mode", "bypass_permissions")).toBe(true);
-  // one-shot: every kind, including opencode --auto
-  // the owner keeps one class=worker worker, so convert everything else per fixture
-  const oneShot = (keep: string) => fixture(c => { enableAll(c); for (const [id, w] of Object.entries<any>(c.workers)) if (id !== keep) w.class = "task"; });
-  const g = oneShot("codex_worker");
-  const one = (id: string) => g.cli(["resolve", "--owner", "claude_owner", "--worker", id]).json;
-  expect(pair(one("claude_worker").argv, "--permission-mode", "bypassPermissions")).toBe(true);
-  const h = oneShot("claude_worker");
-  expect(h.cli(["resolve", "--owner", "claude_owner", "--worker", "codex_worker"]).json.argv).toContain(CODEX_BYPASS);
-  expect(pair(one("grok_worker").argv, "--permission-mode", "bypassPermissions")).toBe(true);
-  expect(pair(one("qoder_worker").argv, "--permission-mode", "bypass_permissions")).toBe(true);
-  expect(one("opencode_worker").argv).toContain("--auto");
-  expect(one("qoder_worker").argv).toEqual(["qodercli", "-p", "执行附件中的任务说明，结果按任务文件要求回报", "-m", "Qwen3.8-Flash", "--reasoning-effort", "xhigh", "--permission-mode", "bypass_permissions", "--output-format", "json", "--no-session-persistence", "--attachment", "{task_file}"]);
-  expect(one("qoder_worker").stdin).toBeUndefined();
+  expect(argv("claude_owner", "opencode_worker")).toContain("--auto");
+  expect(argv("claude_owner", "qoder_worker")).toEqual(["-m", "Qwen3.8-Flash", "--reasoning-effort", "xhigh", "--permission-mode", "bypass_permissions"]);
 });
-test("class=worker needs an interactive or native kind; class=task needs a one-shot kind", () => {
-  const opencode = base(); opencode.workers.opencode_worker.class = "worker";
-  expect(validateConfig(opencode)).toEqual([{ path: "$.workers.opencode_worker.class", message: "kind opencode supports neither interactive launch nor native sub-agents; use class=task" }]);
+test("every worker kind needs an interactive launch or native sub-agents", () => {
   const kimi = base(); kimi.engines.opencode.kind = "kimi";
-  expect(validateConfig(kimi)).toEqual([{ path: "$.workers.opencode_worker.class", message: "kind kimi has no one-shot launch; class=task is unsupported" }]);
-  const cli = fixture(c => { enableOpencode(c); c.workers.opencode_worker.class = "worker"; }).cli(["resolve", "--owner", "claude_owner", "--worker", "opencode_worker"]);
+  expect(validateConfig(kimi)).toEqual([{ path: "$.workers.opencode_worker.engine", message: "kind kimi supports neither interactive launch nor native sub-agents" }]);
+  const cli = fixture(c => { enableOpencode(c); c.engines.opencode.kind = "kimi"; }).cli(["resolve", "--owner", "claude_owner", "--worker", "opencode_worker"]);
   expect(cli.code).toBe(1);
-  expect(cli.stderr).toContain("$.workers.opencode_worker.class");
-  // claude/codex/grok may be either class
-  const tasks = base(); tasks.workers.claude_worker.class = "task"; tasks.workers.grok_worker.class = "task";
-  expect(paths(tasks)).toEqual([]);
+  expect(cli.stderr).toContain("$.workers.opencode_worker.engine");
+  // claude/codex/grok/opencode/qodercli are all fine
+  expect(paths(base())).toEqual([]);
 });
-test("resolve: task workers run one-shot through herdr", () => {
-  const f = fixture(c => { enableOpencode(c); enableGrok(c); c.workers.grok_worker.class = "task"; c.workers.codex_worker.class = "task"; });
-  const opencode = f.cli(["resolve", "--owner", "claude_owner", "--worker", "opencode_worker"]).json;
-  expect(opencode).toMatchObject({ worker: "opencode_worker", dispatch: "herdr", mode: "oneshot", kind: "opencode", task_file_placeholder: "{task_file}" });
-  expect(opencode.argv).toEqual(OPENCODE_ARGV);
-  expect(opencode.argv.indexOf("执行附件中的任务说明，结果按任务文件要求回报")).toBeLessThan(opencode.argv.indexOf("-f"));
-  expect(opencode.stdin).toBeUndefined();
-  expect(opencode.agent).toBeUndefined();
-  const codex = f.cli(["resolve", "--owner", "claude_owner", "--worker", "codex_worker"]).json;
-  expect(codex).toMatchObject({ mode: "oneshot", stdin: "{task_file}", argv: ["codex", "exec", "-m", "gpt-6.1-sol", "-c", "model_reasoning_effort=high", CODEX_BYPASS, "-"] });
-  const grok = f.cli(["resolve", "--owner", "claude_owner", "--worker", "grok_worker"]).json;
-  expect(grok.argv).toEqual(["grok", "--prompt-file", "{task_file}", "-m", "grok-4.7", "--effort", "high", "--permission-mode", "bypassPermissions", "--output-format", "json"]);
-  expect(grok.argv).not.toContain("-p");
-  // same-engine task workers are still one-shot, never native
-  const same = f.cli(["resolve", "--owner", "claude_owner", "--worker", "claude_worker"]);
-  expect(same.json.dispatch).toBe("native");
-  const sameTask = fixture(c => { c.workers.claude_worker.class = "task"; });
-  expect(sameTask.cli(["resolve", "--owner", "claude_owner", "--worker", "claude_worker"]).json).toMatchObject({ dispatch: "herdr", mode: "oneshot", stdin: "{task_file}", argv: ["claude", "-p", "--model", "sonnet", "--effort", "high", "--permission-mode", "bypassPermissions"] });
+test("resolve: opencode variant is verified against the TUI's remembered value without writing it", () => {
+  const f = fixture(enableOpencode);
+  const resolve = () => f.cli(["resolve", "--owner", "claude_owner", "--worker", "opencode_worker"]).json;
+  const model = "opencode/glm-5.3-flash-free";
+  // file missing: cannot verify
+  const missing = resolve();
+  expect(missing.argv).toEqual(OPENCODE_ARGV);
+  expect(missing.warnings).toHaveLength(1);
+  expect(missing.warnings[0]).toContain("无法核实 opencode variant");
+  // consistent: no warning
+  rememberVariants(f.home, { [model]: "max" });
+  expect(resolve().warnings).toEqual([]);
+  // inconsistent: warning carries the remembered value and the fix
+  rememberVariants(f.home, { [model]: "high" });
+  const wrong = resolve();
+  expect(wrong.warnings).toHaveLength(1);
+  expect(wrong.warnings[0]).toContain("记忆的 variant 为 high");
+  expect(wrong.warnings[0]).toContain("切换一次 variant 为 max");
+  // no entry for this model
+  rememberVariants(f.home, { "opencode/other": "max" });
+  expect(resolve().warnings[0]).toContain("未记忆");
+  // unparseable file counts as unreadable
+  writeFileSync(join(f.home, ".local", "state", "opencode", "model.json"), "{");
+  expect(resolve().warnings[0]).toContain("无法核实");
+  // the check is read-only
+  rememberVariants(f.home, { [model]: "max" });
+  const file = join(f.home, ".local", "state", "opencode", "model.json");
+  const before = readFileSync(file, "utf8");
+  resolve();
+  expect(readFileSync(file, "utf8")).toBe(before);
+  expect(readdirSync(join(f.home, ".local", "state", "opencode"))).toEqual(["model.json"]);
+  // other kinds never touch it
+  expect(f.cli(["resolve", "--owner", "claude_owner", "--worker", "codex_worker"]).json.warnings).toEqual([]);
 });
 test("resolve: grok native dispatch warns that effort is inherited", () => {
   const f = fixture(c => { enableGrok(c); });
@@ -235,8 +252,9 @@ test("resolve: disabled owner, worker and engine are rejected", () => {
   expect(engine.cli(["resolve", "--owner", "claude_owner", "--worker", "opencode_worker"]).stderr).toContain("engine_disabled");
   expect(f.cli(["resolve", "--owner", "ghost", "--worker", "claude_worker"]).stderr).toContain("unknown owner");
   expect(f.cli(["resolve", "--owner", "claude_owner", "--worker", "ghost_worker"]).stderr).toContain("unknown worker");
-  expect(f.cli(["resolve", "--owner", "claude_owner"]).code).toBe(1);
-  expect(f.cli(["resolve", "--owner", "claude_owner", "--worker", "claude_worker", "--class", "worker"]).code).toBe(1);
+  const unknown = f.cli(["resolve", "--owner", "claude_owner", "--class", "worker"]);
+  expect(unknown.code).toBe(2);
+  expect(unknown.stderr).toContain("--class");
 });
 test("resolve: worker outside the owner's workers list works with a warning", () => {
   const f = fixture(c => { c.owners.claude_owner.workers = ["claude_worker"]; });
@@ -311,7 +329,7 @@ test("engine-level block makes every owner and worker on the engine unavailable"
   const show = f.cli(["show"]).json;
   expect(show.config.owners.codex_owner.availability.status).toBe("blocked");
   expect(show.config.workers.claude_worker.availability).toEqual({ status: "available" });
-  expect(show.config.owners.claude_owner.workers).toEqual(["claude_worker", "qoder_worker", "codex_worker", "opencode_worker", "grok_worker"]);
+  expect(show.config.owners.claude_owner.workers).toEqual(["claude_worker", "qoder_worker", "opencode_worker", "codex_worker", "grok_worker"]);
   expect(f.cli(["resolve", "--owner", "claude_owner", "--worker", "codex_worker"]).code).toBe(1);
 });
 test("expired blocks are ignored on read and purged on the next write", () => {
@@ -357,43 +375,34 @@ test("invalid state file is reported with paths", () => {
   writeFileSync(f.stateFile, JSON.stringify({ version: 1, blocks: [{ engine: "codex", reason: "a", since: NOW }, { engine: "codex", reason: "b", since: NOW }] }));
   expect(f.cli(["status"]).stderr).toContain("duplicate");
 });
-test("resolve --class picks the first available candidate and falls over when blocked", () => {
+test("resolve without --worker takes the first available worker in order and falls over when blocked", () => {
   const f = fixture();
-  expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "worker"]).json).toMatchObject({ worker: "claude_worker", selected_by: "class", skipped: [] });
+  expect(f.cli(["resolve", "--owner", "claude_owner"]).json).toMatchObject({ worker: "claude_worker", dispatch: "native", selected_by: "order", skipped: [], warnings: [] });
   f.cli(["block", "--engine", "claude", "--model", "sonnet", "--reason", "limit"]);
-  const next = f.cli(["resolve", "--owner", "claude_owner", "--class", "worker"]).json;
-  expect(next).toMatchObject({ worker: "codex_worker", dispatch: "herdr", mode: "interactive" });
-  expect(next.skipped).toEqual([{ worker: "claude_worker", reason: "blocked (claude/sonnet: limit)" }, { worker: "qoder_worker", reason: "disabled" }]);
+  const next = f.cli(["resolve", "--owner", "claude_owner"]).json;
+  expect(next).toMatchObject({ worker: "codex_worker", dispatch: "herdr", mode: "interactive", selected_by: "order" });
+  expect(next.skipped).toEqual([{ worker: "claude_worker", reason: "blocked (claude/sonnet: limit)" }, { worker: "qoder_worker", reason: "disabled" }, { worker: "opencode_worker", reason: "disabled" }]);
   // After the reset time the first choice is back with no manual unblock.
   f.cli(["block", "--engine", "claude", "--model", "sonnet", "--reason", "limit", "--until", "+1h"]);
-  expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "worker"], "2026-10-16T13:00:01Z").json.worker).toBe("claude_worker");
+  expect(f.cli(["resolve", "--owner", "claude_owner"], "2026-10-16T13:00:01Z").json.worker).toBe("claude_worker");
+  // codex_owner starts at its own engine's worker
+  expect(f.cli(["resolve", "--owner", "codex_owner"]).json).toMatchObject({ worker: "codex_worker", dispatch: "native" });
 });
-test("resolve --class lists every unavailable candidate and exits non-zero", () => {
-  const f = fixture(c => { enableOpencode(c); c.owners.claude_owner.workers = ["opencode_worker", "codex_worker", "claude_worker"]; });
+test("resolve lists every unavailable candidate and exits non-zero", () => {
+  const f = fixture(c => { c.owners.claude_owner.workers = ["opencode_worker", "codex_worker", "claude_worker"]; });
   f.cli(["block", "--engine", "codex", "--reason", "account quota"]);
   f.cli(["block", "--engine", "claude", "--model", "sonnet", "--reason", "limit"]);
-  const result = f.cli(["resolve", "--owner", "claude_owner", "--class", "worker"]);
+  const result = f.cli(["resolve", "--owner", "claude_owner"]);
   expect(result.code).toBe(1);
+  expect(result.stderr).toContain("opencode_worker: disabled");
   expect(result.stderr).toContain("codex_worker: blocked (codex: account quota)");
   expect(result.stderr).toContain("claude_worker: blocked (claude/sonnet: limit)");
   expect(result.stdout).toBe("");
-  const task = f.cli(["resolve", "--owner", "claude_owner", "--class", "task"]);
-  expect(task.json).toMatchObject({ worker: "opencode_worker", mode: "oneshot" });
-  const none = fixture();
-  expect(none.cli(["resolve", "--owner", "claude_owner", "--class", "task"]).stderr).toContain("opencode_worker: disabled");
 });
-
-test("prefer_task is an optional boolean and show fills the schema default (true)", () => {
-  const bad = base(); bad.owners.claude_owner.prefer_task = "yes";
-  expect(paths(bad)).toEqual(["$.owners.claude_owner.prefer_task"]);
-  const f = fixture(c => { c.owners.codex_owner.prefer_task = false; });
-  const owners = f.cli(["show"]).json.config.owners;
-  expect(owners.claude_owner.prefer_task).toBe(true);
-  expect(owners.codex_owner.prefer_task).toBe(false);
-  const omitted = fixture(c => { delete c.owners.claude_owner.prefer_task; });
-  expect(JSON.parse(readFileSync(omitted.configFile, "utf8")).owners.claude_owner.prefer_task).toBeUndefined();
-  expect(omitted.cli(["show"]).json.config.owners.claude_owner.prefer_task).toBe(true);
-  expect(omitted.cli(["show"]).json.config.owners.grok_owner.prefer_task).toBe(true);
+test("show lists worker order and availability without legacy defaults", () => {
+  const owners = fixture().cli(["show"]).json.config.owners;
+  expect(owners.claude_owner.prefer_task).toBeUndefined();
+  expect(owners.claude_owner.availability).toEqual({ status: "available" });
 });
 test("tags are unique lowercase slugs", () => {
   const bad = base(); bad.workers.claude_worker.tags = ["Frontend", "ui", "ui", "9x", "a".repeat(33)];
@@ -401,50 +410,55 @@ test("tags are unique lowercase slugs", () => {
   const type = base(); type.workers.claude_worker.tags = "ui";
   expect(paths(type)).toEqual(["$.workers.claude_worker.tags"]);
 });
-test("resolve --class --tag prefers the first available tagged candidate over earlier untagged ones", () => {
+test("resolve --tag prefers the first available tagged candidate over earlier untagged ones", () => {
   const f = fixture(enableAll);
-  // claude_owner order: claude_worker, codex_worker (class=worker); codex_worker is second but carries backend
-  expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "worker", "--tag", "backend"]).json).toMatchObject({ worker: "codex_worker", dispatch: "herdr", mode: "interactive", selected_by: "class", skipped: [], warnings: [] });
-  expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "worker", "--tag", "frontend"]).json).toMatchObject({ worker: "claude_worker", dispatch: "native", warnings: [] });
-  expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "worker", "--tag", "research"]).json).toMatchObject({ worker: "grok_worker", dispatch: "herdr" });
-  const task = f.cli(["resolve", "--owner", "claude_owner", "--class", "task", "--tag", "lint"]).json;
-  expect(task).toMatchObject({ worker: "opencode_worker", mode: "oneshot", warnings: [] });
-  expect(task.argv).toEqual(OPENCODE_ARGV);
-  // tags only match inside the requested class
-  expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "task", "--tag", "backend"]).json).toMatchObject({ worker: "opencode_worker", warnings: ["无可用的 backend 标签候选，已按顺序回退"] });
+  rememberVariants(f.home, { "opencode/glm-5.3-flash-free": "max" });
+  // no tag: first in order, same engine -> native
+  expect(f.cli(["resolve", "--owner", "claude_owner"]).json).toMatchObject({ worker: "claude_worker", dispatch: "native", selected_by: "order" });
+  const mechanical = f.cli(["resolve", "--owner", "claude_owner", "--tag", "mechanical"]).json;
+  expect(mechanical).toMatchObject({ worker: "opencode_worker", dispatch: "herdr", mode: "interactive", kind: "opencode", selected_by: "tag", skipped: [], warnings: [] });
+  expect(mechanical.argv).toEqual(OPENCODE_ARGV);
+  const routine = f.cli(["resolve", "--owner", "claude_owner", "--tag", "routine"]).json;
+  expect(routine).toMatchObject({ worker: "qoder_worker", kind: "qodercli", selected_by: "tag", warnings: [] });
+  expect(routine.argv).toEqual(["-m", "Qwen3.8-Flash", "--reasoning-effort", "xhigh", "--permission-mode", "bypass_permissions"]);
+  expect(f.cli(["resolve", "--owner", "claude_owner", "--tag", "backend"]).json).toMatchObject({ worker: "codex_worker", dispatch: "herdr", selected_by: "tag", warnings: [] });
+  expect(f.cli(["resolve", "--owner", "claude_owner", "--tag", "frontend"]).json).toMatchObject({ worker: "claude_worker", dispatch: "native", selected_by: "tag" });
+  expect(f.cli(["resolve", "--owner", "claude_owner", "--tag", "research"]).json).toMatchObject({ worker: "grok_worker", dispatch: "herdr" });
+  // codex_owner order differs: test is shared by several workers, the first in its own order wins
+  expect(f.cli(["resolve", "--owner", "codex_owner", "--tag", "test"]).json).toMatchObject({ worker: "codex_worker", dispatch: "native", selected_by: "tag" });
+  expect(f.cli(["resolve", "--owner", "codex_owner", "--tag", "mechanical"]).json).toMatchObject({ worker: "opencode_worker" });
 });
 test("resolve --tag falls back in order with a warning when no tagged candidate is usable", () => {
   const f = fixture(enableAll);
-  const unknown = f.cli(["resolve", "--owner", "claude_owner", "--class", "worker", "--tag", "nonexistent"]).json;
-  expect(unknown).toMatchObject({ worker: "claude_worker", skipped: [], warnings: ["无可用的 nonexistent 标签候选，已按顺序回退"] });
+  const unknown = f.cli(["resolve", "--owner", "claude_owner", "--tag", "nonexistent"]).json;
+  expect(unknown).toMatchObject({ worker: "claude_worker", selected_by: "order", skipped: [], warnings: ["无可用的 nonexistent 标签候选，已按顺序回退"] });
   f.cli(["block", "--engine", "codex", "--reason", "account quota"]);
-  const blocked = f.cli(["resolve", "--owner", "claude_owner", "--class", "worker", "--tag", "backend"]).json;
-  expect(blocked).toMatchObject({ worker: "claude_worker", warnings: ["无可用的 backend 标签候选，已按顺序回退"] });
+  const blocked = f.cli(["resolve", "--owner", "claude_owner", "--tag", "backend"]).json;
+  expect(blocked).toMatchObject({ worker: "claude_worker", selected_by: "order", warnings: ["无可用的 backend 标签候选，已按顺序回退"] });
   expect(blocked.skipped).toEqual([{ worker: "codex_worker", reason: "blocked (codex: account quota)" }]);
   // a blocked earlier tagged candidate is skipped in favour of a later tagged one
   const g = fixture(c => { enableAll(c); c.workers.claude_worker.tags.push("backend"); });
   g.cli(["block", "--engine", "claude", "--model", "sonnet", "--reason", "limit"]);
-  const later = g.cli(["resolve", "--owner", "claude_owner", "--class", "worker", "--tag", "backend"]).json;
-  expect(later).toMatchObject({ worker: "codex_worker", warnings: [] });
+  const later = g.cli(["resolve", "--owner", "claude_owner", "--tag", "backend"]).json;
+  expect(later).toMatchObject({ worker: "codex_worker", selected_by: "tag", warnings: [] });
   expect(later.skipped).toEqual([{ worker: "claude_worker", reason: "blocked (claude/sonnet: limit)" }]);
   // everything blocked still fails with the candidate list
-  g.cli(["block", "--engine", "codex", "--reason", "account quota"]);
-  g.cli(["block", "--engine", "grok", "--reason", "x"]);
-  g.cli(["block", "--engine", "qoder", "--reason", "x"]);
-  const none = g.cli(["resolve", "--owner", "claude_owner", "--class", "worker", "--tag", "backend"]);
+  for (const engine of ["codex", "grok", "qoder", "opencode"]) g.cli(["block", "--engine", engine, "--reason", "x"]);
+  const none = g.cli(["resolve", "--owner", "claude_owner", "--tag", "backend"]);
   expect(none.code).toBe(1);
   expect(none.stderr).toContain("codex_worker: blocked");
 });
-test("resolve --tag requires --class and cannot combine with --worker or --peer", () => {
+test("resolve --tag cannot combine with --worker or --peer", () => {
   const f = fixture(enableAll);
-  expect(f.cli(["resolve", "--owner", "claude_owner", "--tag", "backend"]).stderr).toContain("exactly one of");
   const withWorker = f.cli(["resolve", "--owner", "claude_owner", "--worker", "codex_worker", "--tag", "backend"]);
   expect(withWorker.code).toBe(1);
-  expect(withWorker.stderr).toContain("--tag requires --class");
+  expect(withWorker.stderr).toContain("--tag cannot be combined with --worker");
   const withPeer = f.cli(["resolve", "--owner", "claude_owner", "--peer", "codex_owner", "--tag", "backend"]);
   expect(withPeer.code).toBe(1);
   expect(withPeer.stderr).toContain("--peer cannot be combined");
-  expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "worker", "--tag", "backend"]).code).toBe(0);
+  expect(f.cli(["resolve", "--owner", "claude_owner", "--worker", "codex_worker", "--peer", "codex_owner"]).code).toBe(1);
+  // explicit --worker reports no selection mode
+  expect(f.cli(["resolve", "--owner", "claude_owner", "--worker", "codex_worker"]).json.selected_by).toBeUndefined();
 });
 
 // ---- process-level behaviour ----

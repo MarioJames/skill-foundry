@@ -30,7 +30,7 @@ herdr agent start owner-claude --kind claude --pane <pane> -- --model claude-opu
   - Codex（"Trust this folder?"，默认选项就是 Trust and continue）：`herdr agent send-keys <owner> enter`
   - Claude（"Is this a project you created or one you trust?"，默认选项是 No, exit，直接回车会退出）：`herdr agent send-keys <owner> down`，读屏确认 `❯ Yes, I trust this folder` 后再 `enter`
 
-  之后用 `herdr agent list` 确认状态变为 idle/done，再发 prompt。只信任用户指定的目标项目目录；来源不明的仓库停下来问用户。如果 blocked 不是信任提示，按读屏内容判断，不要盲目按键。
+  之后用 `herdr agent list` 确认状态变为 idle/done，再发 prompt。只信任用户指定的目标项目目录；来源不明的仓库停下来问用户。如果 blocked 不是信任提示，按读屏内容判断，不要盲目按键。worker 使用的其他 CLI（如 qodercli 的信任提示状态报 idle 而非 blocked）见[配置说明](config.md#herdr-派发流程)。
 - `route-lane` 需要已验证的调用方 pane。在 Herdr 之外（例如普通 tmux）运行时，归属校验会失败，这时直接走上面的降级路径。
 
 ## 消息

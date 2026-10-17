@@ -14,33 +14,31 @@
       "engine": "claude",
       "model": "claude-opus-5-5",
       "effort": "high",
-      "workers": ["claude_worker", "qoder_worker", "codex_worker", "opencode_worker", "grok_worker"],
-      "max_parallel": 4,
-      "prefer_task": true
+      "workers": ["claude_worker", "qoder_worker", "opencode_worker", "codex_worker", "grok_worker"],
+      "max_parallel": 4
     },
     "codex_owner": {
       "enabled": true,
       "engine": "codex",
       "model": "gpt-6-astra",
       "effort": "high",
-      "workers": ["codex_worker", "qoder_worker", "claude_worker", "opencode_worker", "grok_worker"],
-      "max_parallel": 4,
-      "prefer_task": true
+      "workers": ["codex_worker", "qoder_worker", "opencode_worker", "claude_worker", "grok_worker"],
+      "max_parallel": 4
     },
     "grok_owner": {
       "enabled": false,
       "engine": "grok",
       "model": "grok-4.7",
       "effort": "high",
-      "workers": ["grok_worker", "qoder_worker", "claude_worker", "codex_worker", "opencode_worker"],
+      "workers": ["grok_worker", "qoder_worker", "opencode_worker", "claude_worker", "codex_worker"],
       "max_parallel": 4
     }
   },
   "workers": {
-    "claude_worker": { "enabled": true, "engine": "claude", "class": "worker", "model": "sonnet", "effort": "high", "tags": ["frontend", "ui", "browser", "docs"], "description": "Default worker for Claude Code; suited to frontend, UI, browser and docs work." },
-    "codex_worker": { "enabled": true, "engine": "codex", "class": "worker", "model": "gpt-6.1-sol", "effort": "high", "tags": ["backend", "algorithm", "test", "refactor"], "description": "Default worker for Codex; suited to backend, algorithm, test and refactor work." },
-    "grok_worker": { "enabled": false, "engine": "grok", "class": "worker", "model": "grok-4.7", "effort": "high", "tags": ["research"], "description": "Example worker for Grok; suited to research." },
-    "qoder_worker": { "enabled": false, "engine": "qoder", "class": "worker", "model": "Qwen3.8-Flash", "effort": "xhigh", "tags": ["routine", "test", "lint", "scaffold"], "description": "Free worker (Qwen3.8-Flash via qodercli); prefer it for routine implementation whose plan is frozen and write scope is explicit." },
-    "opencode_worker": { "enabled": false, "engine": "opencode", "class": "task", "model": "opencode/glm-5.3-flash-free", "effort": "max", "tags": ["mechanical", "test", "lint", "sweep"], "description": "Free one-shot task worker (glm-5.3-flash-free); prefer it for rule-bound edits, test runs, lint fixes and read-only sweeps." }
+    "claude_worker": { "enabled": true, "engine": "claude", "model": "sonnet", "effort": "high", "tags": ["frontend", "ui", "browser", "docs"], "description": "Default worker for Claude Code; suited to frontend, UI, browser and docs work." },
+    "codex_worker": { "enabled": true, "engine": "codex", "model": "gpt-6.1-sol", "effort": "high", "tags": ["backend", "algorithm", "test", "refactor"], "description": "Default worker for Codex; suited to backend, algorithm, test and refactor work." },
+    "grok_worker": { "enabled": false, "engine": "grok", "model": "grok-4.7", "effort": "high", "tags": ["research"], "description": "Example worker for Grok; suited to research." },
+    "qoder_worker": { "enabled": false, "engine": "qoder", "model": "Qwen3.8-Flash", "effort": "xhigh", "tags": ["routine", "test", "lint", "scaffold"], "description": "Free worker (Qwen3.8-Flash via qodercli); prefer it for routine implementation whose plan is frozen and write scope is explicit." },
+    "opencode_worker": { "enabled": false, "engine": "opencode", "model": "opencode/glm-5.3-flash-free", "effort": "max", "tags": ["mechanical", "test", "lint", "sweep"], "description": "Free worker (glm-5.3-flash-free via opencode); prefer it for rule-bound edits, test runs, lint fixes and read-only sweeps. Its TUI uses the variant remembered in ~/.local/state/opencode/model.json, which must match effort." }
   }
 }
