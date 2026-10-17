@@ -32,6 +32,11 @@ const INTERACTIVE: Record<string, (m: string, e: string) => string[]> = {
   grok: (m, e) => ["-m", m, "--effort", e, ...BYPASS],
 };
 
+/** Reserved class tags: a worker carrying one is a free worker picked by resolve --class; every other tag is a domain tag. */
+export const CLASS_TAGS = ["mechanical", "routine"];
+export const CLASSES = [...CLASS_TAGS, "judgment"];
+const isFree = (worker: Worker) => CLASS_TAGS.some(t => worker.tags?.includes(t));
+
 export class CliError extends Error {
   constructor(message: string, public issues: Issue[] = []) { super(message); }
 }
@@ -79,6 +84,10 @@ export function validateConfig(config: unknown, schema: Schema = loadSchema(CONF
     else owned.set(owner.engine, id);
     const hasWorker = owner.workers.some(w => { const a = c.workers[w]; return a?.enabled && c.engines[a.engine]?.enabled; });
     if (!hasWorker) bad(`${at}.workers`, "enabled owner needs at least one enabled worker on an enabled engine");
+    owner.workers.forEach((worker, i) => {
+      const a = c.workers[worker];
+      if (a && isFree(a) && a.engine === owner.engine) bad(`${at}.workers[${i}]`, `class worker ${worker} must not run on owner engine ${owner.engine}`);
+    });
   }
   // Kinds that can host native sub-agents come from the schema (engine.then), not from a second table here.
   const nativeKinds: string[] = schema.$defs?.engine?.then?.properties?.kind?.enum ?? [];
@@ -87,6 +96,7 @@ export function validateConfig(config: unknown, schema: Schema = loadSchema(CONF
     const kind = c.engines[worker.engine]?.kind;
     if (!kind) { bad(`${at}.engine`, `unknown engine ${worker.engine}`); continue; }
     checkEffort(at, worker.engine, worker.effort);
+    if (CLASS_TAGS.every(t => worker.tags?.includes(t))) bad(`${at}.tags`, `a worker cannot carry both ${CLASS_TAGS.join(" and ")}`);
     if (!INTERACTIVE[kind] && !nativeKinds.includes(kind)) bad(`${at}.engine`, `kind ${kind} supports neither interactive launch nor native sub-agents`);
   }
   return issues;
@@ -181,35 +191,57 @@ function requireOwner(config: Config, blocks: Block[], id: string, what = "owner
   if (a.status !== "available") throw new CliError(`${what} ${id} unavailable: ${describeUnavailable(a)}`);
   return owner;
 }
-export function resolveDispatch(config: Config, blocks: Block[], opts: { owner: string; worker?: string; tag?: string; peer?: string }, home: string = homedir()): Dispatch {
+export function resolveDispatch(config: Config, blocks: Block[], opts: { owner: string; worker?: string; class?: string; tag?: string; peer?: string }, home: string = homedir()): Dispatch {
   const owner = requireOwner(config, blocks, opts.owner);
   if (opts.peer !== undefined) {
-    if (opts.worker || opts.tag !== undefined) throw new CliError("--peer cannot be combined with --worker or --tag");
+    if (opts.worker || opts.class !== undefined || opts.tag !== undefined) throw new CliError("--peer cannot be combined with --worker, --class or --tag");
     if (opts.peer === opts.owner) throw new CliError("--peer must differ from --owner");
     const peer = requireOwner(config, blocks, opts.peer, "peer owner");
     const kind = config.engines[peer.engine]!.kind;
     return { owner: opts.owner, peer: opts.peer, role: "peer_owner", dispatch: "herdr", ...interactive(kind, peer.model, peer.effort), engine: peer.engine, model: peer.model, effort: peer.effort, warnings: [] };
   }
   if (opts.worker) {
-    if (opts.tag !== undefined) throw new CliError("--tag cannot be combined with --worker");
+    if (opts.class !== undefined || opts.tag !== undefined) throw new CliError("--worker cannot be combined with --class or --tag");
     const worker = config.workers[opts.worker];
     if (!worker) throw new CliError(`unknown worker ${opts.worker}`);
     const a = availabilityOf(config, blocks, worker);
     if (a.status !== "available") throw new CliError(`worker ${opts.worker} unavailable: ${describeUnavailable(a)}`);
     const warnings = owner.workers.includes(opts.worker) ? [] : [`worker ${opts.worker} 不在 owner ${opts.owner} 的 workers 列表中`];
-    return launch(config, opts.owner, opts.worker, warnings, home);
+    return { ...launch(config, opts.owner, opts.worker, warnings, home), selected_by: "worker" };
   }
-  const candidates = owner.workers.map(id => ({ id, availability: availabilityOf(config, blocks, config.workers[id]!), tagged: opts.tag !== undefined && !!config.workers[id]!.tags?.includes(opts.tag) }));
+  const cls = opts.class;
+  if (cls === undefined || !CLASSES.includes(cls)) throw new CliError(cls === undefined ? `--class is required (${CLASSES.join("|")}) unless --worker or --peer is given` : `--class must be one of ${CLASSES.join("|")}`);
+  if (opts.tag !== undefined) {
+    if (cls !== "judgment") throw new CliError("--tag is only valid with --class judgment");
+    if (CLASS_TAGS.includes(opts.tag)) throw new CliError(`--tag ${opts.tag} is a class tag; use --class ${opts.tag}`);
+  }
+  const all = owner.workers.map(id => ({ id, worker: config.workers[id]!, availability: availabilityOf(config, blocks, config.workers[id]!) }));
   const usable = (c: { availability: Availability }) => c.availability.status === "available";
+  const paid = all.filter(c => !isFree(c.worker));
+  // Attempt order: free class workers first (mechanical, then routine), then the judgment pool.
+  // A domain tag only matches heterogeneous workers; the owner's own-engine (native) worker is the implicit judgment default and needs no tag.
+  const sequence: { c: (typeof all)[number]; by: "class" | "tag" | "native" | "order" }[] = [];
+  const add = (list: typeof all, by: "class" | "tag" | "native" | "order") => list.forEach(c => { if (!sequence.some(s => s.c === c)) sequence.push({ c, by }); });
+  if (cls === "mechanical") add(all.filter(c => c.worker.tags?.includes("mechanical")), "class");
+  if (cls !== "judgment") add(all.filter(c => c.worker.tags?.includes("routine")), "class");
+  if (opts.tag !== undefined) {
+    add(paid.filter(c => c.worker.engine !== owner.engine && c.worker.tags?.includes(opts.tag!)), "tag");
+    add(paid.filter(c => c.worker.engine === owner.engine), "native");
+  }
+  add(paid, "order");
+  const hit = sequence.find(s => usable(s.c));
+  if (!hit) {
+    const considered = sequence.map(s => s.c);
+    throw new CliError(`no available worker for owner ${opts.owner} (class ${cls})`, considered.map(c => ({ path: `$.owners.${opts.owner}.workers`, message: `${c.id}: ${describeUnavailable(c.availability)}` })));
+  }
   const warnings: string[] = [];
-  let chosen = opts.tag !== undefined ? candidates.find(c => c.tagged && usable(c)) : undefined;
-  const selectedBy = chosen ? "tag" : "order";
-  if (opts.tag !== undefined && !chosen) warnings.push(`无可用的 ${opts.tag} 标签候选，已按顺序回退`);
-  chosen ??= candidates.find(usable);
-  if (!chosen) throw new CliError(`no available worker for owner ${opts.owner}`, candidates.map(c => ({ path: `$.owners.${opts.owner}.workers`, message: `${c.id}: ${describeUnavailable(c.availability)}` })));
-  const at = candidates.indexOf(chosen);
-  const skipped = candidates.filter((c, i) => !usable(c) && (i < at || c.tagged)).map(c => ({ worker: c.id, reason: describeUnavailable(c.availability) }));
-  return { ...launch(config, opts.owner, chosen.id, warnings, home), selected_by: selectedBy, skipped };
+  if (hit.by === "native" && sequence.some(s => s.by === "tag")) warnings.push(`带 ${opts.tag} 标签的异构候选不可用，已回落到本引擎原生 worker`);
+  if (hit.by === "order") {
+    if (cls !== "judgment") warnings.push("无可用免费 worker，已按 judgment 回退");
+    else if (opts.tag !== undefined) warnings.push(`无可用的 ${opts.tag} 标签候选，已按顺序回退`);
+  }
+  const skipped = sequence.slice(0, sequence.indexOf(hit)).filter(s => !usable(s.c)).map(s => ({ worker: s.c.id, reason: describeUnavailable(s.c.availability) }));
+  return { ...launch(config, opts.owner, hit.c.id, warnings, home), class: cls, selected_by: hit.by, skipped };
 }
 
 // ---- CLI ----
@@ -234,8 +266,11 @@ function loadConfig(path: string, schema: Schema): Config {
 const USAGE = `Usage: bun agents-config.ts <command> [options]
   validate                         Validate the config (structure + semantics)
   show                             Print the effective config with availability
-  resolve --owner <id> --worker <id> | [--tag <t>] | --peer <owner-id>
-                                   (no --worker/--peer: first available worker in order, or first tagged one with --tag)
+  resolve --owner <id> --class mechanical|routine|judgment [--tag <domain>] | --worker <id> | --peer <owner-id>
+                                   (--class is required for pool selection: mechanical -> mechanical worker, then routine worker, then judgment;
+                                    routine -> routine worker, then judgment; judgment -> non-free workers in order, --tag <domain> prefers a tagged
+                                    heterogeneous worker, else the owner's native worker;
+                                    --tag only with judgment; --worker only for a user-chosen worker or continuing the same package)
   block --engine <id> [--model <m>] [--release-at <ISO8601|+<n>m|h|d>] --reason <text> [--by <owner-id>]
   unblock --engine <id> [--model <m>]
   status                           Print active blocks and per-owner/worker availability
@@ -245,7 +280,7 @@ export function run(args: string[], env: Record<string, string | undefined> = pr
   try {
     const { values, positionals } = parseArgs({
       args, allowPositionals: true,
-      options: { config: { type: "string" }, state: { type: "string" }, owner: { type: "string" }, worker: { type: "string" }, tag: { type: "string" }, peer: { type: "string" }, engine: { type: "string" }, model: { type: "string" }, "release-at": { type: "string" }, reason: { type: "string" }, by: { type: "string" }, help: { type: "boolean", short: "h" } },
+      options: { config: { type: "string" }, state: { type: "string" }, owner: { type: "string" }, worker: { type: "string" }, class: { type: "string" }, tag: { type: "string" }, peer: { type: "string" }, engine: { type: "string" }, model: { type: "string" }, "release-at": { type: "string" }, reason: { type: "string" }, by: { type: "string" }, help: { type: "boolean", short: "h" } },
     });
     const command = positionals[0];
     if (values.help || !command) return { code: values.help ? 0 : 2, stdout: values.help ? USAGE + "\n" : "", stderr: values.help ? "" : USAGE + "\n" };
@@ -277,7 +312,7 @@ export function run(args: string[], env: Record<string, string | undefined> = pr
         return out({ source, path, state: file, config: { ...config, owners: withAvailability(config.owners), workers: withAvailability(config.workers) } });
       }
       case "status": return out({ now: new Date(now).toISOString(), state: file, blocks, ...availability() });
-      case "resolve": return out(resolveDispatch(config, blocks, { owner: need("owner", values.owner), worker: values.worker, tag: values.tag, peer: values.peer }, env.HOME ?? homedir()));
+      case "resolve": return out(resolveDispatch(config, blocks, { owner: need("owner", values.owner), worker: values.worker, class: values.class, tag: values.tag, peer: values.peer }, env.HOME ?? homedir()));
       case "block": {
         const engine = need("engine", values.engine);
         if (!config.engines[engine]) throw new CliError(`unknown engine ${engine}`);

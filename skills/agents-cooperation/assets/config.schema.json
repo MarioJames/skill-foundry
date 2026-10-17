@@ -154,7 +154,7 @@
           "$ref": "#/$defs/effort"
         },
         "workers": {
-          "description": "Worker ids in priority order; resolve takes the first available one (or the first available one carrying the requested tag).",
+          "description": "Worker ids in priority order; resolve --class judgment takes the first available non-free one (with --tag: the first available heterogeneous one carrying the domain tag, else the owner's native worker); free class workers are taken by resolve --class mechanical|routine.",
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
@@ -196,7 +196,7 @@
           "type": "string"
         },
         "tags": {
-          "description": "Domain tags used by resolve --tag <t> to prefer a matching worker.",
+          "description": "mechanical and routine are reserved class tags: a worker carrying one is a free worker that resolve --class mechanical|routine picks first (at most one of the two, and never on the owner's own engine). Every other tag is a domain tag describing the model's strengths; resolve --class judgment --tag <t> uses it only to pick a heterogeneous worker (a different engine than the owner), falling back to the owner's native worker.",
           "type": "array",
           "uniqueItems": true,
           "items": {

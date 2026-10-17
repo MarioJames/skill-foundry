@@ -27,10 +27,10 @@
     }
   },
   "workers": {
-    "claude_worker": { "enabled": true, "engine": "claude", "model": "sonnet", "effort": "high", "tags": ["frontend", "ui", "browser", "docs"], "description": "Default worker for Claude Code; suited to frontend, UI, browser and docs work." },
-    "codex_worker": { "enabled": true, "engine": "codex", "model": "gpt-6.1-sol", "effort": "high", "tags": ["backend", "algorithm", "test", "refactor"], "description": "Default worker for Codex; suited to backend, algorithm, test and refactor work." },
-    "grok_worker": { "enabled": false, "engine": "grok", "model": "grok-4.7", "effort": "high", "tags": ["research"], "description": "Example worker for Grok; suited to research." },
-    "qoder_worker": { "enabled": false, "engine": "qoder", "model": "Qwen3.8-Flash", "effort": "xhigh", "tags": ["routine", "test", "lint", "scaffold"], "description": "Free worker (Qwen3.8-Flash via qodercli); prefer it for routine implementation whose plan is frozen and write scope is explicit." },
-    "opencode_worker": { "enabled": false, "engine": "opencode", "model": "opencode/glm-5.3-flash-free", "effort": "max", "tags": ["mechanical", "test", "lint", "sweep"], "description": "Free worker (glm-5.3-flash-free via opencode); prefer it for rule-bound edits, test runs, lint fixes and read-only sweeps. Its TUI uses the variant remembered in ~/.local/state/opencode/model.json, which must match effort." }
+    "claude_worker": { "enabled": true, "engine": "claude", "model": "sonnet", "effort": "high", "tags": ["frontend", "ui", "browser", "docs"], "description": "Default worker for Claude Code (Sonnet); strong at frontend, UI, browser acceptance and docs." },
+    "codex_worker": { "enabled": true, "engine": "codex", "model": "gpt-6.1-sol", "effort": "high", "tags": ["backend", "algorithm", "refactor", "long-test"], "description": "Default worker for Codex (gpt-6.1-sol); strong at backend logic, algorithms, refactors and long-running test loops." },
+    "grok_worker": { "enabled": false, "engine": "grok", "model": "grok-4.7", "effort": "high", "tags": ["research"], "description": "Example worker for Grok (grok-4.7); strong at research." },
+    "qoder_worker": { "enabled": false, "engine": "qoder", "model": "Qwen3.8-Flash", "effort": "xhigh", "tags": ["routine"], "description": "Free routine worker (Qwen3.8-Flash via qodercli); resolve --class mechanical|routine picks it for routine implementation whose plan is frozen and write scope is explicit." },
+    "opencode_worker": { "enabled": false, "engine": "opencode", "model": "opencode/glm-5.3-flash-free", "effort": "max", "tags": ["mechanical"], "description": "Free mechanical worker (glm-5.3-flash-free via opencode); resolve --class mechanical picks it for rule-bound edits, test runs, lint fixes and read-only sweeps. Its TUI uses the variant remembered in ~/.local/state/opencode/model.json, which must match effort." }
   }
 }
