@@ -17,11 +17,10 @@ bun <skill>/scripts/agents-config.ts resolve --owner <自己的-owner-id> --peer
 herdr agent start owner-<engine-id> --kind <kind> --pane <pane> -- <argv>
 ```
 
-默认配置下 `resolve` 的 argv 示例（以实际输出为准）：
+启动命令的 `--` 之后原样使用 `resolve` 输出的 argv（各 kind 的 argv 对照见[配置说明](config.md#派发方式推导)）：
 
 ```sh
-herdr agent start owner-codex --kind codex --pane <pane> -- -m gpt-6-astra -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox
-herdr agent start owner-claude --kind claude --pane <pane> -- --model claude-opus-5-5 --effort high --permission-mode bypassPermissions
+herdr agent start <owner-name> --kind <kind> --pane <pane> -- <argv>
 ```
 
 同一任务从讨论、开发到交叉 review 复用同一个协作 owner 会话，以保留上下文。Herdr 不可用、启动失败或没有可用的协作 owner（未配置、disabled、被 block）时，接单 owner 在台账中说明原因，用自己的子 agent 独立完成，不改走其他入口。降级只免除 owner 讨论；分级为必审时不免除 [ChatGPT 审查门槛](#chatgpt-审查门槛)，接单 owner 自己的子 agent 也只在门槛满足后实施依赖该方案的工作。
@@ -46,8 +45,8 @@ herdr agent start owner-claude --kind claude --pane <pane> -- --model claude-opu
 
 ```text
 [agents-cooperation]
-from: 接单owner (claude_owner claude-opus-5-5, pane <id>)
-to: 协作owner (codex_owner gpt-6-astra)
+from: 接单owner (<owner-id> <model>, pane <id>)
+to: 协作owner (<owner-id> <model>)
 collab: <collab-id>   round: <n>   type: discuss | assign | review | info
 project: <项目路径>
 read: ~/.local/state/agents-cooperation/<collab-id>/002-claude-discuss.md
@@ -150,7 +149,7 @@ ChatGPT 阶段一轮 = 一次新的实质送审（方案审查对应一版方案
 
 ## 任务头
 - collab-id: 1015-example-topic
-- 接单 owner: claude_owner（claude-opus-5-5）
+- 接单 owner: <owner-id>（<model>）
 - 目标与验收: <一句话>
 - 用户授权依据: <消息或指令引用>
 - ChatGPT 分级与依据: 必审——<命中的条件>

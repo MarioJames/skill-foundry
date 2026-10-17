@@ -5,11 +5,7 @@ SKILL.md 的“调度配置”写规则，本文写字段、派发推导、herdr
 ## 位置与来源
 
 - 配置：`~/.config/agents-cooperation/config.json`；`AGENTS_COOPERATION_CONFIG` 或脚本 `--config <path>` 覆盖。不存在时使用 `<skill>/assets/config.default.json`。不做多层合并。
-- 默认配置是唯一默认来源，也是用户复制的起点，按模型特点初始化：
-  - 引擎：claude、codex 为 enabled 且 native；grok、opencode（`kind: opencode`）与 qoder（`kind: qodercli`）为 `enabled: false` 的示例。
-  - owner：`claude_owner`（claude-opus-5-5，high）、`codex_owner`（gpt-6-astra，high）为 enabled，`max_parallel` 4。`workers` 顺序：`claude_owner` 为 `claude_worker`、`qoder_worker`、`opencode_worker`、`grok_worker`；`codex_owner` 为 `codex_worker`、`qoder_worker`、`opencode_worker`、`grok_worker`。默认配置不把对方 owner 引擎的 worker 列进来，这类领域的包按 `peer_suggestion` 经 `assign` 交给对方 owner，用户把对方 worker 加进列表即可直接派；grok 不当 owner（`native_subagents` 为 false），只作 herdr worker。本引擎的原生 worker 第一位，judgment 包按此顺序选；免费 worker 由 `--class mechanical|routine` 越过顺序命中。
-  - worker：`claude_worker`（claude / sonnet / high，tags `frontend` `ui` `browser` `docs`）、`codex_worker`（codex / gpt-6.1-sol / high，tags `backend` `algorithm` `refactor` `long-test`，长时测试循环）为 enabled；`grok_worker`（grok / grok-4.7 / high，tags `research`）、`qoder_worker`（qoder / `Qwen3.8-Flash` / xhigh，tags `routine`，免费模型，用于方案已冻结且范围明确的常规实现）与 `opencode_worker`（opencode / `opencode/glm-5.3-flash-free` / max，tags `mechanical`，免费模型，用于机械性包）为 `enabled: false`。
-  - 用户配置按需启用：启用 `opencode`、`qoder` 引擎与 `opencode_worker`、`qoder_worker`；启用 `grok` 引擎与 `grok_worker` 后，它作为 herdr worker 使用。
+- 默认配置是唯一默认来源，也是用户复制的起点；引擎、owner、worker、模型、effort、`workers` 顺序和 tags 的默认值都以 `<skill>/assets/config.default.json` 为准，本文不复述。
 - 结构由 `<skill>/assets/config.schema.json`（JSON Schema draft 2020-12）定义，配置用 `"$schema"` 指向它；校验器直接读取 schema，字段表不在脚本里重复。
 
 ## 字段
@@ -29,7 +25,7 @@ SKILL.md 的“调度配置”写规则，本文写字段、派发推导、herdr
     "<owner-id>": {
       "enabled": true,
       "engine": "<engine-id>",       // 该引擎必须 native_subagents=true
-      "model": "claude-opus-5-5",
+      "model": "<model-id>",
       "effort": "high",
       "workers": ["<worker-id>"],    // 必填、非空、无重复，按优先级排序
       "max_parallel": 4              // 必填，≥1，该 owner 同时运行的子 agent 上限
@@ -48,8 +44,8 @@ SKILL.md 的“调度配置”写规则，本文写字段、派发推导、herdr
 }
 ```
 
-- **命名**：engine、owner、worker 的 id 匹配 `^[a-z][a-z0-9_]{0,39}$`；`workers` 下所有 key 以 `_worker` 结尾。默认命名：引擎 `claude` `codex` `grok` `opencode` `qoder`，owner `claude_owner` `codex_owner`，worker `claude_worker` `codex_worker` `grok_worker` `opencode_worker` `qoder_worker`。顶层字段是 `workers`，不接受旧字段 `agents`（报未知字段）。
-- **tags**：可选，字符串数组，每项匹配 `^[a-z][a-z0-9-]{0,31}$` 且不重复。`mechanical`、`routine` 是类别保留标签，带其中之一的 worker 是免费 worker，由 `resolve --class mechanical|routine` 选取；其余标签是领域标签（如 `frontend` `backend`），按模型强项标注，只用于 `resolve --class judgment --tag` 选异构 worker（引擎与 owner 不同）；owner 本引擎的原生 worker 是 judgment 的隐式默认，选它时不看标签（见下文）。领域标签集合由配置维护，技能规则不写死。
+- **命名**：engine、owner、worker 的 id 匹配 `^[a-z][a-z0-9_]{0,39}$`；`workers` 下所有 key 以 `_worker` 结尾。顶层字段是 `workers`，不接受旧字段 `agents`（报未知字段）。
+- **tags**：可选，字符串数组，每项匹配 `^[a-z][a-z0-9-]{0,31}$` 且不重复。`mechanical`、`routine` 是类别保留标签，带其中之一的 worker 是免费 worker，由 `resolve --class mechanical|routine` 选取；其余标签是领域标签，按模型强项标注，只用于 `resolve --class judgment --tag` 选异构 worker（引擎与 owner 不同）；owner 本引擎的原生 worker 是 judgment 的隐式默认，选它时不看标签（见下文）。领域标签集合由配置维护，技能规则不写死。
 - **未知字段**：所有对象禁止多余字段，顶层只额外允许 `$schema`；旧配置中残留的 worker 分类字段和 owner 任务优先字段同样报未知字段。
 - **effort**：schema 只要求非空字符串，合法取值由脚本按引擎 kind 校验，是引擎原生语义，不做跨引擎统一：claude `low|medium|high|xhigh|max`；codex `minimal|low|medium|high|xhigh|max`；grok `none|minimal|low|medium|high|xhigh|max`；qodercli `auto|none|low|medium|high|xhigh|max|ultracode`；opencode 的 effort 对应模型的 variant，是 provider 与模型相关的值（如 `opencode/glm-5.3-flash-free` 为 `low|high|max`），不在常量表内、按任意非空字符串处理，以 `opencode models <provider> --verbose` 输出的 variants 为准；TUI 不能按次指定 variant，实际取值见下文“opencode 的约束”。
 - **约束走配置**：调度约束一律通过配置表达（`workers` 列表、`enabled`、`tags`、`max_parallel`、block），脚本和技能规则不另设硬编码限制，例如 owner 能派哪些 worker 只由 `owners.<id>.workers` 决定。
@@ -75,8 +71,8 @@ SKILL.md 的“调度配置”写规则，本文写字段、派发推导、herdr
   - `mechanical`：依次取可用的 mechanical worker、可用的 routine worker，`selected_by: "class"`；都没有时按 judgment 回退，`selected_by: "order"`，`warnings` 写明“无可用免费 worker，已按 judgment 回退”。
   - `routine`：取可用的 routine worker，`selected_by: "class"`；没有时同样按 judgment 回退并写 warning，不落到 mechanical worker。
   - `judgment`：候选池排除带 `mechanical` / `routine` 的 worker，不带 `--tag` 时按 `workers` 顺序取第一个可用的（默认即同引擎原生），`selected_by: "order"`。
-  - `--tag <domain>`：只能和 `--class judgment` 一起用（与 `mechanical` / `routine` 同用报错；`--tag mechanical|routine` 报错，应改用 `--class`）。只在 owner 自己的 `workers` 里引擎与 owner 不同的异构候选中取第一个可用且带该标签的，`selected_by: "tag"`；没有命中就回落到同引擎原生 worker，`selected_by: "native"`：该标签只在原生 worker 上或没有带该标签的异构候选时不出 warning；有带该标签的异构候选但因 block 或 disabled 被跳过时，`warnings` 写明“带 <tag> 标签的异构候选不可用，已回落到本引擎原生 worker”；原生也不可用时按原顺序回退，`selected_by: "order"`，并在 `warnings` 写明“无可用的 <tag> 标签候选，已按顺序回退”。被 block 或 disabled 的候选同样被跳过，记入 `skipped`。例：`claude_owner --tag research` 得 `grok_worker`（herdr，`selected_by: tag`）；`--tag frontend` 得 `claude_worker`（native）。
-  - **`peer_suggestion`**：`--class judgment --tag` 回落到原生 worker（`selected_by: native`）时，若本 owner 的原生 worker 不带该标签，而另一个可用（未 disabled、未 block）的 enabled owner 引擎上有带该标签的非免费 worker（不要求在本 owner 的 `workers` 里；owner 能派哪些 worker 只由 `workers` 列表决定，脚本不限制），输出 `peer_suggestion: { owner, reason }`，`reason` 为“<tag> 是 <owner> 侧 worker 的强项，可经 assign 交给该 owner”，不算 `warnings`，不改变本次选择。例：`claude_owner --tag backend` 给出指向 `codex_owner` 的建议，`codex_owner --tag frontend` 给出指向 `claude_owner` 的建议，`claude_owner --tag frontend` 不给；`codex_owner` 被 block 时 `claude_owner --tag backend` 不给。owner 收到建议后按协作协议 `type: assign` 交给对方，没有可用协作 owner 时留在本引擎原生 worker。
+  - `--tag <domain>`：只能和 `--class judgment` 一起用（与 `mechanical` / `routine` 同用报错；`--tag mechanical|routine` 报错，应改用 `--class`）。只在 owner 自己的 `workers` 里引擎与 owner 不同的异构候选中取第一个可用且带该标签的，`selected_by: "tag"`；没有命中就回落到同引擎原生 worker，`selected_by: "native"`：该标签只在原生 worker 上或没有带该标签的异构候选时不出 warning；有带该标签的异构候选但因 block 或 disabled 被跳过时，`warnings` 写明“带 <tag> 标签的异构候选不可用，已回落到本引擎原生 worker”；原生也不可用时按原顺序回退，`selected_by: "order"`，并在 `warnings` 写明“无可用的 <tag> 标签候选，已按顺序回退”。被 block 或 disabled 的候选同样被跳过，记入 `skipped`。
+  - **`peer_suggestion`**：`--class judgment --tag` 回落到原生 worker（`selected_by: native`）时，若本 owner 的原生 worker 不带该标签，而另一个可用（未 disabled、未 block）的 enabled owner 引擎上有带该标签的非免费 worker（不要求在本 owner 的 `workers` 里；owner 能派哪些 worker 只由 `workers` 列表决定，脚本不限制），输出 `peer_suggestion: { owner, reason }`，`reason` 为“<tag> 是 <owner> 侧 worker 的强项，可经 assign 交给该 owner”，不算 `warnings`，不改变本次选择。原生 worker 自带该标签、对方 owner 被 block 或 disabled、或已被列表里的异构 worker 命中时不给。owner 收到建议后按协作协议 `type: assign` 交给对方，没有可用协作 owner 时留在本引擎原生 worker。
 - **`--worker <id>`**：不要求 `--class`，输出 `selected_by: "worker"`，只用于用户指定 worker 或续接同一包；与 `--class`、`--tag`、`--peer` 同用报错；指定的 worker 不在该 owner 的 `workers` 列表中（含对方 owner 引擎的 worker）也可启动，只输出 `warnings`。
 
 各 kind 的 argv（以 `resolve` 输出为准，此处仅供对照）：
@@ -93,7 +89,7 @@ SKILL.md 的“调度配置”写规则，本文写字段、派发推导、herdr
 
 **免审批**：所有 herdr 启动的异构 agent 都在 argv 中显式免审批（claude、grok `--permission-mode bypassPermissions`，codex `--dangerously-bypass-approvals-and-sandbox`，qodercli `--permission-mode bypass_permissions`，opencode `--auto`），不依赖用户全局配置；原生子 agent 沿用 owner 会话的权限模式，不由本配置控制。免审批意味着写入范围只靠交接文件约束，由 owner 验收 diff 保证。
 
-qodercli 的约束：`effort` 取 effort 校验中的值，免费模型 `Qwen3.8-Flash` 默认 `xhigh`；信任范围之外的目录会弹信任提示且状态报 idle，见下文“Herdr 派发流程”的信任提示表。
+qodercli 的约束：`effort` 取 effort 校验中的值，信任范围之外的目录会弹信任提示且状态报 idle，见下文“Herdr 派发流程”的信任提示表。
 
 opencode 的约束：
 
@@ -131,11 +127,11 @@ herdr worker 指引擎与 owner 不同、经 Herdr pane 启动的 worker。每�
 
    ```text
    [agents-cooperation]
-   from: owner (claude_owner claude-opus-5-5)
-   to: worker (qoder_worker Qwen3.8-Flash)
+   from: owner (<owner-id> <model>)
+   to: worker (<worker-id> <model>)
    project: <项目路径>
-   read: ~/.local/state/agents-cooperation/<collab-id>/004-claude-task.md
-   reply: ~/.local/state/agents-cooperation/<collab-id>/005-qoder-reply.md
+   read: ~/.local/state/agents-cooperation/<collab-id>/004-<owner>-task.md
+   reply: ~/.local/state/agents-cooperation/<collab-id>/005-<worker>-reply.md
    你是 worker：按 agents-cooperation worker 职责处理，回复写入 reply 文件后结束本轮；不提交，不再派发。
    ```
 5. **等待**：`herdr agent prompt <name> "<信封>" --wait --until idle --until done --until blocked --timeout <ms>`；owner 还要继续其他工作时，改用宿主后台任务运行 `herdr agent wait <name> --until idle --until done --until blocked`。超时或 blocked 先读输出判断原因，不盲目重发。
@@ -152,14 +148,7 @@ herdr worker 指引擎与 owner 不同、经 Herdr pane 启动的 worker。每�
 
 ## 免费或低成本模型的使用
 
-免费或低成本 worker 靠类别保留标签 `mechanical`、`routine` 标识，由 `resolve --class` 优先调用，不设专用字段，规则全部在 SKILL.md 的“包类别”：
-
-- `opencode_worker`（`opencode/glm-5.3-flash-free`）带 `mechanical`，承接满足机械性判定的包，owner 用 `--class mechanical` 派发；
-- `qoder_worker`（`Qwen3.8-Flash`）带 `routine`，承接方案已冻结、范围明确、不含设计判断的常规实现，owner 用 `--class routine` 派发；`--class mechanical` 在没有可用 mechanical worker 时也落到它；
-- 免费 worker 不参与 `--class judgment`，所以不会因排在付费 worker 前而被判断类包选中；
-- 免费 worker 在 `workers` 里的位置只影响 `skipped` 的记录顺序，不影响类别选择。
-
-免费期结束或限流时，用 `block --engine opencode [--model <m>]` 暂停，或把它设为 `enabled: false`；规则本身不改，`resolve --class` 会自动落到下一个可用的免费 worker，没有时按 judgment 回退并给出 `warnings`。
+免费 worker 由类别保留标签 `mechanical`、`routine` 标识，不设专用字段；包类别的含义和判定见 SKILL.md 的“包类别”，选择算法见“派发方式推导”。启用、暂停、调换都通过配置或 block 完成：用 `enabled`、`workers` 顺序和 `tags` 调整，免费期结束或限流时 `block --engine <id> [--model <m>]` 暂停；规则本身不改，`resolve --class` 会自动落到下一个可用的免费 worker，没有时按 judgment 回退并给出 `warnings`。
 
 ## 额度耗尽 block 与自动解封
 
