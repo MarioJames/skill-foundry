@@ -14,6 +14,7 @@ SKILL.md 的“调度配置”写规则，本文写字段、派发推导、herdr
 {
   "$schema": "...",
   "version": 1,
+  "chatgpt_review": true,           // 可选布尔；缺省等同 true。false 关闭本技能自动 Pro 审查
   "engines": {
     "<engine-id>": {
       "enabled": true,
@@ -49,9 +50,10 @@ SKILL.md 的“调度配置”写规则，本文写字段、派发推导、herdr
 
 - **命名**：engine、owner、worker 的 id 匹配 `^[a-z][a-z0-9_]{0,39}$`；`workers` 下所有 key 以 `_worker` 结尾。顶层字段是 `workers`，不接受旧字段 `agents`（报未知字段）。
 - **herdr**：必填对象，`max_wait_minutes` 必填且不接受多余字段，是 ≥1 的整数，是 herdr agent 单次等待的上限，也是 `gc` 判定 lane 无进展的阈值基准（见“运行状态库”）；默认值以 `<skill>/assets/config.default.json` 为准，本文不复述。herdr worker 的 hidden session 不入配置：每个 run 由 `agents-runtime` 分配独立 session；旧配置里残留的共享 session 字段按未知字段处理，`validate` 报错并说明改法。
+- **chatgpt_review**：顶层可选布尔，不是必填，没有别名，不与其他层合并，也不迁移旧字段。缺省等同开启；`assets/config.default.json` 显式为 `true`。只有布尔 `false` 关闭本技能的自动 ChatGPT 方案审查和实现结果复审及其等待门槛；owner 讨论、本地 review 和测试照常。非布尔由 schema 拒绝，不把字符串 `"false"` 当成关闭。`show` 的 `config.chatgpt_review` 与每次 `resolve` 的顶层 `chatgpt_review` 都是有效布尔。这是用户持久偏好，不是 owner 自行降级。开启时必审/免审规则照常；用户当轮明确要求调用 ChatGPT 时仍按该指令执行。执行细则见 SKILL.md。
 - **tags**：可选，字符串数组，每项匹配 `^[a-z][a-z0-9-]{0,31}$` 且不重复。`mechanical`、`routine` 是类别保留标签，带其中之一的 worker 是免费 worker，由 `resolve --class mechanical|routine` 选取；其余标签是领域标签，按模型强项标注，只用于 `resolve --class judgment --tag` 选异构 worker（引擎与 owner 不同）；owner 本引擎的原生 worker 是 judgment 的隐式默认，选它时不看标签（见下文）。领域标签集合由配置维护，技能规则不写死。
-- **未知字段**：所有对象禁止多余字段，顶层只额外允许 `$schema`；旧配置中残留的 worker 分类字段和 owner 任务优先字段同样报未知字段。
-- **effort**：schema 只要求非空字符串，合法取值由脚本按引擎 kind 校验，是引擎原生语义，不做跨引擎统一：claude `low|medium|high|xhigh|max`；codex `minimal|low|medium|high|xhigh|max`；grok `none|minimal|low|medium|high|xhigh|max`；qodercli `auto|none|low|medium|high|xhigh|max|ultracode`；opencode 的 effort 对应模型的 variant，是 provider 与模型相关的值（如 `opencode/glm-5.3-flash-free` 为 `low|high|max`），不在常量表内、按任意非空字符串处理，以 `opencode models <provider> --verbose` 输出的 variants 为准；TUI 不能按次指定 variant，实际取值见下文“opencode 的约束”。
+- **未知字段**：所有对象禁止多余字段，顶层已知字段另含可选 `chatgpt_review`，并额外允许 `$schema`；旧配置中残留的 worker 分类字段和 owner 任务优先字段同样报未知字段。
+- **effort**：schema 只要求非空字符串，合法取值由脚本按引擎 kind 校验，是引擎原生语义，不做跨引擎统一：claude `low|medium|high|xhigh|max`；codex `low|medium|high|xhigh|max`；grok `none|minimal|low|medium|high|xhigh|max`；qodercli `auto|none|low|medium|high|xhigh|max|ultracode`；opencode 的 effort 对应模型的 variant，是 provider 与模型相关的值（如 `opencode/glm-5.3-flash-free` 为 `low|high|max`），不在常量表内、按任意非空字符串处理，以 `opencode models <provider> --verbose` 输出的 variants 为准；TUI 不能按次指定 variant，实际取值见下文“opencode 的约束”。
 - **约束走配置**：调度约束一律通过配置表达（`workers` 列表、`enabled`、`tags`、`max_parallel`、block），脚本和技能规则不另设硬编码限制，例如 owner 能派哪些 worker 只由 `owners.<id>.workers` 决定。
 - **语义校验**：引用必须存在；每个 owner（不论 enabled）的引擎都必须 `native_subagents: true`，enabled owner 的引擎还必须 enabled；`workers` 中每个 id 存在，enabled owner 至少有一个 enabled、引擎 enabled 的 worker；每个引擎至多一个 enabled owner（宿主据此识别自己的 owner）；每个 worker 的引擎 kind 必须有 interactive 构建器或属于 native kind（claude、codex），grok、opencode 与 qodercli 都有 interactive 构建器；`native_subagents: true` 只允许 claude、codex（grok、opencode、qodercli 不可为 true）；同一 worker 不能同时带 `mechanical` 和 `routine`；类别 worker 可以在任何引擎上，与 owner 同引擎时按派发方式推导走 native。
 
@@ -70,6 +72,7 @@ SKILL.md 的“调度配置”写规则，本文写字段、派发推导、herdr
 - **native + codex**：`tool: spawn_agent`，`params` 含 `model`、`reasoning_effort`、`fork_turns: "none"`。
 - **herdr interactive**：`mode: interactive`、`kind`、`argv`、`wait_timeout_ms`；argv 是 `herdr agent start <name> --kind <kind> --pane <pane> -- <argv>` 中 `--` 之后的部分（hidden session 里的命令还要带 `--session <session_name>`，session 名取自 `run open` 的输出，见下文）。`wait_timeout_ms` 为 `herdr.max_wait_minutes` 换算的毫秒数；native 输出不含该字段。
 - **`--peer`**：`resolve --owner <self> --peer <owner-id>` 输出协作 owner 的 herdr interactive argv（协作 owner 的 lane 建在主 session，不带 `--session`，也不进状态库），`wait_timeout_ms` 同上；用法见 [协作协议](peer-protocol.md#启动协作-owner)。
+- **`chatgpt_review`**：每次 `resolve`（native、herdr、`--worker`、`--class`、`--peer`）都在顶层带有效布尔。没有字段时为 `true`，`false` 保持 `false`。不改变 worker 选择。owner 每次派发前读取它。
 - **拒绝**：owner 或 worker 不存在、disabled、所属引擎 disabled、被 block 时非零退出。`--worker` 显式指定的子 agent 不在该 owner 的 `workers` 列表中也允许，但输出 `warnings`。输出中的子 agent 字段为 `worker`，`status` 输出 `workers`，`skipped[]` 的条目用 `worker` 标识。
 - **`--owner <id> --class mechanical|routine|judgment [--tag <domain>]`**：按池选 worker，`--class` 必填，缺失时非零退出。输出含 `class`、`selected_by` 和 `skipped`（被跳过的不可用候选，按尝试顺序）；都不可用时非零退出，列出每个候选的不可用原因。额度耗尽后的自动切换就靠它。
   - `mechanical`：依次取可用的 mechanical worker、可用的 routine worker，`selected_by: "class"`；都没有时按 judgment 回退，`selected_by: "order"`，`warnings` 写明“无可用免费 worker，已按 judgment 回退”。
@@ -251,11 +254,27 @@ gc 的结果在输出的 `reports` 数组里（`lane open` / `run close` 为 `gc
 
 owner 的处置步骤见 SKILL.md 的“额度耗尽”：识别信号、`block`（能解析出重置时间就写 `--release-at`；报错只针对某个模型时带 `--model`）、`resolve --owner <owner-id> --class <原类别> [--tag <领域>]` 重选、整包改派并写台账。协作 owner 被 block 时降级为单 owner。
 
+## 本地 Web 配置页
+
+需要 Bun 1.4.2。Web 依赖与普通 CLI 分离，首次在 `<skill>/web` 执行 `bun install`，然后运行：
+
+```bash
+bun <skill>/scripts/agents-config.ts web [--config PATH] [--state PATH] [--port N] [--no-open]
+```
+
+默认打开系统浏览器；自动化使用 `--no-open`。仅监听 `127.0.0.1`，退出终端服务会释放监听。配置与状态参数沿用现有环境变量覆盖。页面不展示读取来源和保存路径，内部路径由启动参数固定；目标不存在时使用默认资产初始化草稿，首次保存仅创建目标，不修改默认资产。
+
+可视编辑引擎、负责人、工作代理、Owner Agent 单次等待上限和 ChatGPT Pro 自动审查开关，工作代理列表可用按钮调整优先顺序。配置 ID 失焦或按 Enter 接受有效修改，保存或校验前同样接受输入；空值、格式错误和重复 ID 在字段内提示并阻止提交，切换实体或分区保留输入。引擎重命名同步负责人及工作代理的 engine 引用，工作代理重命名同步负责人的有序列表；未知字段不递归替换。删除保留其他引用。完整草稿由现有校验器检查，未知字段保留并报告。固定 effort 从共享元数据生成下拉选项，opencode variant 可输入。校验使用未保存配置，报告完整草稿错误。校验、放弃、重新加载、保存及状态反馈集中在页头操作区；“系统设置”中的“Owner Agent 等待上限”控制 Owner 每次通过 Herdr 等待子 Agent 回报的最长时间，超时后先检查进展，再决定继续等待或重新派发；配置仍为 `herdr.max_wait_minutes`，native 派发不使用此值。同一页的“ChatGPT Pro 自动审查”开关写入顶层 `chatgpt_review`，默认开；关闭后跳过本技能的自动 Pro 审查，本地 review 和测试照常。它与等待上限共用保存、未保存、放弃、重新加载和冲突保护，不单独保存。侧栏复用 ConsoleShell 收起状态隐藏品牌文字，移动导航抽屉保留文字。
+
+引擎表单可编辑精确引擎级额度恢复时间，显示本机 `Intl` 时区、提交带时区的 ISO 时间；不改模型级记录，启用状态独立。新日期必须在未来，已有过期日期只提示而不自动写入；空日期未编辑不解除无日期限制，明确清除已有或编辑过的日期才提交解除。额度读取失败在日期区域重试，不妨碍普通配置编辑。配置与日期共用顶部保存及草稿保护：先验证日期，再按配置、额度顺序写入。配置失败不写额度；配置成功但额度失败保留日期草稿并明确部分成功，重试仅提交未完成及后来的改动，两类保存中新输入均保留。重命名只重映射未保存的日期编辑，不迁移或清除旧引擎的运行历史。额度状态 warnings 仅放诊断详情。保存并非跨文件或数据库的原子事务。
+
+保存要求页面读取的 revision，冲突保留草稿，需明确重新加载后继续；失败可重试。保存过程中继续输入会保留新输入，已提交快照及 revision 正常更新。普通外部修改会被检测，但不协作编辑器在最后检查与原子替换间仍有很窄的竞争窗口。包内开发与验证入口见 [`web/README.md`](../web/README.md)。
+
 ## 修改配置
 
 1. 编辑 `~/.config/agents-cooperation/config.json`。没有就从 `assets/config.default.json` 复制，并把 `$schema` 改成技能安装目录下 `assets/config.schema.json` 的绝对路径；默认配置里的相对路径 `./config.schema.json` 只在技能目录内有效。
 2. `bun <skill>/scripts/agents-config.ts validate`，按错误里的 JSON 路径逐条修正，直到输出 `ok: true`。
-3. `show` 确认 owner、`workers` 顺序、`availability` 和并行上限符合预期。
+3. `show` 确认 owner、`workers` 顺序、`availability`、并行上限和 `config.chatgpt_review` 有效值符合预期。
 4. 不要为了绕过校验放宽 schema；新增引擎 kind 或 effort 取值先改 schema 与脚本常量表。
 
 示例：启用 opencode 作为机械性包的 worker（默认配置中已有 `opencode` 与 `opencode_worker` 的 disabled 示例）：

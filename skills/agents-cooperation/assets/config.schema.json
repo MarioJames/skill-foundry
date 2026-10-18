@@ -18,6 +18,10 @@
     "version": {
       "const": 1
     },
+    "chatgpt_review": {
+      "description": "Optional. Absent means enabled. false skips this skill's automatic ChatGPT Pro plan review and result check, including their wait gates. No aliases.",
+      "type": "boolean"
+    },
     "engines": {
       "description": "Agent CLI engines keyed by engine id.",
       "type": "object",
@@ -74,7 +78,7 @@
       "pattern": "^[a-z][a-z0-9_]{0,32}_worker$"
     },
     "effort": {
-      "description": "Engine-native effort. Allowed set depends on the engine kind: claude low|medium|high|xhigh|max; codex minimal|low|medium|high|xhigh|max; grok none|minimal|low|medium|high|xhigh|max; other kinds (e.g. opencode, whose --variant is provider/model specific) any non-empty string. Checked by the script.",
+      "description": "Engine-native effort. Allowed set depends on the engine kind: claude low|medium|high|xhigh|max; codex low|medium|high|xhigh|max; grok none|minimal|low|medium|high|xhigh|max; other kinds (e.g. opencode, whose --variant is provider/model specific) any non-empty string. Checked by the script.",
       "type": "string",
       "minLength": 1
     },

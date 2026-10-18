@@ -22,7 +22,9 @@ function typeMatches(type: string, value: unknown): boolean {
 }
 function resolveRef(root: Schema, ref: string): Schema {
   if (!ref.startsWith("#/$defs/")) throw new Error(`unsupported $ref: ${ref}`);
-  const target = root.$defs?.[ref.slice("#/$defs/".length)];
+  const definitions = Object.hasOwn(root, "$defs") ? root.$defs : undefined;
+  const name = ref.slice("#/$defs/".length);
+  const target = definitions && Object.hasOwn(definitions, name) ? definitions[name] : undefined;
   if (!target) throw new Error(`unresolved $ref: ${ref}`);
   return target;
 }
@@ -57,9 +59,9 @@ function check(schema: Schema, value: unknown, path: string, root: Schema, out: 
   }
   if (value && typeof value === "object" && !Array.isArray(value)) {
     const object = value as Record<string, unknown>;
-    for (const key of schema.required ?? []) if (!(key in object)) add("required property missing", child(path, key));
+    for (const key of schema.required ?? []) if (!Object.hasOwn(object, key)) add("required property missing", child(path, key));
     for (const [key, item] of Object.entries(object)) {
-      const declared = schema.properties?.[key];
+      const declared = schema.properties && Object.hasOwn(schema.properties, key) ? schema.properties[key] : undefined;
       if (declared) check(declared, item, child(path, key), root, out);
       else if (schema.additionalProperties === false) add("unknown property", child(path, key));
       else if (schema.additionalProperties && typeof schema.additionalProperties === "object") check(schema.additionalProperties, item, child(path, key), root, out);

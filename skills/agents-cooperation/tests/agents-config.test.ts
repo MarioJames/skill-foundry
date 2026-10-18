@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_CONFIG, EFFORTS, type Config, loadSchema, parseReleaseAt, run, validateConfig } from "../scripts/agents-config.ts";
+import { DEFAULT_CONFIG, EFFORTS, type Config, chatgptReviewEnabled, loadSchema, parseReleaseAt, run, validateConfig } from "../scripts/agents-config.ts";
 import { openState, listBlocks, validateLegacy } from "../scripts/lib/state-db.ts";
 import { lintSchema, validate } from "../scripts/lib/json-schema.ts";
 
@@ -58,6 +58,18 @@ test("validator rejects unsupported schema keywords and implements the used ones
   expect(issues.map(i => i.path).sort()).toEqual(["$.a", "$.b", "$.c[0]", "$.c[1]", "$.c[1]", "$.z"].sort());
   expect(validate(schema, {}).map(i => i.path)).toEqual(["$.a"]);
 });
+test("validator treats prototype names as ordinary own JSON properties and requires own declarations and references", () => {
+  for (const key of ["constructor", "toString", "__proto__"]) {
+    const config = { ...base(), ...JSON.parse(`{"${key}":"unexpected"}`) };
+    expect(validateConfig(config)).toContainEqual({ path: `$.${key}`, message: "unknown property" });
+    const properties = JSON.parse(`{"${key}":{"type":"string"}}`);
+    const schema = { type: "object", required: [key], additionalProperties: false, properties };
+    expect(validate(schema, JSON.parse(`{"${key}":"declared"}`))).toEqual([]);
+    expect(validate(schema, Object.create({ [key]: "inherited" }))).toContainEqual({ path: `$.${key}`, message: "required property missing" });
+    expect(() => validate({ $ref: `#/$defs/${key}`, $defs: {} }, "value")).toThrow("unresolved $ref");
+    expect(validate({ $ref: `#/$defs/${key}`, $defs: properties }, "value")).toEqual([]);
+  }
+});
 test("structural errors carry JSON paths", () => {
   const unknown = base(); unknown.engines.claude.extra = 1;
   expect(paths(unknown)).toEqual(["$.engines.claude.extra"]);
@@ -112,7 +124,7 @@ test("effort is checked per engine kind from a single table", () => {
   const claude = base(); claude.workers.claude_worker.effort = "minimal";
   expect(paths(claude)).toEqual(["$.workers.claude_worker.effort"]);
   const codex = base(); codex.workers.codex_worker.effort = "minimal";
-  expect(paths(codex)).toEqual([]);
+  expect(paths(codex)).toEqual(["$.workers.codex_worker.effort"]);
   const opencode = base(); opencode.workers.opencode_worker.effort = "low";
   expect(paths(opencode)).toEqual([]);
   const free = base(); free.workers.opencode_worker.effort = "whatever-variant";
@@ -122,6 +134,8 @@ test("effort is checked per engine kind from a single table", () => {
   const qoderBad = base(); qoderBad.workers.qoder_worker.effort = "minimal";
   expect(paths(qoderBad)).toEqual(["$.workers.qoder_worker.effort"]);
   const grok = base(); grok.workers.grok_worker.effort = "none";
+  expect(paths(grok)).toEqual([]);
+  grok.workers.grok_worker.effort = "minimal";
   expect(paths(grok)).toEqual([]);
   const owner = base(); owner.owners.codex_owner.effort = "bogus";
   expect(paths(owner)).toEqual(["$.owners.codex_owner.effort"]);
@@ -179,6 +193,7 @@ test("CLI validate prints every error with its path and exits non-zero", () => {
   const semantic = fixture(c => { c.workers.codex_worker.effort = "minimal"; c.workers.claude_worker.effort = "minimal"; c.workers.opencode_worker.engine = "ghost"; }).cli(["validate"]);
   expect(semantic.code).toBe(1);
   expect(semantic.stderr).toContain("$.workers.claude_worker.effort");
+  expect(semantic.stderr).toContain("$.workers.codex_worker.effort");
   expect(semantic.stderr).toContain("$.workers.opencode_worker.engine");
 });
 
@@ -335,6 +350,54 @@ test("resolve --peer carries the wait timeout", () => {
   const defaults = JSON.parse(readFileSync(DEFAULT_CONFIG, "utf8")).herdr;
   const d = fixture().cli(["resolve", "--owner", "claude_owner", "--peer", "codex_owner"]).json;
   expect(d.wait_timeout_ms).toBe(defaults.max_wait_minutes * 60_000);
+});
+
+test("chatgpt_review defaults on, keeps false, and rejects non-booleans", () => {
+  expect(base().chatgpt_review).toBe(true);
+  const missing = base();
+  delete missing.chatgpt_review;
+  expect(validateConfig(missing)).toEqual([]);
+  expect(chatgptReviewEnabled(missing)).toBe(true);
+  expect(chatgptReviewEnabled({ chatgpt_review: true })).toBe(true);
+  expect(chatgptReviewEnabled({ chatgpt_review: false })).toBe(false);
+  expect(chatgptReviewEnabled({ chatgpt_review: "false" })).toBe(true);
+  for (const bad of ["false", "true", 0, 1, null]) {
+    const config = base();
+    config.chatgpt_review = bad;
+    expect(paths(config)).toEqual(["$.chatgpt_review"]);
+    const rejected = fixture(c => { c.chatgpt_review = bad; }).cli(["validate"]);
+    expect(rejected.code).not.toBe(0);
+    expect(rejected.stderr).toContain("chatgpt_review");
+  }
+  const off = fixture(c => { c.chatgpt_review = false; });
+  const absent = fixture(c => { delete c.chatgpt_review; });
+  const on = fixture();
+  expect(off.cli(["validate"]).code).toBe(0);
+  expect(absent.cli(["validate"]).code).toBe(0);
+  expect(off.cli(["show"]).json.config.chatgpt_review).toBe(false);
+  expect(absent.cli(["show"]).json.config.chatgpt_review).toBe(true);
+  expect(on.cli(["show"]).json.config.chatgpt_review).toBe(true);
+  for (const args of [
+    ["resolve", "--owner", "claude_owner", "--worker", "claude_worker"],
+    ["resolve", "--owner", "claude_owner", "--worker", "codex_worker"],
+    ["resolve", "--owner", "claude_owner", "--class", "judgment"],
+    ["resolve", "--owner", "claude_owner", "--peer", "codex_owner"],
+  ]) {
+    const enabled = on.cli(args).json;
+    const disabled = off.cli(args).json;
+    const implicit = absent.cli(args).json;
+    expect(enabled.chatgpt_review).toBe(true);
+    expect(disabled.chatgpt_review).toBe(false);
+    expect(implicit.chatgpt_review).toBe(true);
+    const { chatgpt_review: onFlag, ...onRest } = enabled;
+    const { chatgpt_review: offFlag, ...offRest } = disabled;
+    const { chatgpt_review: absentFlag, ...absentRest } = implicit;
+    expect(onFlag).toBe(true);
+    expect(offFlag).toBe(false);
+    expect(absentFlag).toBe(true);
+    expect(offRest).toEqual(onRest);
+    expect(absentRest).toEqual(onRest);
+  }
 });
 
 // ---- block / unblock / status ----

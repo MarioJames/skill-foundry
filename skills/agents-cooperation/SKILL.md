@@ -25,9 +25,10 @@ Worker 即子 agent，无论由宿主内置工具还是 Herdr 启动。层级最
 模型、effort、引擎启用、子 agent 池和并行上限来自配置，不写死在本技能里。字段、示例和 block 细节见 [配置说明](references/config.md)。
 
 - **位置**：`~/.config/agents-cooperation/config.json`（`AGENTS_COOPERATION_CONFIG` 或脚本 `--config` 可覆盖）；不存在时使用 `assets/config.default.json`，它是唯一默认来源，也是用户复制的起点。结构由 `assets/config.schema.json` 定义，不做多层合并。
-- **先 `show`**：首次调度前运行 `bun <skill>/scripts/agents-config.ts show`，按宿主引擎找到自己的 enabled owner（每个引擎至多一个），读取它的 `workers` 列表、模型、`availability` 和并行上限。宿主没有可用的 owner 配置时停下，向用户或接单 owner 说明。
-- **派发前 `resolve`**：`resolve --owner <owner-id> --class mechanical|routine|judgment [--tag <领域>]`，`--class` 必填，取值见[包类别](#包类别)；`--tag` 只能和 `--class judgment` 一起用。`--worker <worker-id>` 只用于用户指定 worker 或续接同一包，台账写明原因，不与 `--class` 同用；指定的 worker 不在该 owner 的 `workers` 列表中时仍可启动，输出 `warnings`。输出字段含义和选择算法见[配置说明](references/config.md#派发方式推导)，herdr 输出另含 `wait_timeout_ms`，见 herdr worker 生命周期；派发方式、工具、模型、effort 和 argv 照抄不改，`warnings` 必读，`peer_suggestion` 按[包类别](#包类别)处理。仍须核对子 agent 实际运行的模型，不符合时停掉重派，台账“角色·模型”列按实际模型填写。
+- **先 `show`**：首次调度前运行 `bun <skill>/scripts/agents-config.ts show`，按宿主引擎找到自己的 enabled owner（每个引擎至多一个），读取它的 `workers` 列表、模型、`availability`、并行上限，以及 `config.chatgpt_review` 的有效布尔值（缺省视为 `true`）。宿主没有可用的 owner 配置时停下，向用户或接单 owner 说明。
+- **派发前 `resolve`**：`resolve --owner <owner-id> --class mechanical|routine|judgment [--tag <领域>]`，`--class` 必填，取值见[包类别](#包类别)；`--tag` 只能和 `--class judgment` 一起用。`--worker <worker-id>` 只用于用户指定 worker 或续接同一包，台账写明原因，不与 `--class` 同用；指定的 worker 不在该 owner 的 `workers` 列表中时仍可启动，输出 `warnings`。输出字段含义和选择算法见[配置说明](references/config.md#派发方式推导)，herdr 输出另含 `wait_timeout_ms`，见 herdr worker 生命周期；派发方式、工具、模型、effort 和 argv 照抄不改，`warnings` 必读，`peer_suggestion` 按[包类别](#包类别)处理。仍须核对子 agent 实际运行的模型，不符合时停掉重派，台账“角色·模型”列按实际模型填写。每次 `resolve` 都读取输出顶层 `chatgpt_review`（worker、native、herdr、`--peer` 相同）；该值不改变派发算法。
 - **约束走配置**：调度约束一律通过配置表达（`workers` 列表、`enabled`、`tags`、`max_parallel`、`herdr` 的等待上限、block），技能和脚本不另设硬编码限制。
+- **可视配置**：`bun <skill>/scripts/agents-config.ts web` 打开本机中文配置页，支持草稿校验、额度恢复时间管理与显式保存；首次安装与路径参数见[配置说明](references/config.md#本地-web-配置页)。
 - **改配置**：修改后先运行 `validate` 并通过，再用 `show` 确认生效；不通过不得继续沿用。
 - **默认值**：模型和 effort 的默认值来自 `assets/config.default.json`；用户当轮指定时以用户为准。其他技能对某类 worker 另有规定时以那个技能为准，例如 browser-harness 规定 Codex 验收 worker 用 `gpt-6.1-sol` medium，这类覆盖直接传给宿主工具，不改配置。
 
@@ -100,8 +101,8 @@ herdr 派发依赖 Herdr；不可用时跨引擎 worker 无法派发，改用同
 
 owner 必须遵守以下规则，它们不是可选建议：
 
-- 输出第一张台账之前，不写方案、不派发。第一张台账上方写一行 `模式：方案讨论（ChatGPT：必审 | 免审）| 并行开发 | 普通调度 —— 理由`。之后每次向用户汇报进度都附上台账表格，不能只写一段文字。
-- 命中方案讨论条件时，不跳过 owner 讨论直接拍板；分级为必审时，不跳过 ChatGPT 审查，处置意见后由接单 owner 拍板。用户说“定了不用再问我”，只是免去向用户确认，不免除这两项。Herdr 不可用或没有可用的协作 owner 时按协议降级（只免除 owner 讨论），并在台账中写明原因。
+- 输出第一张台账之前，不写方案、不派发。第一张台账上方写一行 `模式：方案讨论（ChatGPT：必审 | 免审 | 关闭（配置））| 并行开发 | 普通调度 —— 理由`。`chatgpt_review` 有效值为 `false` 时 ChatGPT 一栏写 `关闭（配置）`；有效值为开启时只写 `必审` 或 `免审`。之后每次向用户汇报进度都附上台账表格，不能只写一段文字。
+- 命中方案讨论条件时，不跳过 owner 讨论直接拍板。有效开关为开启且分级为必审时，不跳过 ChatGPT 审查，处置意见后由接单 owner 拍板。用户说“定了不用再问我”，只是免去向用户确认；开关开启时不免除 owner 讨论和必审 ChatGPT 审查。`false` 是用户写入配置的持久偏好，不是 owner 自行降级，也不等于当轮点名送审。Herdr 不可用或没有可用的协作 owner 时按协议降级（只免除 owner 讨论），并在台账中写明原因；该降级不改变 `chatgpt_review`。
 - owner 在任何模式下都不亲自改动项目文件：不用 Edit/Write/NotebookEdit/apply_patch，也不用 sed、heredoc、脚本、格式化或 codemod 命令写入源码、测试、配置和文档。新增、修改、删除、修复 review findings、解决合并冲突，无论大小都派给子 agent。owner 自己只做：读代码和定位文件、运行只读命令和验证命令、在消息目录写协作消息和方案文档、维护台账、Git 暂存与提交（提交仅限接单 owner）。
 - 无法创建子 agent（工具不可用、额度耗尽且 `resolve` 无可用候选、派发反复失败）时，停下并在台账中写明阻塞、向用户报告，不改为亲自动手。
 - “任务小”“只改一行”“自己做更快”“只涉及一个项目”都不能作为跳过上述规则的理由。
@@ -126,12 +127,12 @@ owner 在以下时机，先执行本节再继续长步骤或等待：首次接�
 
 **方案讨论**：存在多个可行方案；涉及跨模块接口、schema/迁移、权限安全或其他不可逆决策；需求有歧义，且无法从代码和常识补全。
 
-- **分级**：进入方案讨论时判定 ChatGPT 分级，写进模式行。
+- **分级**：进入方案讨论时判定 ChatGPT 分级。开关开启时把 `必审` 或 `免审` 写进模式行；开关关闭时模式行写 `关闭（配置）`，分级仍可记在 decision-log，但不触发自动送审。
   - **必审**：命中任一项——权限安全（认证授权、租户隔离、密钥与凭据）；会改动已有持久数据的 schema/迁移；回退代价高的核心架构、存储选型或跨服务契约；不可逆的外部效果（删除持久数据、对外发布等）；owner 讨论用尽预算仍在共享接口或架构约束上僵持；用户点名要求 ChatGPT 审查。
   - **免审**：其余方案讨论。流程为 owner 讨论 → 接单 owner 冻结 → 实施；不送 ChatGPT，不占 ChatGPT 预算；`decision-log.md` 照常记录讨论与冻结。
   - 需求歧义无法从代码和常识补全时先问用户，不交给 ChatGPT 判定。
-  - **升级**：讨论、实施或 review 中发现命中必审条件的约束时，升级为必审：暂停直接依赖该决策的工作包，送审并处置后再继续，已完成部分按处置结果核对。必审不能由接单 owner 自行降级，只有用户可以豁免。
-- **必审流程**：owner 讨论 → ChatGPT 方案审查（必经门槛，通过 `chatgpt-review` 送审，无需额外确认）→ 接单 owner 处置意见并冻结 → 实施。门槛是“完成必需审查并处置意见”，不是“取得模型同意”。第 1 轮无阻断即冻结；阻断意见全按审查给出的修正采纳且未引入未受审设计时可直接冻结，有驳回、替代方案或新设计时进入下一轮（若还有预算）。只有共享接口、写入范围、架构约束实质变化才回协作 owner 讨论，占用原讨论预算。讨论细则见 [协作协议](references/peer-protocol.md)。
+  - **升级**：讨论、实施或 review 中发现命中必审条件的约束时，升级为必审。开关开启时暂停直接依赖该决策的工作包，送审并处置后再继续，已完成部分按处置结果核对。开关关闭时不自动送审、不等待额度，台账写 `ChatGPT：关闭（配置）`，已完成部分按本地证据核对，不得写成 Pro 已通过。必审不能由接单 owner 自行降级，也不能自行把 `chatgpt_review` 改成 `false`；只有用户可以豁免，持久豁免就是配置里的 `false`。
+- **必审流程**（仅 `chatgpt_review` 有效值为开启）：owner 讨论 → ChatGPT 方案审查（必经门槛，通过 `chatgpt-review` 送审，无需额外确认）→ 接单 owner 处置意见并冻结 → 实施。门槛是“完成必需审查并处置意见”，不是“取得模型同意”。第 1 轮无阻断即冻结；阻断意见全按审查给出的修正采纳且未引入未受审设计时可直接冻结，有驳回、替代方案或新设计时进入下一轮（若还有预算）。只有共享接口、写入范围、架构约束实质变化才回协作 owner 讨论，占用原讨论预算。讨论细则见 [协作协议](references/peer-protocol.md)。有效值为 `false` 时跳过自动送审和等待，owner 讨论后由接单 owner 冻结；协作协议中的 ChatGPT 审查门槛只在开关开启时适用。
 - **轮次预算**（默认上限；用户当轮另行指定时以用户为准，接单 owner 不得自行调高）：
 
   | 阶段 | 上限 |
@@ -141,19 +142,19 @@ owner 在以下时机，先执行本节再继续长步骤或等待：首次接�
   | ChatGPT 方案审查 | 2 |
   | ChatGPT 结果校验 | 2 |
 
-  ChatGPT 两行只在必审时占用。先占号后发送，修订、换会话、换协作 owner 都不重置；预算为零时只能裁决、阻塞或结束。计数与等待细则见 [ChatGPT 审查门槛](references/peer-protocol.md#chatgpt-审查门槛)。
+  ChatGPT 两行只在开关开启且必审时占用。先占号后发送，修订、换会话、换协作 owner 都不重置；预算为零时只能裁决、阻塞或结束。计数与等待细则见 [ChatGPT 审查门槛](references/peer-protocol.md#chatgpt-审查门槛)。开关关闭时不占这两行、不送审、不因额度不足阻塞或逐次向用户请求豁免，也不自动等额度恢复后重启审查。
 - **接单 owner 裁决**：任一轮可凭本地证据驳回误报；末轮后可落实修订、驳回、在授权范围内接受残余风险。替换核心方案或使审查前提失效，视为新受审候选，占用原预算。轮次耗尽本身不是实施依据，违反用户验收要求、缺失授权或超出材料发送范围的问题不能靠裁决放行，需改变目标或范围时交用户。“ChatGPT 未通过·接单 owner 裁决”写进台账的最近进展/风险列，不写成已通过。
-- **门槛覆盖执行分支**：依赖讨论方案的工作包，交接和 `type: assign` 必须携带已放行的不可变方案引用，没有引用不得实施；必审方案要求 ChatGPT 门槛放行后的引用，免审方案携带接单 owner 冻结版本的引用即可。必审时只有直接依赖该决策的工作包等待放行，不依赖它的工作包、只读探索和准备工作照常推进。Convorel 缺失、登录或人工验证阻塞时标阻塞，等用户处理或明确豁免，不自动免除。
-- **结果校验**：必审类改动在本地提交前做一轮 ChatGPT 结果校验（占结果校验预算），与本地验收并行，不串行等待；免审类不做。
-- **调用 ChatGPT 审查**：每轮通过 `chatgpt-review` 送审一次，完整读取并处置后结束这一轮；是否修订、再审、占用哪个预算，只由本技能的预算和接单 owner 决定，收到“未通过”不自动再发。
-- **留痕**：每个需求一份 `decision-log.md`（含分级与依据），每版方案完整保存为消息文件，必审的送审记录引用 Convorel 的 task/run 与内容版本。格式见 [decision-log](references/peer-protocol.md#decision-log)。
+- **门槛覆盖执行分支**：依赖讨论方案的工作包，交接和 `type: assign` 必须携带已放行的不可变方案引用，没有引用不得实施。开关开启时，必审方案要求 ChatGPT 门槛放行后的引用，免审方案携带接单 owner 冻结版本的引用。开关关闭时自动审查已跳过，引用接单 owner 冻结版本即可，台账写明 `ChatGPT：关闭（配置）`。必审时只有直接依赖该决策的工作包等待放行，不依赖它的工作包、只读探索和准备工作照常推进。开关开启且 Convorel 缺失、登录或人工验证阻塞时标阻塞，等用户处理或明确豁免，不自动免除；开关关闭时这些自动等待门槛不适用。
+- **结果校验**：开关开启时，必审类改动在本地提交前做一轮 ChatGPT 结果校验（占结果校验预算），与本地验收并行，不串行等待；免审类不做。开关关闭时跳过该自动复审，不占预算，本地 review 和测试照常，不把跳过写成 Pro 已通过。
+- **调用 ChatGPT 审查**：开关开启时，每轮通过 `chatgpt-review` 送审一次，完整读取并处置后结束这一轮；是否修订、再审、占用哪个预算，只由本技能的预算和接单 owner 决定，收到“未通过”不自动再发。开关关闭时不自动调用。用户当轮另行明确要求调用 ChatGPT 时，按该明确指令执行，不受自动跳过限制；添加或修改本开关本身不是当轮送审指令。
+- **留痕**：每个需求一份 `decision-log.md`（含分级与依据；开关关闭时写明 `ChatGPT：关闭（配置）`），每版方案完整保存为消息文件。开关开启且必审时，送审记录引用 Convorel 的 task/run 与内容版本。格式见 [decision-log](references/peer-protocol.md#decision-log)。
 - 产出冻结的方案文档：工作包、共享接口与类型、每个包的写入范围、验收标准、谁负责哪一侧。仅目标或范围变化需要用户决定，其余分歧由接单 owner 裁决。
 
 **并行开发**：方案已冻结，且至少有两个写入范围不重叠的工作包。
 
 - 接单 owner 把工作包分成两侧，各自拆给自己的子 agent；协作 owner 接到 `type: assign` 后同样调度自己的子 agent。共享接口要先实现或先冻结，再开放依赖它的包。
 - judgment 包默认交给本引擎原生 worker；包的领域是另一引擎的强项时带领域 `--tag`，标签以配置为准，不写死在本技能里。`resolve` 给出 `peer_suggestion` 时按协作 owner 协议 `type: assign` 交给对方 owner；没有可用协作 owner 时留在本引擎原生 worker，台账写明。mechanical、routine 包不按领域选，直接走免费 worker。某一侧遇到额度不足或 429 时，按[额度耗尽](#额度耗尽)处理：单个子 agent 受限则 `resolve` 重新选，owner 自身受限则整包转给另一侧，都是整包转移，不在单个包内部来回切换。
-- 三层 review：子 agent 自验（测试、类型检查）→ 各自 owner review 自己的子 agent → 交叉 review（对方审本侧 diff，集成后的整体 diff 两侧都审）。review 方只出 findings，由负责该部分的一侧修复；按本阶段预算上限进行，仍有分歧时由接单 owner 裁决，分歧涉及必审条件时才进入 ChatGPT 结果校验预算。
+- 三层 review：子 agent 自验（测试、类型检查）→ 各自 owner review 自己的子 agent → 交叉 review（对方审本侧 diff，集成后的整体 diff 两侧都审）。review 方只出 findings，由负责该部分的一侧修复；按本阶段预算上限进行，仍有分歧时由接单 owner 裁决。开关开启且分歧涉及必审条件时才进入 ChatGPT 结果校验预算；开关关闭时不进入该自动复审。
 
 **普通调度**：其余开发任务。owner 不写代码，全部派给子 agent，以便随时接收和路由新任务。只做 owner 自己的 review，不做交叉 review，除非改动高风险。
 
@@ -167,7 +168,7 @@ owner 在以下时机，先执行本节再继续长步骤或等待：首次接�
 
 - 目标与验收标准；
 - 给协作 owner 的 `assign` 为每个包写类别（mechanical / routine / judgment）和 judgment 包需要的领域标签，不写 worker id；给 worker 的交接只写“你是 worker”，不写死具体 worker id，worker 身份以 `resolve` 结果为准；
-- 依赖讨论方案的工作包还须携带接单 owner 已放行的方案引用（不可变的消息文件路径；必审方案为 ChatGPT 门槛放行后的引用，免审方案为接单 owner 冻结版本的引用）；没有引用不得实施，独立工作要说明其不依赖该方案的依据；
+- 依赖讨论方案的工作包还须携带接单 owner 已放行的方案引用（不可变的消息文件路径；开关开启且必审时为 ChatGPT 门槛放行后的引用，免审或 `chatgpt_review` 为 `false` 时为接单 owner 冻结版本的引用）；没有引用不得实施，独立工作要说明其不依赖该方案的依据；
 - 允许写入的文件或目录，以及只读参考范围；
 - 禁止事项：不提交、不推送、不改 Git index 和锁文件以外的共享状态、不清理持久数据、不再派发；
 - 回报格式：改动文件、验证命令及结果、未解决的风险或阻塞；需要越界或补充授权时停下回报，不自行扩大范围。
@@ -178,4 +179,4 @@ owner 在以下时机，先执行本节再继续长步骤或等待：首次接�
 
 ## 收尾
 
-接单 owner 汇总已验收的交付，统一集成（解决冲突等需要改文件的集成工作同样派给子 agent），完成项目要求的验证后做一次本地提交；子 agent 和协作 owner 都不提交。只释放本任务创建的子 agent 和 pane，不关闭用户自己的 pane；本任务的 herdr lane 逐个 `lane close` 后运行 `agents-runtime run close --run <run-id>`，输出 `status: closed` 才算 session 已回收；仍为 `closing`、带 `last_error` 或有未知资源时，写入最终说明的风险，不声称已回收。按 [任务资源生命周期](../cow-workspace/SKILL.md#task-artifacts-and-resource-lifecycle) 核对每个子 agent 的资源闭环，保留最终交付、必要证据和持久业务数据，回收已满足条件的中间产物、CoW 视图与任务基线，不只停止进程。协作消息目录、其中引用的 Convorel 内容版本和送审源码快照属持久证据，不纳入回收；等待进程照常清理。最终说明写清交付内容、验证结果、资源释放和保留情况。
+接单 owner 汇总已验收的交付，统一集成（解决冲突等需要改文件的集成工作同样派给子 agent），完成项目要求的验证后做一次本地提交；子 agent 和协作 owner 都不提交。`chatgpt_review` 有效值为 `false` 时，提交前不补做自动 ChatGPT 结果复审，最终说明写 `ChatGPT：关闭（配置）` 或明确跳过，不写成 Pro 已通过。只释放本任务创建的子 agent 和 pane，不关闭用户自己的 pane；本任务的 herdr lane 逐个 `lane close` 后运行 `agents-runtime run close --run <run-id>`，输出 `status: closed` 才算 session 已回收；仍为 `closing`、带 `last_error` 或有未知资源时，写入最终说明的风险，不声称已回收。按 [任务资源生命周期](../cow-workspace/SKILL.md#task-artifacts-and-resource-lifecycle) 核对每个子 agent 的资源闭环，保留最终交付、必要证据和持久业务数据，回收已满足条件的中间产物、CoW 视图与任务基线，不只停止进程。协作消息目录、其中引用的 Convorel 内容版本和送审源码快照属持久证据，不纳入回收；等待进程照常清理。最终说明写清交付内容、验证结果、资源释放和保留情况。

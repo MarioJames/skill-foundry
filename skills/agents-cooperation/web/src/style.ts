@@ -1,0 +1,20 @@
+import {createStaticStyles} from 'antd-style';
+export const styles = createStaticStyles(({css, cssVar, responsive}) => ({
+  root: css`min-height: 100dvh; color: ${cssVar.colorText}; background: ${cssVar.colorBgLayout};`,
+  header: css`> div {flex-wrap: wrap;} > div > div {max-inline-size: 100%;}`,
+  stack: css`display: flex; flex-direction: column; gap: 20px; min-width: 0;`,
+  row: css`display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0;`,
+  workspace: css`display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 24px; align-items: start; ${responsive.sm} {grid-template-columns: minmax(0, 1fr); gap: 16px;}`,
+  list: css`display: flex; flex-direction: column; gap: 8px; min-width: 0;`,
+  listButton: css`width: 100%; justify-content: flex-start; height: auto; padding: 10px 12px; white-space: normal; overflow-wrap: anywhere; text-align: start;`,
+  surface: css`padding: 24px; min-width: 0; ${responsive.sm} {padding: 16px;}`,
+  formGrid: css`display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px 24px; ${responsive.sm} {grid-template-columns: minmax(0,1fr);}`,
+  full: css`grid-column: 1 / -1; min-width: 0;`,
+  meta: css`color: ${cssVar.colorTextSecondary}; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere;`,
+  heading: css`font-size: 16px; font-weight: 600; margin: 0 0 8px;`,
+  subheading: css`font-size: 13px; color: ${cssVar.colorTextSecondary}; margin: 0 0 20px; line-height: 1.6;`,
+  workerRow: css`display: flex; gap: 8px; align-items: center; min-width: 0; padding-block: 8px; border-block-end: 1px solid ${cssVar.colorBorderSecondary}; > span {flex: 1; overflow-wrap: anywhere; min-width: 0;}`,
+  dragHandle: css`touch-action: none; flex-shrink: 0;`,
+  error: css`color: ${cssVar.colorErrorText}; font-size: 13px; overflow-wrap: anywhere;`,
+  status: css`font-size: 13px; color: ${cssVar.colorTextSecondary};`,
+}));

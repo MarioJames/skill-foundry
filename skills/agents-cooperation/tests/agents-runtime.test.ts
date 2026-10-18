@@ -201,6 +201,9 @@ test('process identity takes precedence over host session identity for authoriza
  const input={owner:'claude_owner',collab:'proc',request:'proc',cwd:f.root,label:'1017｜FIX｜proc'};
  const r=owner.openRun(input);expect(JSON.parse(r.owner_proc!).pid).toBe(process.pid);expect(owner.openRun(input).run_id).toBe(r.run_id);
  const sameProcessOtherHost=new Runtime(f.db,f.config,{env:{...env,CLAUDE_CODE_SESSION_ID:'host-other'}});expect(()=>sameProcessOtherHost.authorize(r)).not.toThrow();
+ const sameHostDifferentProcess=new Runtime(f.db,f.config,{env:{...f.env,CLAUDE_PID:String(process.ppid)}});
+ expect(processIdentity(process.ppid).pid).not.toBe(process.pid);
+ expect(()=>sameHostDifferentProcess.authorize(r)).toThrow('identity');expect(()=>sameHostDifferentProcess.openRun(input)).toThrow('conflicts');
  const sameHostNoProcess=new Runtime(f.db,f.config,{env:{...f.env,CLAUDE_PID:'2147483647'}});expect(()=>sameHostNoProcess.authorize(r)).toThrow('identity');
  expect(()=>sameHostNoProcess.openRun(input)).toThrow('conflicts');
 });
@@ -280,11 +283,24 @@ test('run open records the host session ID of the owner engine and tolerates its
  const codex=new Runtime(f.db,f.config,{env:{HOME:f.root,CODEX_THREAD_ID:'thread-B',CLAUDE_CODE_SESSION_ID:'host-A',PATH:process.env.PATH},execute:f.runtime.exec});
  const input={owner:'codex_owner',collab:'codex',request:'codex',cwd:f.root,label:'1017｜FIX｜host'};
  const opened=codex.openRun(input);expect(opened.host_session_id).toBe('thread-B');expect(codex.openRun(input).run_id).toBe(opened.run_id);
- expect(()=>new Runtime(f.db,f.config,{env:{...codex.env,CODEX_THREAD_ID:'thread-C'}}).authorize(opened)).toThrow('identity');
- const claudeOnly=new Runtime(f.db,f.config,{env:{HOME:f.root,CLAUDE_CODE_SESSION_ID:'host-A'}});
- expect(()=>claudeOnly.openRun({...input,owner:'codex_owner',request:'codex-no-thread'})).toThrow('both missing');
+ // Claude without CLAUDE_PID has no process evidence even when this test is
+ // itself launched under a real Codex CLI ancestor. Another engine's host is
+ // deliberately insufficient as the Claude owner identity.
+ const noClaudeIdentity=new Runtime(f.db,f.config,{env:{HOME:f.root,CODEX_THREAD_ID:'thread-B'}});
+ expect(()=>noClaudeIdentity.openRun({...input,owner:'claude_owner',request:'claude-no-identity'})).toThrow('both missing');
  const withProcess=new Runtime(f.db,f.config,{env:{HOME:f.root,CLAUDE_PID:String(process.pid)}}).openRun({...input,owner:'claude_owner',request:'no-host'});
  expect(withProcess.host_session_id).toBeNull();expect(JSON.parse(withProcess.owner_proc!).pid).toBe(process.pid);
+});
+test('host-only Codex run records authorize matching hosts and reject different hosts independently of CLI ancestry',()=>{
+ const f=fixture(),codex=new Runtime(f.db,f.config,{env:{HOME:f.root,CODEX_THREAD_ID:'thread-B',CLAUDE_CODE_SESSION_ID:'host-A'},execute:f.runtime.exec});
+ const input={owner:'codex_owner',collab:'fallback',request:'fallback',cwd:f.root,label:'1017｜FIX｜host fallback'};
+ const opened=codex.openRun(input);expect(opened.host_session_id).toBe('thread-B');
+ // Construct the persisted host-only case explicitly. Actual CLI ancestry may
+ // supply process evidence to the caller, but this record must use host fallback.
+ f.runtime.updateRun(opened.run_id,{owner_proc:null});const hostOnly=codex.run(opened.run_id);
+ expect(hostOnly.owner_proc).toBeNull();expect(()=>codex.authorize(hostOnly)).not.toThrow();expect(codex.openRun(input).run_id).toBe(hostOnly.run_id);
+ const differentHost=new Runtime(f.db,f.config,{env:{...codex.env,CODEX_THREAD_ID:'thread-C'}});
+ expect(()=>differentHost.authorize(hostOnly)).toThrow('identity');expect(()=>differentHost.openRun(input)).toThrow('conflicts');
 });
 test('gc reports each reclaim and resume it performs, including through lane open and run close',()=>{
  const f=fixture(),dead=JSON.stringify({...processIdentity(),pid:2147483647});

@@ -1,6 +1,7 @@
 {
   "$schema": "./config.schema.json",
   "version": 1,
+  "chatgpt_review": true,
   "engines": {
     "claude": { "enabled": true, "kind": "claude", "native_subagents": true },
     "codex": { "enabled": true, "kind": "codex", "native_subagents": true },

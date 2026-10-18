@@ -15,7 +15,7 @@ import { openConfiguredState, statePath, listBlocks, upsertBlock, removeBlock, p
 /** The single kind -> legal effort table; kinds not listed accept any non-empty string. */
 export const EFFORTS: Record<string, string[]> = {
   claude: ["low", "medium", "high", "xhigh", "max"],
-  codex: ["minimal", "low", "medium", "high", "xhigh", "max"],
+  codex: ["low", "medium", "high", "xhigh", "max"],
   grok: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
   qodercli: ["auto", "none", "low", "medium", "high", "xhigh", "max", "ultracode"],
 };
@@ -44,7 +44,11 @@ export interface Engine { enabled: boolean; kind: string; native_subagents?: boo
 export interface Owner { enabled: boolean; engine: string; model: string; effort: string; workers: string[]; max_parallel: number }
 export interface Worker { enabled: boolean; engine: string; model: string; effort: string; description?: string; tags?: string[] }
 export interface Herdr { max_wait_minutes: number }
-export interface Config { version: 1; engines: Record<string, Engine>; owners: Record<string, Owner>; workers: Record<string, Worker>; herdr: Herdr }
+export interface Config { version: 1; chatgpt_review?: boolean; engines: Record<string, Engine>; owners: Record<string, Owner>; workers: Record<string, Worker>; herdr: Herdr }
+/** Effective automatic ChatGPT review switch. Only boolean false disables it; a missing field stays enabled. Non-booleans are schema errors and are not coerced. */
+export function chatgptReviewEnabled(config: { chatgpt_review?: unknown }): boolean {
+  return config.chatgpt_review !== false;
+}
 export interface Block { engine: string; model?: string; reason: string; since: string; release_at?: string; by?: string }
 export interface State { version: 1; blocks: Block[] }
 export interface Availability { status: "available" | "disabled" | "engine_disabled" | "blocked"; engine?: string; model?: string; reason?: string; release_at?: string }
@@ -253,6 +257,7 @@ function loadConfig(path: string, schema: Schema): Config {
   return config;
 }
 const USAGE = `Usage: bun agents-config.ts <command> [options]
+  web [--port N] [--no-open]        Open the local Web config editor (separate Web dependencies)
   validate                         Validate the config (structure + semantics)
   show                             Print the effective config with availability
   resolve --owner <id> --class mechanical|routine|judgment [--tag <domain>] | --worker <id> | --peer <owner-id>
@@ -302,10 +307,10 @@ export function run(args: string[], env: Record<string, string | undefined> = pr
       case "show": {
         const withAvailability = <T extends Owner | Worker>(group: Record<string, T>) =>
           Object.fromEntries(Object.entries(group).map(([id, e]) => [id, { ...e, availability: availabilityOf(config, blocks, e) }]));
-        return out({ source, path, state: file, config: { ...config, owners: withAvailability(config.owners), workers: withAvailability(config.workers) } });
+        return out({ source, path, state: file, config: { ...config, chatgpt_review: chatgptReviewEnabled(config), owners: withAvailability(config.owners), workers: withAvailability(config.workers) } });
       }
       case "status": return out({ now: new Date(now).toISOString(), state: file, blocks, ...availability() });
-      case "resolve": return out(resolveDispatch(config, blocks, { owner: need("owner", values.owner), worker: values.worker, class: values.class, tag: values.tag, peer: values.peer }, env.HOME ?? homedir()));
+      case "resolve": return out({ ...resolveDispatch(config, blocks, { owner: need("owner", values.owner), worker: values.worker, class: values.class, tag: values.tag, peer: values.peer }, env.HOME ?? homedir()), chatgpt_review: chatgptReviewEnabled(config) });
       case "block": {
         const engine = need("engine", values.engine);
         if (!config.engines[engine]) throw new CliError(`unknown engine ${engine}`);
@@ -339,8 +344,14 @@ export function run(args: string[], env: Record<string, string | undefined> = pr
   finally { db?.close(); }
 }
 if (import.meta.main) {
-  const result = run(Bun.argv.slice(2));
-  process.stdout.write(result.stdout);
-  process.stderr.write(result.stderr);
-  process.exit(result.code);
+  const args = Bun.argv.slice(2);
+  if (args[0] === "web") {
+    const { launch } = await import("../web/launch.ts");
+    process.exit(await launch(args.slice(1)));
+  } else {
+    const result = run(args);
+    process.stdout.write(result.stdout);
+    process.stderr.write(result.stderr);
+    process.exit(result.code);
+  }
 }
