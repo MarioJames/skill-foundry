@@ -3,12 +3,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_CONFIG, EFFORTS, type Config, loadSchema, parseReleaseAt, run, validateConfig } from "../scripts/agents-config.ts";
+import { openState, listBlocks, validateLegacy } from "../scripts/lib/state-db.ts";
 import { lintSchema, validate } from "../scripts/lib/json-schema.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const tmp = () => { const root = mkdtempSync(join(tmpdir(), "agents-config-")); roots.push(root); return root; };
 const base = (): any => JSON.parse(readFileSync(DEFAULT_CONFIG, "utf8"));
+const readBlocks = (path: string) => { const db=openState(path); try {return {version:1,blocks:listBlocks(db)};} finally {db.close();} };
 const NOW = "2026-10-16T12:00:00Z";
 
 /** Fixture: temp config + state + HOME (so opencode's remembered variants are never read from the real home) with an injected clock. */
@@ -16,7 +18,7 @@ function fixture(mutate: (config: any) => void = () => {}) {
   const root = tmp();
   const config = base(); mutate(config);
   const configFile = join(root, "config.json");
-  const stateFile = join(root, "state", "availability.json");
+  const stateFile = join(root, "state", "state.sqlite");
   const home = join(root, "home");
   writeFileSync(configFile, JSON.stringify(config));
   const cli = (args: string[], now = NOW) => {
@@ -300,29 +302,25 @@ test("resolve --owner --peer builds the collaborating owner's interactive argv",
 test("herdr settings are required, validated and shown", () => {
   const missing = base(); delete missing.herdr;
   expect(validateConfig(missing)).toEqual([{ path: "$.herdr", message: "required property missing" }]);
-  const noSession = base(); delete noSession.herdr.worker_session;
-  expect(paths(noSession)).toEqual(["$.herdr.worker_session"]);
+  const legacy = fixture(c=>{c.herdr.worker_session="old";}).cli(["validate"]);
+  expect(legacy.stderr).toContain("remove herdr.worker_session");
   const noWait = base(); delete noWait.herdr.max_wait_minutes;
   expect(paths(noWait)).toEqual(["$.herdr.max_wait_minutes"]);
-  for (const bad of ["", "has space", "a/b", "-lead"]) {
-    const config = base(); config.herdr.worker_session = bad;
-    expect(paths(config)).toEqual(["$.herdr.worker_session"]);
-  }
   for (const bad of [0, -5, 1.5, "15"]) {
     const config = base(); config.herdr.max_wait_minutes = bad;
     expect(paths(config)).toEqual(["$.herdr.max_wait_minutes"]);
   }
   const extra = base(); extra.herdr.ttl = 1;
   expect(paths(extra)).toEqual(["$.herdr.ttl"]);
-  const f = fixture(c => { c.herdr = { worker_session: "hidden-1", max_wait_minutes: 7 }; });
-  expect(f.cli(["show"]).json.config.herdr).toEqual({ worker_session: "hidden-1", max_wait_minutes: 7 });
+  const f = fixture(c => { c.herdr = { max_wait_minutes: 7 }; });
+  expect(f.cli(["show"]).json.config.herdr).toEqual({ max_wait_minutes: 7 });
   expect(f.cli(["validate"]).code).toBe(0);
 });
-test("resolve: herdr workers carry the hidden session and wait timeout, native ones carry neither", () => {
-  const f = fixture(c => { enableQoder(c); c.herdr = { worker_session: "hidden-1", max_wait_minutes: 7 }; });
-  expect(f.cli(["resolve", "--owner", "claude_owner", "--worker", "qoder_worker"]).json).toMatchObject({ dispatch: "herdr", session: "hidden-1", wait_timeout_ms: 420000 });
-  expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "routine"]).json).toMatchObject({ dispatch: "herdr", session: "hidden-1", wait_timeout_ms: 420000 });
-  expect(f.cli(["resolve", "--owner", "claude_owner", "--worker", "codex_worker"]).json).toMatchObject({ session: "hidden-1", wait_timeout_ms: 420000 });
+test("resolve: herdr workers carry the wait timeout, native ones carry neither", () => {
+  const f = fixture(c => { enableQoder(c); c.herdr = { max_wait_minutes: 7 }; });
+  expect(f.cli(["resolve", "--owner", "claude_owner", "--worker", "qoder_worker"]).json).toMatchObject({ dispatch: "herdr", wait_timeout_ms: 420000 });
+  expect(f.cli(["resolve", "--owner", "claude_owner", "--class", "routine"]).json).toMatchObject({ dispatch: "herdr", wait_timeout_ms: 420000 });
+  expect(f.cli(["resolve", "--owner", "claude_owner", "--worker", "codex_worker"]).json).toMatchObject({ wait_timeout_ms: 420000 });
   for (const [owner, worker] of [["claude_owner", "claude_worker"], ["codex_owner", "codex_worker"]]) {
     const native = f.cli(["resolve", "--owner", owner!, "--worker", worker!]).json;
     expect(native.dispatch).toBe("native");
@@ -330,10 +328,10 @@ test("resolve: herdr workers carry the hidden session and wait timeout, native o
     expect(native).not.toHaveProperty("wait_timeout_ms");
   }
 });
-test("resolve --peer keeps the collaborating owner in the main session and carries the wait timeout", () => {
-  const f = fixture(c => { c.herdr = { worker_session: "hidden-1", max_wait_minutes: 7 }; });
+test("resolve --peer carries the wait timeout", () => {
+  const f = fixture(c => { c.herdr = { max_wait_minutes: 7 }; });
   const peer = f.cli(["resolve", "--owner", "claude_owner", "--peer", "codex_owner"]).json;
-  expect(peer).toMatchObject({ role: "peer_owner", dispatch: "herdr", session: null, wait_timeout_ms: 420000 });
+  expect(peer).toMatchObject({ role: "peer_owner", dispatch: "herdr", wait_timeout_ms: 420000 });
   const defaults = JSON.parse(readFileSync(DEFAULT_CONFIG, "utf8")).herdr;
   const d = fixture().cli(["resolve", "--owner", "claude_owner", "--peer", "codex_owner"]).json;
   expect(d.wait_timeout_ms).toBe(defaults.max_wait_minutes * 60_000);
@@ -347,12 +345,12 @@ test("block writes a state file atomically and replaces the same (engine, model)
   expect(first.json.block).toEqual({ engine: "codex", model: "gpt-6.1-sol", reason: "usage limit", since: "2026-10-16T12:00:00.000Z", release_at: "2026-10-17T03:00:00-04:00", by: "claude_owner" });
   f.cli(["block", "--engine", "codex", "--model", "gpt-6.1-sol", "--reason", "again", "--release-at", "+3h"]);
   f.cli(["block", "--engine", "claude", "--reason", "account quota"]);
-  const state = JSON.parse(readFileSync(f.stateFile, "utf8"));
+  const state = readBlocks(f.stateFile);
   expect(state.version).toBe(1);
   expect(state.blocks).toHaveLength(2);
   expect(state.blocks[0]).toMatchObject({ engine: "codex", reason: "again", release_at: "2026-10-16T15:00:00.000Z" });
   expect(state.blocks[1].release_at).toBeUndefined();
-  expect(readdirSync(join(f.root, "state"))).toEqual(["availability.json"]);
+  expect(readdirSync(join(f.root, "state"))).toContain("state.sqlite");
   expect(f.cli(["block", "--engine", "ghost", "--reason", "x"]).code).toBe(1);
   expect(f.cli(["block", "--engine", "codex"]).code).toBe(1);
   expect(f.cli(["block", "--engine", "codex", "--reason", "x", "--release-at", "2026-10-16T11:00:00Z"]).stderr).toContain("future");
@@ -381,20 +379,15 @@ test("block without --release-at writes no release_at and never auto-releases", 
   const explicit = f.cli(["block", "--engine", "claude", "--reason", "limit", "--release-at", "+2h"]).json.block;
   expect(explicit).toMatchObject({ release_at: "2026-10-16T14:00:00.000Z" });
   expect(explicit.release_source).toBeUndefined();
-  const state = JSON.parse(readFileSync(f.stateFile, "utf8"));
+  const state = readBlocks(f.stateFile);
   for (const block of state.blocks) expect(block.release_source).toBeUndefined();
   expect(f.cli(["status"], "2027-10-16T12:00:00Z").json.blocks.map((b: any) => b.engine)).toEqual(["codex"]);
   expect(f.cli(["status"], "2027-10-16T12:00:00Z").json.workers.codex_worker.status).toBe("blocked");
   expect(f.cli(["status"], "2026-10-16T14:00:01Z").json.workers.claude_worker.status).toBe("available");
 });
-test("state files reject the legacy until field and release_source", () => {
-  const f = fixture();
-  mkdirSync(join(f.root, "state"), { recursive: true });
+test("legacy migration inputs reject unknown fields", () => {
   for (const extra of [{ until: "2026-10-17T03:00:00Z" }, { release_source: "explicit" }]) {
-    writeFileSync(f.stateFile, JSON.stringify({ version: 1, blocks: [{ engine: "codex", reason: "x", since: "2026-10-16T12:00:00Z", ...extra }] }));
-    const result = f.cli(["status"]);
-    expect(result.code).toBe(1);
-    expect(result.stderr).toContain(`$.blocks[0].${Object.keys(extra)[0]}`);
+    expect(()=>validateLegacy({version:1,blocks:[{engine:"codex",reason:"x",since:NOW,...extra}]})).toThrow(Object.keys(extra)[0]);
   }
 });
 test("model-level block affects only that model and the owner running it", () => {
@@ -439,10 +432,10 @@ test("expired blocks are ignored on read and purged on the next write", () => {
   expect(late.workers.codex_worker).toEqual({ status: "available" });
   expect(f.cli(["resolve", "--owner", "codex_owner", "--worker", "codex_worker"], "2026-10-16T15:00:00Z").code).toBe(0);
   // reading does not rewrite the file
-  expect(JSON.parse(readFileSync(f.stateFile, "utf8")).blocks).toHaveLength(1);
+  expect(readBlocks(f.stateFile).blocks).toHaveLength(1);
   const write = f.cli(["block", "--engine", "claude", "--reason", "other"], "2026-10-16T15:00:00Z");
   expect(write.json.purged_expired).toBe(1);
-  expect(JSON.parse(readFileSync(f.stateFile, "utf8")).blocks.map((b: any) => b.engine)).toEqual(["claude"]);
+  expect(readBlocks(f.stateFile).blocks.map((b: any) => b.engine)).toEqual(["claude"]);
 });
 test("unblock removes exactly the matching entry", () => {
   const f = fixture();
@@ -450,26 +443,21 @@ test("unblock removes exactly the matching entry", () => {
   f.cli(["block", "--engine", "codex", "--model", "gpt-6.1-sol", "--reason", "b"]);
   expect(f.cli(["unblock", "--engine", "codex", "--model", "other"]).json.removed).toBe(0);
   expect(f.cli(["unblock", "--engine", "codex", "--model", "gpt-6.1-sol"]).json.removed).toBe(1);
-  expect(JSON.parse(readFileSync(f.stateFile, "utf8")).blocks.map((b: any) => b.model)).toEqual([undefined]);
+  expect(readBlocks(f.stateFile).blocks.map((b: any) => b.model)).toEqual([undefined]);
   expect(f.cli(["unblock", "--engine", "codex"]).json.removed).toBe(1);
   expect(f.cli(["status"]).json.blocks).toEqual([]);
   expect(f.cli(["unblock", "--engine", "codex"]).json.removed).toBe(0);
 });
-test("missing state file means no blocks and is not created by reads", () => {
+test("missing state file initializes an empty SQLite database", () => {
   const f = fixture();
   expect(f.cli(["status"]).json.blocks).toEqual([]);
-  expect(existsSync(f.stateFile)).toBe(false);
+  expect(existsSync(f.stateFile)).toBe(true);
 });
-test("invalid state file is reported with paths", () => {
-  const f = fixture();
-  f.cli(["block", "--engine", "codex", "--reason", "a"]);
-  writeFileSync(f.stateFile, JSON.stringify({ version: 1, blocks: [{ engine: "codex", reason: "", since: "yesterday" }] }));
-  const result = f.cli(["status"]);
-  expect(result.code).toBe(1);
-  expect(result.stderr).toContain("$.blocks[0].reason");
-  expect(result.stderr).toContain("$.blocks[0].since");
-  writeFileSync(f.stateFile, JSON.stringify({ version: 1, blocks: [{ engine: "codex", reason: "a", since: NOW }, { engine: "codex", reason: "b", since: NOW }] }));
-  expect(f.cli(["status"]).stderr).toContain("duplicate");
+test("a JSON --state is rejected without overwriting it", () => {
+  const f=fixture(); mkdirSync(join(f.root,"state"),{recursive:true});
+  const text=JSON.stringify({version:1,blocks:[]}); writeFileSync(f.stateFile,text);
+  expect(f.cli(["status"]).stderr).toContain("not SQLite");
+  expect(readFileSync(f.stateFile,"utf8")).toBe(text);
 });
 test("resolve by pool requires --class", () => {
   const f = fixture();
@@ -757,7 +745,7 @@ test("CLI entry point: shebang, stdout JSON, stderr and exit code, with env-inje
   expect(bad.exitCode).toBe(1);
   expect(bad.stdout.toString()).toBe("");
   expect(bad.stderr.toString()).toContain("unknown owner nobody");
-  expect(JSON.parse(readFileSync(f.stateFile, "utf8")).blocks).toHaveLength(1);
+  expect(readBlocks(f.stateFile).blocks).toHaveLength(1);
   const usage = Bun.spawnSync({ cmd: [script, "bogus"], env, stdout: "pipe", stderr: "pipe" });
   expect(usage.exitCode).toBe(1);
 });

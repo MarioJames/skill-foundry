@@ -1,13 +1,15 @@
 import { expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 // Only the herdr and systemd-run process boundaries are replaced; route-lane.ts runs unchanged.
 const fakeHerdr = `#!${process.execPath}
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 const file = process.env.HERDR_TEST_STATE;
 const s = JSON.parse(readFileSync(file, 'utf8'));
+// systemd-run runs concurrently and must not share a read-modify-write file with herdr.
+if (existsSync(file + '.started')) s.running = true;
 let a = process.argv.slice(2);
 s.calls.push(a);
 const save = () => writeFileSync(file, JSON.stringify(s));
@@ -18,7 +20,11 @@ if (a[0] === '--session') { session = a[1]; a = a.slice(2); }
 if (a[0] === 'session' && a[1] === 'stop') { s.running = false; save(); console.log('stopped'); process.exit(0); }
 if (session && !s.running) fail(JSON.stringify({error:{code:'server_not_running',message:'no herdr server is running'}}));
 const pane = (workspace, tab, id) => ({workspace_id:workspace,tab_id:tab,pane_id:id,cwd:s.cwd});
-if (a[0] === 'workspace' && a[1] === 'list') reply({workspaces:s.workspaces.map(id => ({workspace_id:id}))});
+if (a[0] === 'workspace' && a[1] === 'list') {
+  // Stop the fake external server after a successful availability check, before the next native call.
+  if (s.stopAfterAvailabilityCheck) s.running = false;
+  reply({workspaces:s.workspaces.map(id => ({workspace_id:id}))});
+}
 else if (a[0] === 'pane' && a[1] === 'list') reply({panes:[pane(a[3],a[3]+':t1',a[3]+':p1')]});
 else if (a[0] === 'tab' && a[1] === 'list') reply({tabs:[{workspace_id:a[3],tab_id:a[3]+':t1'}]});
 else if (a[0] === 'pane' && a[1] === 'current') reply({pane:pane("main","main:t1",a[3])});
@@ -34,12 +40,11 @@ else fail('unexpected command: '+JSON.stringify(a));
 `;
 
 const fakeSystemd = `#!${process.execPath}
-import { readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 const file = process.env.HERDR_TEST_STATE;
 const s = JSON.parse(readFileSync(file, 'utf8'));
-s.systemd.push(process.argv.slice(2));
-if (!s.systemdFails) s.running = true;
-writeFileSync(file, JSON.stringify(s));
+appendFileSync(file + '.systemd', JSON.stringify(process.argv.slice(2)) + '\\n');
+if (!s.systemdFails) writeFileSync(file + '.started', '');
 process.exit(s.systemdFails ? 1 : 0);
 `;
 
@@ -47,6 +52,7 @@ interface Options {
   running?: boolean;
   workspaces?: string[];
   systemd?: "ok" | "fails" | "missing";
+  stopAfterAvailabilityCheck?: boolean;
 }
 
 async function route(args: string[], options: Options = {}) {
@@ -61,6 +67,7 @@ async function route(args: string[], options: Options = {}) {
       running: options.running ?? false,
       workspaces: options.workspaces ?? [],
       systemdFails: options.systemd === "fails",
+      stopAfterAvailabilityCheck: options.stopAfterAvailabilityCheck ?? false,
     }));
     writeFileSync(join(bin, "herdr"), fakeHerdr, { mode: 0o755 });
     chmodSync(join(bin, "herdr"), 0o755);
@@ -78,7 +85,9 @@ async function route(args: string[], options: Options = {}) {
     );
     const [stdout, status] = await Promise.all([Bun.readableStreamToText(child.stdout), child.exited]);
     const final = JSON.parse(readFileSync(state, "utf8"));
-    return { ...final, status, output: JSON.parse(stdout), cwd };
+    const systemd = existsSync(`${state}.systemd`)
+      ? readFileSync(`${state}.systemd`, "utf8").trim().split("\n").map((line) => JSON.parse(line)) : [];
+    return { ...final, systemd, status, output: JSON.parse(stdout), cwd };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -115,12 +124,56 @@ test("--stop-if-empty needs --session and excludes lane options", async () => {
   }
 });
 
+test("--require-running requires --session and rejects incompatible modes before touching Herdr", async () => {
+  for (const [args, code] of [
+    [[...lane, "--require-running"], "missing_argument"],
+    [[...lane, "--create-session", "hidden", "--op-tag", "t", "--require-running"], "conflicting_options"],
+    [["--session", "hidden", "--stop-if-empty", "--require-running"], "conflicting_options"],
+  ] as const) {
+    const s = await route([...args]);
+    expect([s.status, s.output.error.code]).toEqual([2, code]);
+    expect(s.calls).toEqual([]);
+    expect(s.systemd).toEqual([]);
+  }
+});
+
+test("--require-running refuses an unavailable session, including dry-run, without starting or creating anything", async () => {
+  for (const extra of [[], ["--dry-run"]]) {
+    const s = await route([...lane, "--session", "hidden", "--require-running", ...extra]);
+    expect([s.status, s.output.error.code]).toEqual([1, "session_not_running"]);
+    expect(s.systemd).toEqual([]);
+    expect(s.calls.some((call: string[]) => call.includes("create") || call.includes("server"))).toBe(false);
+    expect(s.workspaces).toEqual([]);
+  }
+});
+
+test("--require-running reuses a running session without starting it", async () => {
+  const s = await route([...lane, "--session", "hidden", "--require-running"], { running: true, workspaces: ["w1"] });
+  expect(s.status).toBe(0);
+  expect(s.output.session).toEqual({ name: "hidden", created: false, running_before: true, started: false, unit: null });
+  expect(s.output.action).toBe("create-tab");
+  expect(s.output.result.workspace_id).toBe("w1");
+  expect(s.systemd).toEqual([]);
+  for (const call of s.calls) expect(call.slice(0, 2)).toEqual(["--session", "hidden"]);
+});
+
+test("--require-running propagates a native server exit after the availability check without restarting", async () => {
+  const s = await route([...lane, "--session", "hidden", "--require-running"], {
+    running: true, stopAfterAvailabilityCheck: true,
+  });
+  expect([s.status, s.output.error.code]).toEqual([1, "herdr_failed"]);
+  expect(s.output.error.message).toContain("server_not_running");
+  expect(s.systemd).toEqual([]);
+  expect(s.calls.some((call: string[]) => call.includes("create") || call.includes("server"))).toBe(false);
+  expect(s.workspaces).toEqual([]);
+});
+
 test("dry-run on a stopped session reports state and starts nothing", async () => {
   const s = await route([...lane, "--session", "hidden", "--dry-run"]);
   expect(s.status).toBe(0);
   expect(s.systemd).toEqual([]);
   expect(s.calls).toEqual([["--session", "hidden", "workspace", "list"]]);
-  expect(s.output.session).toEqual({ name: "hidden", running_before: false, started: false, unit: null });
+  expect(s.output.session).toEqual({ name: "hidden", created: false, running_before: false, started: false, unit: null });
   expect(s.output.action).toBe("create-workspace");
   expect(s.output.caller).toBeNull();
   expect(s.output.lane.scope).toBe("independent");
@@ -133,10 +186,10 @@ test("a stopped session is started under a memory-capped systemd scope and used 
   expect(s.systemd).toEqual([[
     "--user", "--scope", "--collect", "--unit=herdr-session-hidden",
     "-p", "MemoryHigh=8G", "-p", "MemoryMax=10G",
-    "--", "herdr", "--session", "hidden", "server",
+    "--", "env", "-u", "AGENTS_COOPERATION_OP_TAG", "herdr", "--session", "hidden", "server",
   ]]);
   expect(s.output.session).toEqual({
-    name: "hidden", running_before: false, started: true, unit: "herdr-session-hidden.scope",
+    name: "hidden", created: false, running_before: false, started: true, unit: "herdr-session-hidden.scope",
   });
   expect(s.output.action).toBe("create-workspace");
   expect(s.output.caller).toBeNull();
@@ -150,7 +203,7 @@ test("a running session with a matching workspace gets a new tab and no systemd 
   const s = await route([...lane, "--session", "hidden"], { running: true, workspaces: ["w1"] });
   expect(s.status).toBe(0);
   expect(s.systemd).toEqual([]);
-  expect(s.output.session).toEqual({ name: "hidden", running_before: true, started: false, unit: null });
+  expect(s.output.session).toEqual({ name: "hidden", created: false, running_before: true, started: false, unit: null });
   expect(s.output.action).toBe("create-tab");
   expect(s.output.result.workspace_id).toBe("w1");
   expect(s.output.lane.cleanup_command).toEqual(["herdr", "--session", "hidden", "tab", "close", "w1:t2"]);

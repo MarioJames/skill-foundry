@@ -33,5 +33,5 @@
     "qoder_worker": { "enabled": false, "engine": "qoder", "model": "Qwen3.8-Flash", "effort": "xhigh", "tags": ["routine"], "description": "Free routine worker (Qwen3.8-Flash via qodercli); resolve --class mechanical|routine picks it for routine implementation whose plan is frozen and write scope is explicit." },
     "opencode_worker": { "enabled": false, "engine": "opencode", "model": "opencode/glm-5.3-flash-free", "effort": "max", "tags": ["mechanical"], "description": "Free mechanical worker (glm-5.3-flash-free via opencode); resolve --class mechanical picks it for rule-bound edits, test runs, lint fixes and read-only sweeps. Its TUI uses the variant remembered in ~/.local/state/opencode/model.json, which must match effort." }
   },
-  "herdr": { "worker_session": "agents-workers", "max_wait_minutes": 15 }
+  "herdr": { "max_wait_minutes": 15 }
 }

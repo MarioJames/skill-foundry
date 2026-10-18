@@ -21,6 +21,7 @@ skills/herdr/tests/*
 !skills/herdr/tests/codex-session.test.ts
 !skills/herdr/tests/codex-pane.test.ts
 !skills/herdr/tests/hidden-session.test.ts
+!skills/herdr/tests/create-session.test.ts
 
 # Ship the public DEV discovery and foreground lifecycle contract.
 !skills/public-acceptance/tests/
@@ -42,3 +43,5 @@ skills/debian-testvm/tests/*
 !skills/agents-cooperation/tests/
 skills/agents-cooperation/tests/*
 !skills/agents-cooperation/tests/agents-config.test.ts
+!skills/agents-cooperation/tests/state-db.test.ts
+!skills/agents-cooperation/tests/agents-runtime.test.ts

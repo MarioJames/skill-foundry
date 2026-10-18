@@ -1,6 +1,6 @@
 # 调度配置说明
 
-SKILL.md 的“调度配置”写规则，本文写字段、派发推导、herdr worker 生命周期、额度 block 细节和配置流程。脚本为 `<skill>/scripts/agents-config.ts`（bun，无第三方依赖），输出 JSON 到 stdout，错误逐条列出 JSON 路径并非零退出。
+SKILL.md 的“调度配置”写规则，本文写字段、派发推导、herdr worker 生命周期、运行状态库、额度 block 细节和配置流程。脚本有两个：`<skill>/scripts/agents-config.ts`（配置校验、派发推导、block）和 `<skill>/scripts/agents-runtime.ts`（herdr run/lane 登记与回收），均为 bun、无第三方依赖，输出 JSON 到 stdout，错误非零退出（`agents-config.ts` 的配置错误逐条列出 JSON 路径）。
 
 ## 位置与来源
 
@@ -42,14 +42,13 @@ SKILL.md 的“调度配置”写规则，本文写字段、派发推导、herdr
     }
   },
   "herdr": {                         // 必填
-    "worker_session": "<session>",   // 承载 herdr worker 的无 TUI 命名 session
     "max_wait_minutes": 15           // ≥1，herdr agent 单次等待上限（分钟）
   }
 }
 ```
 
 - **命名**：engine、owner、worker 的 id 匹配 `^[a-z][a-z0-9_]{0,39}$`；`workers` 下所有 key 以 `_worker` 结尾。顶层字段是 `workers`，不接受旧字段 `agents`（报未知字段）。
-- **herdr**：必填对象，两个字段都必填且不接受多余字段。`worker_session` 是匹配 `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` 的 Herdr session 名，所有 herdr worker 的 lane 都建在这个无 TUI 的 session 里，owner 和协作 owner 仍在用户的主 session；`max_wait_minutes` 是 ≥1 的整数，是 herdr agent 单次等待的上限。两者的默认值以 `<skill>/assets/config.default.json` 为准，本文不复述。
+- **herdr**：必填对象，`max_wait_minutes` 必填且不接受多余字段，是 ≥1 的整数，是 herdr agent 单次等待的上限，也是 `gc` 判定 lane 无进展的阈值基准（见“运行状态库”）；默认值以 `<skill>/assets/config.default.json` 为准，本文不复述。herdr worker 的 hidden session 不入配置：每个 run 由 `agents-runtime` 分配独立 session；旧配置里残留的共享 session 字段按未知字段处理，`validate` 报错并说明改法。
 - **tags**：可选，字符串数组，每项匹配 `^[a-z][a-z0-9-]{0,31}$` 且不重复。`mechanical`、`routine` 是类别保留标签，带其中之一的 worker 是免费 worker，由 `resolve --class mechanical|routine` 选取；其余标签是领域标签，按模型强项标注，只用于 `resolve --class judgment --tag` 选异构 worker（引擎与 owner 不同）；owner 本引擎的原生 worker 是 judgment 的隐式默认，选它时不看标签（见下文）。领域标签集合由配置维护，技能规则不写死。
 - **未知字段**：所有对象禁止多余字段，顶层只额外允许 `$schema`；旧配置中残留的 worker 分类字段和 owner 任务优先字段同样报未知字段。
 - **effort**：schema 只要求非空字符串，合法取值由脚本按引擎 kind 校验，是引擎原生语义，不做跨引擎统一：claude `low|medium|high|xhigh|max`；codex `minimal|low|medium|high|xhigh|max`；grok `none|minimal|low|medium|high|xhigh|max`；qodercli `auto|none|low|medium|high|xhigh|max|ultracode`；opencode 的 effort 对应模型的 variant，是 provider 与模型相关的值（如 `opencode/glm-5.3-flash-free` 为 `low|high|max`），不在常量表内、按任意非空字符串处理，以 `opencode models <provider> --verbose` 输出的 variants 为准；TUI 不能按次指定 variant，实际取值见下文“opencode 的约束”。
@@ -69,8 +68,8 @@ SKILL.md 的“调度配置”写规则，本文写字段、派发推导、herdr
 
 - **native + claude**：`tool: Agent`，`params` 含 `model`、`effort`、`subagent_type: general-purpose`。只读类型可替换 `subagent_type`，`model` 与 `effort` 保持不变；不用 `fork`。
 - **native + codex**：`tool: spawn_agent`，`params` 含 `model`、`reasoning_effort`、`fork_turns: "none"`。
-- **herdr interactive**：`mode: interactive`、`kind`、`argv`、`session`、`wait_timeout_ms`；argv 是 `herdr agent start <name> --kind <kind> --pane <pane> -- <argv>` 中 `--` 之后的部分（hidden session 里的命令还要带 `--session`，见下文）。`session` 取自 `herdr.worker_session`，`wait_timeout_ms` 为 `herdr.max_wait_minutes` 换算的毫秒数；native 输出不含这两个字段。
-- **`--peer`**：`resolve --owner <self> --peer <owner-id>` 输出协作 owner 的 herdr interactive argv，`session` 为 `null`（协作 owner 的 lane 建在主 session，不带 `--session`），`wait_timeout_ms` 同上；用法见 [协作协议](peer-protocol.md#启动协作-owner)。
+- **herdr interactive**：`mode: interactive`、`kind`、`argv`、`wait_timeout_ms`；argv 是 `herdr agent start <name> --kind <kind> --pane <pane> -- <argv>` 中 `--` 之后的部分（hidden session 里的命令还要带 `--session <session_name>`，session 名取自 `run open` 的输出，见下文）。`wait_timeout_ms` 为 `herdr.max_wait_minutes` 换算的毫秒数；native 输出不含该字段。
+- **`--peer`**：`resolve --owner <self> --peer <owner-id>` 输出协作 owner 的 herdr interactive argv（协作 owner 的 lane 建在主 session，不带 `--session`，也不进状态库），`wait_timeout_ms` 同上；用法见 [协作协议](peer-protocol.md#启动协作-owner)。
 - **拒绝**：owner 或 worker 不存在、disabled、所属引擎 disabled、被 block 时非零退出。`--worker` 显式指定的子 agent 不在该 owner 的 `workers` 列表中也允许，但输出 `warnings`。输出中的子 agent 字段为 `worker`，`status` 输出 `workers`，`skipped[]` 的条目用 `worker` 标识。
 - **`--owner <id> --class mechanical|routine|judgment [--tag <domain>]`**：按池选 worker，`--class` 必填，缺失时非零退出。输出含 `class`、`selected_by` 和 `skipped`（被跳过的不可用候选，按尝试顺序）；都不可用时非零退出，列出每个候选的不可用原因。额度耗尽后的自动切换就靠它。
   - `mechanical`：依次取可用的 mechanical worker、可用的 routine worker，`selected_by: "class"`；都没有时按 judgment 回退，`selected_by: "order"`，`warnings` 写明“无可用免费 worker，已按 judgment 回退”。
@@ -105,21 +104,32 @@ opencode 的约束：
 
 ## Herdr 派发流程
 
-herdr worker 指引擎与 owner 不同、经 Herdr pane 启动的 worker。每个 herdr worker 独占一个 lane（tab+pane），按以下生命周期执行；tab 命名、归属校验和清理规则以 `herdr` 技能为准，owner 协作的 lane 同样适用，见 [协作协议](peer-protocol.md#启动协作-owner)。
+herdr worker 指引擎与 owner 不同、经 Herdr pane 启动的 worker。每个 owner 任务实例对应一个 run，独占一个 hidden Herdr session（无 TUI，用户的主 session 不会被 worker 淹没，不同 owner 或任务的 session 互不可见）；每个 herdr worker 独占其中一个 lane（tab+pane）。run、lane 和 session 的创建、关闭与回收全部经 `agents-runtime`，owner 不直接调用 `route-lane`（首次用 `--create-session`，后续用 `--session <name> --require-running`，每次均带 `--op-tag`），也不执行 `cleanup_command` 关闭 hidden lane。`--require-running` 禁止按需启动替代 server；runtime 还会拒绝 `started:true` 回执，并在登记 lane 为 `open` 前再次核对原实例证明。通用 route 的普通 `--session` 仍可按需启动。tab 命名、归属校验规则以 `herdr` 技能为准；协作 owner 自己的 lane 仍由 `route-lane` 直接建在主 session，见 [协作协议](peer-protocol.md#启动协作-owner)。
 
-herdr worker 全部放在 `resolve` 输出 `session` 指定的 hidden session（无 TUI，用户的主 session 不会被 worker 淹没）；该 session 未运行时 `route-lane --session` 会自动后台拉起。在 hidden session 里，本流程所有 `herdr agent` 命令（`start`、`read`、`send-keys`、`prompt`、`wait`、`list`）都写成 `herdr --session <session> agent ...`，漏写会落到主 session。用户要查看时运行 `herdr session attach <session>`。协作 owner 的 lane（`resolve --peer`，`session` 为 `null`）建在主 session，命令不带 `--session`。
+runtime 目前只支持 `HOME/.config/herdr/sessions`：`XDG_CONFIG_HOME` 为空、未设置或经路径规范化后等于 `HOME/.config` 时可用；其他值在 Runtime 初始化时明确拒绝，覆盖打开、关闭、gc 与查询等入口，拒绝前不访问 Herdr 资源，也不改变已有 run/lane 登记。此限制避免在一个配置根创建、却从另一个配置根验证或回收。
 
-1. **新建 lane**：每个 worker 用独立 tab+pane，返回 pane ID 和 `cleanup_command`，记入台账。
+在 hidden session 里，本流程所有 `herdr agent` 命令（`start`、`read`、`send-keys`、`prompt`、`wait`、`list`）都写成 `herdr --session <session_name> agent ...`，漏写会落到主 session。
+
+`agents-runtime` 的子命令（公共选项 `--state <sqlite>`、`--config <json>`，成功输出 JSON，失败非零退出并在 stderr 给出原因）：
+
+| 命令 | 作用 |
+| --- | --- |
+| `run open --owner <owner-id> --collab <collab-id> --request <request-id> --cwd <path> --label <text>` | 登记 run，预留 session 名（此时不创建 session）；输出 run 行，含 `run_id`、`session_name`。调用方身份见下文；同一 `--request` 在 owner、collab、规范化 cwd 和调用方身份一致且 run 未关闭时返回已有 run，参数不一致报冲突，已关闭的 run 不重新激活 |
+| `lane open --run <run-id> --worker <worker-id> --class mechanical\|routine\|judgment --name <name> --op <op-id>` | 顺带 `gc`；在 run 的 session 中建独立 tab+pane（首个 lane 同时创建 session）；输出 lane 行，含 `lane_id`、`pane_id`，另有 `gc_reports`。同一 run 内相同 `--op` 且参数一致返回已有 lane，参数不一致报冲突。worker 必须是 herdr 派发且未被 block；不负责 `agent start` |
+| `lane mark --lane <lane-id> [--outcome accepted\|failed] [--keep-reason <text>] [--progress]` | 至少给一项。`--keep-reason ''` 清除保留原因；`--progress` 刷新 `last_progress_at` 并把 `health` 置回 `ok`；不改 `status` |
+| `lane close --lane <lane-id>` | 只关闭登记的 pane，并确认它已不存在；失败时 lane 保持 `closing` 并写 `last_error`，可重试 |
+| `run close --run <run-id>` | 顺带 `gc`；关闭本 run 仍开着的 lane，核对库存为空后停止并删除 session，最后置 `closed` |
+| `ls [--run <run-id>] [--all]` | 只读：比对库与 Herdr 实况；默认列出未关闭 run，`--all` 含已关闭 |
+| `gc` | 回收，规则见“运行状态库” |
+
+1. **开 run**：任务首次 herdr 派发前，对本任务运行一次 `run open`。`--owner` 是自己的 owner id，`--collab` 取任务的 collab id（无协作消息目录时按 `MMDD-<topic-slug>` 取一个），`--request` 取任务内稳定的值，`--label` 是 `MMDD｜TYPE｜Topic`。记下输出的 `run_id` 和 `session_name`。
+2. **新建 lane**：每个 worker 一个 lane。`--worker` 与 `--class` 来自 `resolve` 的结果，`--name` 是随后 `agent start` 用的 agent 名，在本 run 内唯一，同一 worker 并行多个时加序号（如 `qoder_worker-2`）；`--op` 在本 run 内唯一，重试同一次开 lane 时沿用同一值。结果不明的 lane 记为 `unknown`，只报告，不按标签认领。
+3. **启动**：`resolve --owner <owner-id> --class <类别> [--tag <领域>]`（续接同一包或用户指定 worker 时用 `--worker <id>`）取 argv，`--` 之后原样使用。
 
    ```sh
-   bun <herdr-skill>/scripts/route-lane.ts --type coding-agent --cwd <项目路径> --label 'MMDD｜TYPE｜Topic' --session <session>
+   herdr --session <session_name> agent start <name> --kind <kind> --pane <pane_id> -- <argv>
    ```
-2. **启动**：`resolve --owner <owner-id> --class <类别> [--tag <领域>]`（续接同一包或用户指定 worker 时用 `--worker <id>`）取 argv 和 `session`，`--` 之后原样使用。`<name>` 在本任务内唯一，同一 worker 并行多个时加序号（如 `qoder_worker-2`）。
-
-   ```sh
-   herdr --session <session> agent start <name> --kind <kind> --pane <pane> -- <argv>
-   ```
-3. **信任提示**：各 CLI 对新目录的信任提示不同（实测见下表），都无法用启动参数跳过。只信任用户指定的目标项目目录，来源不明的仓库停下来问用户。启动后先用 `herdr --session <session> agent read <name> --source visible` 读屏确认，再发 prompt；不是信任提示的 blocked 按读屏内容判断，不要盲目按键。
+4. **信任提示**：各 CLI 对新目录的信任提示不同（实测见下表），都无法用启动参数跳过。只信任用户指定的目标项目目录，来源不明的仓库停下来问用户。启动后先用 `herdr --session <session_name> agent read <name> --source visible` 读屏确认，再发 prompt；不是信任提示的 blocked 按读屏内容判断，不要盲目按键。
 
    | CLI | 新目录是否弹提示 | 默认选项与处理 | herdr 状态 |
    | --- | --- | --- | --- |
@@ -130,7 +140,7 @@ herdr worker 全部放在 `resolve` 输出 `session` 指定的 hidden session（
    | opencode | 不弹（实测 `/tmp`） | 读屏确认模型和 variant（如 `· max`），与 `resolve` 的 `warnings` 对照 | 就绪 |
 
    其他 CLI 以读屏为准。Claude 与 Codex 作为协作 owner 启动时同样按此表，见 [协作协议](peer-protocol.md#启动协作-owner)。
-4. **发送信封**：任务内容写成消息目录下的任务文件，prompt 只带任务文件和回复文件路径，格式沿用协作协议的信封风格；worker 守则同 SKILL.md 的“子 agent 交接”。
+5. **发送信封**：任务内容写成消息目录下的任务文件，prompt 只带任务文件和回复文件路径，格式沿用协作协议的信封风格；worker 守则同 SKILL.md 的“子 agent 交接”。
 
    ```text
    [agents-cooperation]
@@ -141,9 +151,62 @@ herdr worker 全部放在 `resolve` 输出 `session` 指定的 hidden session（
    reply: ~/.local/state/agents-cooperation/<collab-id>/005-<worker>-reply.md
    你是 worker：按 agents-cooperation worker 职责处理，回复写入 reply 文件后结束本轮；不提交，不再派发。
    ```
-5. **等待**：`herdr --session <session> agent prompt <name> "<信封>" --wait --until idle --until done --until blocked --timeout <wait_timeout_ms>`；owner 还要继续其他工作时，改用宿主后台任务运行 `herdr --session <session> agent wait <name> --until idle --until done --until blocked --timeout <wait_timeout_ms>`。`--timeout` 取 `resolve` 输出的 `wait_timeout_ms`，所有 `--wait` 与 `agent wait` 都必须带，不存在无超时的等待。Claude Code 的前台 Bash 最长 10 分钟，`wait_timeout_ms` 超过它时等待必须走宿主后台任务（`run_in_background`），不能在前台阻塞。超时或 blocked 先读输出判断原因，不盲目重发：无进展标 stale，按 SKILL.md 的心跳规则停掉重派；有进展可再等一轮，每一轮同样带 `--timeout`，受同一上限约束。
-6. **验收**：owner 读回复文件，查看 diff 并复跑关键验证；回复文件缺失时用 `herdr --session <session> agent read <name> --source recent` 查看原因。结果越界、需要判断或失败时，把 findings 交回同一 worker（多轮）或改派，不自己打补丁。
-7. **关闭 lane（硬性）**：一次性包验收通过（或失败且已核对部分产物）后，立即执行 `route-lane` 返回的 `cleanup_command` 关闭 lane，不留空闲 agent；hidden 后用户看不到这些 agent，不关就会一直占用资源。需要多轮的包保留 lane 到该包结束再关。本 owner 在 hidden session 里的最后一个 lane 关闭后，运行 `bun <herdr-skill>/scripts/route-lane.ts --session <session> --stop-if-empty` 停止空闲 session；输出 `stopped: false` 时按 `remaining_workspaces` 核对是否还有别的 owner 或任务在用，不强停。只关本任务创建的 lane，不关用户自己的 pane 或归属不明的资源。
+6. **等待**：`herdr --session <session_name> agent prompt <name> "<信封>" --wait --until idle --until done --until blocked --timeout <wait_timeout_ms>`；owner 还要继续其他工作时，改用宿主后台任务运行 `herdr --session <session_name> agent wait <name> --until idle --until done --until blocked --timeout <wait_timeout_ms>`。`--timeout` 取 `resolve` 输出的 `wait_timeout_ms`，所有 `--wait` 与 `agent wait` 都必须带，不存在无超时的等待。Claude Code 的前台 Bash 最长 10 分钟，`wait_timeout_ms` 超过它时等待必须走宿主后台任务（`run_in_background`），不能在前台阻塞。超时或 blocked 先读输出判断原因，不盲目重发：无进展标 stale，按 SKILL.md 的心跳规则停掉重派；有进展用 `lane mark --progress` 记录并可再等一轮，每一轮同样带 `--timeout`，受同一上限约束。
+7. **验收**：owner 读回复文件，查看 diff 并复跑关键验证；回复文件缺失时用 `herdr --session <session_name> agent read <name> --source recent` 查看原因。结果越界、需要判断或失败时，把 findings 交回同一 worker（多轮）或改派，不自己打补丁。随后 `lane mark --outcome accepted|failed`。
+8. **关闭 lane（硬性）**：一次性包验收通过（或失败且已核对部分产物）后，立即 `lane close`，不留空闲 agent；hidden 后用户看不到这些 agent，不关就会一直占用资源。需要多轮的包保留 lane 到该包结束再关，期间 `lane mark --keep-reason` 写明原因。`lane close` 失败或停在 `closing` 时先看 `last_error`，重试；仍无法关闭的写入台账“阻塞/风险”列。只关本任务登记的 lane，不关用户自己的 pane 或归属不明的资源。
+9. **收尾**：本任务的 lane 全部关闭后运行 `run close`。它顺带运行 `gc`，核对 session 中 workspace、tab、pane 的全集为空后才停止并删除 session；有任何未关闭 lane、`unknown` lane 或未知资源时不停止，run 保持 `closing`，报告原因，由用户处理。没有 `--force`。
+
+**调用方身份**：`run open` 从脚本自身沿父进程链找 owner CLI 进程（Claude：祖先链中必须有 `CLAUDE_PID`；Codex：祖先链中的 codex TUI 客户端，排除 app-server），登记它的进程身份；找不到进程时退而登记宿主会话 ID（按 owner 引擎取 `CLAUDE_CODE_SESSION_ID`（Claude）或 `CODEX_THREAD_ID`（Codex），缺失记 null；它只是恢复线索，owner 进程身份存在时以进程身份为准）；两者都没有则拒绝创建 run。之后对该 run 的 `lane open`、`lane close`、`lane mark`、`run close` 都要求调用方身份与登记一致，`--run` 只是定位符；来自别的进程或宿主会话的调用会被拒绝。`ls` 与 `gc` 不要求身份。
+
+**残余风险（已接受）**：hidden session 只用于查看（`herdr session attach <session_name>`），不要在其中新建 tab 或 pane。收尾时空库存检查与 `session stop` 之间若有人手动 attach 并新建资源，会被一同停止。
+
+## 运行状态库
+
+状态库是 sqlite 文件，`agents-config.ts` 与 `agents-runtime.ts` 共用，保存额度 block 和 herdr run/lane 登记。agent 配置仍是 JSON 加 schema，不进库。
+
+**范围**：只登记 herdr 派发的 worker。native worker 的生命周期归宿主，仍只在台账记录，所以本库不是全部 worker 的登记。
+
+**位置**：默认 `~/.local/state/agents-cooperation/state.sqlite`；`--state <sqlite>` 或环境变量 `AGENTS_COOPERATION_STATE` 覆盖，两个脚本共用同一解析。目录权限 0700，文件 0600，启用 WAL、busy_timeout 和外键。写入都是短 `BEGIN IMMEDIATE` 事务，外部 Herdr 调用期间不持有写事务。目标文件存在但不是 sqlite（例如仍指向旧 JSON）、属于其他应用或版本高于本脚本时拒绝并说明，不覆盖。
+
+**版本与迁移**：`PRAGMA user_version` 加 `meta.app='agents-cooperation'`，在代码内按版本逐步迁移，不引入迁移工具；升级在一个写事务内执行，先校验旧数据。迁移序列先建 `meta`、`blocks`，再建 `runs`、`lanes`。旧版 `availability.json`：
+
+- 只在使用默认状态路径时，打开库会自动发现同目录的 `availability.json` 并导入；自定义 `--state` 不自动迁移，也不动邻接文件。
+- 导入在一个写事务内完成：把原文件 `rename` 为 `availability.json.importing-<时间>-<随机>`，读取并按 `<skill>/assets/availability.schema.json` 校验，写入 `blocks` 和 `meta.availability_imports`（快照路径、sha256、来源）；提交后只删除记录中对应且哈希未变的快照。事务回滚或中途退出时快照保留，下次打开把无记录的单个有效快照当作未完成的导入继续。
+- 无记录的遗留快照：仅一个且校验通过则按正常流程导入；多个或校验失败则全部保留并报错，不会表现为空状态。快照领取后原路径又出现的文件保留，不导入不删除，在输出的 `state_warnings` 中提示。
+- 显式导入：`agents-config.ts migrate-availability --from <path>`，同一内容（sha256）再次导入直接返回 `imported: 0`。
+
+**表**（字段以代码内迁移为准，此处只列用途）：
+
+- `blocks(engine, model NULL, reason, since, release_at NULL, by NULL)`：两个部分唯一索引（`model IS NULL` / `model IS NOT NULL`），`block` 在事务内 UPSERT，`unblock` 精确匹配，过期语义见下文。
+- `runs`：`run_id`（`<collab_id>-<owner_id>-<随机>`）、`collab_id`、`request_id`、`owner_id`、`engine`、调用方身份（`owner_proc` JSON `{pid, starttime, boot_id, source}`、`host_session_id`、`owner_pane`）、`cwd`、`label`、`session_name`（唯一，`aw-<MMDD>-<engine>-<随机>`，run open 时预留）、`session_phase`、`session_proof`、`session_dir_id`、`stopped_fingerprint`、`stop_observed_at`、`status`、`lock_proc`、`lock_op`、`last_error` 和时间戳。
+- `lanes`：`lane_id`、`run_id`、`op_id`、`worker_id`、`engine`、`model`、`class`、`agent_name`、`workspace_id`、`tab_id`、`pane_id`、`status`、`outcome`、`health`、`keep_reason`、`last_progress_at`、`last_error` 和时间戳；`(run_id, op_id)`、`(run_id, agent_name)` 唯一。
+
+**状态机**：
+
+- **lane `status`**：`opening`（已登记，尚未取得 route-lane 回执）→ `open`（回执齐全，记录 workspace、tab、pane ID）→ `closing`（正在关闭 pane）→ `closed`。`unknown`：开 lane 失败或回执缺失、`opening` 被恢复时进入，只报告，不按标签或名称认领，`lane close` 拒绝处理。`outcome` 为 `accepted` / `failed`，`health` 为 `ok` / `stale`，`keep_reason` 非空表示 owner 有意保留。
+- **run `status`**：`active` → `closing` → `closed`。`run close` 或 gc 判定 owner 已退出后进入 `closing`，session 回收到终态后才置 `closed`；从未创建 session（`session_phase` 为 `none`）的 run 直接 `closed`。
+- **`session_phase`**：`none`（只预留了名称）→ `creating`（首个 lane 开始创建）→ `created`（取得运行期证明）→ `stopping` → `stopped` → `deleting` → `deleted`；任何证据不符进入 `unknown`。每个破坏性动作之前先把阶段落库，中断后按阶段恢复：
+  - `creating` 且库中没有回执：直接 `unknown`，不按名称、时间或 scope 成员认领。创建由 `route-lane --create-session` 完成：以 `systemd-run --user --scope` 启动，从不复用或恢复已存在的同名 session（`session_exists`），session 目录用原子 `mkdir` 占用，fork server 前必须仍为空；目录在其间被写入、出现已恢复的 workspace 或 socket 由别的进程提供时返回 `session_foreign`（只报告）；成功回执含运行期证明 `{unit, invocation_id, server_pid, server_starttime, boot_id}` 和 session 目录身份 `{dev, ino}`。
+  - `created`：每次开 lane、关 lane、停止前，用证明复核（目录身份、原 server 进程、scope InvocationID、session 仍为 running），不一致即 `unknown`。关闭时逐 lane 尝试回收归属明确的 `open/closing` lane；未知、`opening` 或单个关闭失败分别报告，继续处理后续 lane，每个 lane 仍独立复核实例。只要有未关闭 lane 或错误便保留 session；全部 lane 已关闭且 workspace、tab、pane 全集为空，才进入 `stopping` 并执行 `herdr session stop`。
+  - `stopping`：正常停止先确认原 server 已退出，持久提交 `stop_observed_at`，再记录 `stopped_fingerprint`（目录递归条目的相对路径、类型、大小、纳秒 mtime 的元数据哈希与明细）。恢复时已 stopped 必须有已提交的停止观察时间，且目录条目不晚于该时间，才补记指纹；stop 已完成但 `stop_observed_at` 尚未提交就中断，会保守进入 `unknown`。仍 running 且证明一致则重新做空库存断言后再停止；无法证明停止后目录未被重新使用则 `unknown`。不为查询而重新拉起 session。
+  - `stopped`：删除前核对名称状态为 stopped、目录身份一致、当前元数据指纹与 `stopped_fingerprint` 完全一致；任一不符 `unknown`，保留目录。指纹只检测路径、类型、大小和纳秒 mtime 的变化，不保证所有重启方式必然改变指纹，也不是文件内容校验。然后进入 `deleting` 并执行 `herdr session delete`，确认名称与目录都不存在后 `deleted`，再置 run `closed`。`deleting` 恢复时同样先核对再重试。
+  - `unknown`：只报告，run 保持 `closing`，需要用户检查。
+- **关闭 lane**：`lane close` 只执行 `herdr --session <session_name> pane close <pane_id>`（参数数组，不经 shell；不用 tab 或 workspace close），随后查询确认 pane 已不存在才置 `closed`，查询失败则保持 `closing` 并写 `last_error`。Herdr 在 tab 的最后一个 pane 关闭时一并关闭 tab，在 workspace 的最后一个 tab 关闭时一并移除 workspace；他人在同 tab 插入的未知 pane 不受影响，会在库存比对中作为未知资源报告。
+
+**互斥**：每个 run 的写操作持 run 锁（`lock_proc` 记录操作进程身份，`lock_op` 记录操作标记）。`finally` 释放前也扫描当前 op；中间 route/capture 退出并不证明原生子调用已结束，仍在途或证据不可读时保留 `lock_proc/lock_op`，把诊断写入 `last_error`，不覆盖操作的原异常。后续只经 dead-holder 扫描接管，持有者仍 alive 或 unknown 时拒绝。持有者 dead 时，还要确认没有遗留的在途外部调用才可接管：runtime 与 `route-lane` 启动的外部子调用在 argv 带 `--op-tag`，并以环境变量 `AGENTS_COOPERATION_OP_TAG` 把操作标记传给其子进程（常驻 herdr server 不携带）；释放与接管均扫描同 UID 进程的 argv 与 environ，命中同一标记即视为在途。同 boot 才扫描，跨 boot 视为无在途。仅 `/proc` stat 已证实状态为 `Z` 的僵尸进程直接跳过，它已退出，其子孙仍独立接受扫描；其他状态和不可读 stat 不据此跳过。某进程的 environ 读取失败（进程已消失除外）时无法证明无在途，保留锁；仅当其启动时间严格早于锁持有者（不可能是其子孙）才跳过，同 tick 或更晚、启动时间无法读取的进程仍保留锁。没有 TTL 接管。
+
+**owner 判活三态**：用进程身份（`boot_id` 加 `/proc/<pid>/stat` 的 starttime）判断。`boot_id` 不同、pid 不存在、starttime 不同或进程为僵尸：`dead`；一致：`alive`；读取失败，或登记时没有进程证据（只有宿主会话 ID）：`unknown`。只有 `dead` 会触发自动回收。
+
+**gc**（`lane open` 与 `run close` 顺带运行，不含正在操作的那个 run；也可手动 `agents-runtime gc`；无常驻进程或定时器）：逐个未关闭 run 取锁（取不到则该 run 记入 `reports` 的错误，不接管），然后：
+
+1. 恢复：`creating` 无回执的 run 记为 `unknown`；`opening` lane 记为 `unknown`；`closing` lane 重试关闭；`status` 为 `closing` 的 run 继续推进 session 回收。
+2. owner 为 `dead` 的 `active` run：置 `closing` 并推进回收，空库存断言不变，有未知资源时不停止 session。
+3. owner 为 `alive` 或 `unknown`：`open` lane 的 `last_progress_at` 超过 `herdr.max_wait_minutes` 且无 `keep_reason` 时置 `health: stale`（写库）并报告；超过该上限三倍的 lane 无论有无 `keep_reason` 都报告。不自动关闭。
+4. 名称以 `aw-` 开头、却不属于任何未关闭 run 的 session：只报告。
+
+gc 的结果在输出的 `reports` 数组里（`lane open` / `run close` 为 `gc_reports`），实际执行的回收动作各有一条：`reclaimed`（owner 已死，带 `owner_life` 与终态 `session_phase`）、`resumed`（`from`/`to` 阶段）以及 lane 的 `marked_unknown`/`closed`。没有 `--force`：未知资源、`unknown` 状态和无法确认的 owner 一律只报告，由用户处理。
+
+**ls**：只读，不刷新进度。每个 run 输出登记行、`owner_life`、`lanes` 和 `actual`：session 为 `running` 时给出 `status`、`inventory`（workspace、tab、pane 全集）、`unknown`（库存中不属于任何已登记 lane 的 ID）和 `missing`（未关闭但 pane 已不在的 lane）；不是 running 时给出 `status`（`stopped` / `absent`）和 `missing`；查询失败给出 `error`。`lane` 的 `health` 由 `ls` 即时只读计算（规则与 gc 相同：owner 非 `dead`、lane 为 `open`、无进展超过上限且无 `keep_reason` 时为 `stale`，不写库），台账触发点只跑 `ls` 即可；超过上限三倍的保留 lane 报告属于 gc。
 
 `max_parallel` 计数包含 native 与 herdr worker。
 
@@ -159,13 +222,11 @@ herdr worker 全部放在 `resolve` 输出 `session` 指定的 hidden session（
 
 ## 额度耗尽 block 与自动解封
 
-运行状态与配置分离，不写入 `config.json`。状态文件：`~/.local/state/agents-cooperation/availability.json`（`AGENTS_COOPERATION_STATE` 或 `--state <path>` 覆盖），由脚本原子写入（临时文件加 rename），文件不存在视为无 block。结构由 `<skill>/assets/availability.schema.json` 定义，脚本读取时校验，结构非法或同一 (engine, model) 重复都会报错。owner 不手工编辑，只用下面的命令：
+运行状态与配置分离，不写入 `config.json`。block 记录在“运行状态库”的 `blocks` 表（位置、`--state` 覆盖和旧 `availability.json` 的迁移见上节），同一 (engine, model) 由部分唯一索引保证只有一条。owner 不手工编辑，只用下面的命令：
 
 ```json
-{ "version": 1, "blocks": [
-  { "engine": "codex", "model": "gpt-6-astra", "reason": "usage limit",
-    "since": "2026-10-16T22:00:00-04:00", "release_at": "2026-10-17T03:00:00-04:00", "by": "claude_owner" }
-] }
+{ "engine": "codex", "model": "gpt-6-astra", "reason": "usage limit",
+  "since": "2026-10-16T22:00:00-04:00", "release_at": "2026-10-17T03:00:00-04:00", "by": "claude_owner" }
 ```
 
 - `model` 省略 = 整个引擎（账户级额度）；有值 = 该引擎下使用该 model 的 owner 与子 agent。`release_at` 省略 = 没有解封时间，直到手动 `unblock`。同一 (engine, model) 只保留一条，再次 `block` 覆盖。条目存在即表示 blocked。
@@ -179,6 +240,7 @@ herdr worker 全部放在 `resolve` 输出 `session` 指定的 hidden session（
 | `block --engine <id> [--model <m>] [--release-at <ISO8601 \| +<n>m \| +<n>h \| +<n>d>] --reason <text> [--by <owner-id>]` | 写入 block，engine 必须存在于配置；输出写入后的条目 |
 | `unblock --engine <id> [--model <m>]` | 删除精确匹配的条目，输出删除数量 |
 | `status` | 当前有效的 block 列表，以及每个 owner 和子 agent 的可用性 |
+| `migrate-availability --from <path>` | 导入旧版 `availability.json` 快照，见“运行状态库”的迁移 |
 
 可用性判定（`resolve`、`show`、`status` 共用）依次为：`disabled`（自身 enabled=false）→ `engine_disabled` → `blocked`（引擎级或 engine+model 级，附 `release_at` 和 `reason`）→ `available`；`show` 输出中每个 owner 和子 agent 都带 `availability`。
 

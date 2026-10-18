@@ -52,16 +52,10 @@
       "description": "Herdr dispatch settings for heterogeneous (herdr) workers and collaborating owners.",
       "type": "object",
       "required": [
-        "worker_session",
         "max_wait_minutes"
       ],
       "additionalProperties": false,
       "properties": {
-        "worker_session": {
-          "description": "Name of the TUI-less Herdr session that hosts every herdr worker lane; owners and collaborating owners stay in the user's main session.",
-          "type": "string",
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
-        },
         "max_wait_minutes": {
           "description": "Longest single wait for a herdr agent, in minutes; resolve exposes it as wait_timeout_ms and every herdr wait must pass it as --timeout.",
           "type": "integer",

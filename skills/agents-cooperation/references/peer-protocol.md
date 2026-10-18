@@ -7,7 +7,7 @@
 Herdr 的 tab 命名、归属校验和清理规则以 `herdr` 技能为准；模型、effort 和启动参数来自[调度配置](config.md)。
 
 ```sh
-# 1. 在目标项目创建独立 lane，返回 pane ID 和 cleanup 命令；协作 owner 留在主 session，不带 --session
+# 1. 在目标项目创建独立 lane，返回 pane ID 和 cleanup 命令；协作 owner 留在主 session，由接单 owner 直接调用 route-lane，不带 --session，也不进状态库
 bun <herdr-skill>/scripts/route-lane.ts --type coding-agent --cwd <项目路径> --label 'MMDD｜TYPE｜Topic'
 
 # 2. 生成协作 owner 的启动参数：协作 owner 取 status 中可用、引擎与自己不同的 enabled owner；输出的 wait_timeout_ms 用于下文所有等待
@@ -80,7 +80,7 @@ herdr agent prompt <owner> "<信封>" --wait --until idle --until done --until b
 ## 协作 owner 守则
 
 - 先用 `show` 找到自己引擎对应的 owner，只在 `assign` 给定的写入范围内按配置调度自己的子 agent（按每个包的类别 `resolve --class` 取参数，不指定 worker id，受自己的 `max_parallel` 约束）完成改动，自己不改项目文件；需要越界时写进回复，不自行扩大。额度耗尽按 SKILL.md 的“额度耗尽”执行 `block` 并改派，在回复中写明。
-- 协作 owner 自己调度的 herdr worker 同样放进 `resolve` 输出 `session` 指定的 hidden session，按[配置说明](config.md#herdr-派发流程)的生命周期执行，用完立即关 lane，最后一个 lane 关闭后运行 `--stop-if-empty`；回复前核对本 owner 在 hidden session 中的 lane 已清零。
+- 协作 owner 留在主 session，不进状态库；它自己调度的 herdr worker 使用它自己的 run：首次派发前 `agents-runtime run open`（`--collab` 沿用本需求的 collab-id，run 与 hidden session 独立于接单 owner 的），按[配置说明](config.md#herdr-派发流程)的生命周期 `lane open` → `agent start` 等 → `lane mark` → `lane close`，用完立即关 lane。回复前运行 `agents-runtime ls --run <run-id>` 核对本 run 的 lane 已清零，再 `run close`；仍为 `closing`、有 `unknown` lane 或未知资源时，在回复中如实写明，不声称已回收。接单 owner 不关闭、不接管协作 owner 的 run。
 - 不提交、不推送、不关闭非自己创建的资源，也不直接与用户沟通。如果用户在协作 owner 的 pane 中直接下达指令：属于当前协作需求的追加或变更，先记录并交接单 owner 判定依赖和门槛状态，再按其回复执行；与当前需求无关的普通实施指令照常派子 agent 执行，并在下一次回复中告知接单 owner。普通实施指令不视为必审方案的 ChatGPT 审查豁免。
 - 回复以结论开头，不依赖终端输出传递关键信息。
 

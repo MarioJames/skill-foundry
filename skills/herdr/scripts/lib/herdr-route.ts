@@ -27,6 +27,8 @@ export class CliError extends Error {
     readonly code: string,
     message: string,
     readonly status = 1,
+    /** Extra top-level fields for the failure JSON, e.g. the session a failed lane left behind. */
+    readonly details: Record<string, unknown> = {},
   ) {
     super(message);
   }
@@ -43,7 +45,7 @@ export async function runCli(work: () => Promise<void>): Promise<void> {
     const failure = error instanceof CliError
       ? error
       : new CliError("internal_error", error instanceof Error ? error.message : String(error));
-    emit({ ok: false, error: { code: failure.code, message: failure.message } });
+    emit({ ok: false, error: { code: failure.code, message: failure.message }, ...failure.details });
     process.exitCode = failure.status;
   }
 }
@@ -92,8 +94,8 @@ export function herdrCommand(...args: string[]): string[] {
   return ["herdr", ...(activeSession ? ["--session", activeSession] : []), ...args];
 }
 
-async function capture(command: string[]): Promise<{ stdout: string; stderr: string; status: number }> {
-  const child = Bun.spawn(command, { stdout: "pipe", stderr: "pipe" });
+export async function capture(command: string[]): Promise<{ stdout: string; stderr: string; status: number }> {
+  const child = Bun.spawn(command, { stdout: "pipe", stderr: "pipe", env: process.env });
   const [stdout, stderr, status] = await Promise.all([
     Bun.readableStreamToText(child.stdout),
     Bun.readableStreamToText(child.stderr),
@@ -460,12 +462,25 @@ export async function createResource(options: {
 // of the user's main session. Only the session `herdr --session` flag differs.
 const SESSION_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/u;
 
-export function parseSessionName(raw: string): string {
+export function parseSessionName(raw: string, flag = "--session"): string {
   if (raw === "default") {
-    throw new CliError("invalid_session", "--session must name a hidden session, not the default session", 2);
+    throw new CliError("invalid_session", `${flag} must name a hidden session, not the default session`, 2);
   }
   if (!SESSION_NAME.test(raw)) {
-    throw new CliError("invalid_session", "--session must match [A-Za-z0-9][A-Za-z0-9_-]* (max 63 chars)", 2);
+    throw new CliError("invalid_session", `${flag} must match [A-Za-z0-9][A-Za-z0-9_-]* (max 63 chars)`, 2);
+  }
+  return raw;
+}
+
+/** Environment variable carrying the op tag to every child process (they cannot all take `--op-tag`). */
+export const OP_TAG_ENV = "AGENTS_COOPERATION_OP_TAG";
+
+const OP_TAG = /^[A-Za-z0-9][A-Za-z0-9._:=@+-]{0,127}$/u;
+
+/** An opaque caller-chosen token kept verbatim in process argv so in-flight calls can be found in /proc. */
+export function parseOpTag(raw: string): string {
+  if (!OP_TAG.test(raw)) {
+    throw new CliError("invalid_op_tag", "--op-tag must match [A-Za-z0-9][A-Za-z0-9._:=@+-]* (max 128 chars)", 2);
   }
   return raw;
 }
@@ -475,7 +490,7 @@ export function sessionUnit(name: string): string {
 }
 
 /** Workspaces of a hidden session, or null when its server is not running. */
-async function listSessionWorkspaces(name: string): Promise<unknown[] | null> {
+export async function listSessionWorkspaces(name: string): Promise<unknown[] | null> {
   const result = await capture(["herdr", "--session", name, "workspace", "list"]);
   const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
   if (result.status !== 0) {
@@ -500,32 +515,43 @@ export async function sessionRunning(name: string): Promise<boolean> {
 
 export interface SessionState {
   name: string;
+  created: false;
   running_before: boolean;
   started: boolean;
   unit: string | null;
 }
 
+/** Reuse a live session without ever starting or replacing its server. */
+export async function requireRunningSession(name: string): Promise<SessionState> {
+  if (!(await sessionRunning(name))) {
+    throw new CliError("session_not_running", `Hidden session ${name} is not running; --require-running forbids starting it`);
+  }
+  return { name, created: false, running_before: true, started: false, unit: null };
+}
+
 export async function ensureSession(name: string, timeoutMs = 10_000): Promise<SessionState> {
   if (await sessionRunning(name)) {
-    return { name, running_before: true, started: false, unit: null };
+    return { name, created: false, running_before: true, started: false, unit: null };
   }
   if (!Bun.which("systemd-run")) {
     throw new CliError("missing_dependency", "systemd-run is required to start a hidden session; not falling back to a bare server", 127);
   }
 
   const unit = sessionUnit(name);
+  // systemd-run and its start-up keep the op tag in their environment; only the long-lived server
+  // command drops it, at the exec boundary.
   const child = Bun.spawn([
     "systemd-run", "--user", "--scope", "--collect", `--unit=${unit}`,
     "-p", "MemoryHigh=8G", "-p", "MemoryMax=10G",
-    "--", "herdr", "--session", name, "server",
-  ], { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true });
+    "--", "env", "-u", OP_TAG_ENV, "herdr", "--session", name, "server",
+  ], { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true, env: process.env });
   child.unref();
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (child.exitCode !== null && child.exitCode !== 0) break;
     if (await sessionRunning(name)) {
-      return { name, running_before: false, started: true, unit: `${unit}.scope` };
+      return { name, created: false, running_before: false, started: true, unit: `${unit}.scope` };
     }
     await Bun.sleep(100);
   }

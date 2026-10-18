@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /** Validate, inspect and resolve the agents-cooperation owner/worker config and its quota block state. */
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,7 +10,7 @@ import { type Issue, type Schema, lintSchema, validate } from "./lib/json-schema
 const ASSETS = join(dirname(fileURLToPath(import.meta.url)), "..", "assets");
 export const DEFAULT_CONFIG = join(ASSETS, "config.default.json");
 const CONFIG_SCHEMA = join(ASSETS, "config.schema.json");
-const STATE_SCHEMA = join(ASSETS, "availability.schema.json");
+import { openConfiguredState, statePath, listBlocks, upsertBlock, removeBlock, purgeExpired, transaction, migrateAvailability, stateWarnings } from "./lib/state-db.ts";
 
 /** The single kind -> legal effort table; kinds not listed accept any non-empty string. */
 export const EFFORTS: Record<string, string[]> = {
@@ -43,7 +43,7 @@ export class CliError extends Error {
 export interface Engine { enabled: boolean; kind: string; native_subagents?: boolean }
 export interface Owner { enabled: boolean; engine: string; model: string; effort: string; workers: string[]; max_parallel: number }
 export interface Worker { enabled: boolean; engine: string; model: string; effort: string; description?: string; tags?: string[] }
-export interface Herdr { worker_session: string; max_wait_minutes: number }
+export interface Herdr { max_wait_minutes: number }
 export interface Config { version: 1; engines: Record<string, Engine>; owners: Record<string, Owner>; workers: Record<string, Worker>; herdr: Herdr }
 export interface Block { engine: string; model?: string; reason: string; since: string; release_at?: string; by?: string }
 export interface State { version: 1; blocks: Block[] }
@@ -62,6 +62,10 @@ export function loadSchema(path: string): Schema {
 // ---- config validation ----
 export function validateConfig(config: unknown, schema: Schema = loadSchema(CONFIG_SCHEMA)): Issue[] {
   const issues = validate(schema, config);
+  if (config && typeof config === "object" && (config as any).herdr && typeof (config as any).herdr === "object" && "worker_session" in (config as any).herdr) {
+    const i = issues.find(i=>i.path==="$.herdr.worker_session");
+    if(i) i.message = "remove herdr.worker_session; agents-runtime allocates a private session for each run";
+  }
   if (issues.length) return issues;
   const c = config as Config;
   const bad = (path: string, message: string) => issues.push({ path, message });
@@ -113,30 +117,6 @@ export function availabilityOf(config: Config, blocks: Block[], entity: Owner | 
 }
 const describeUnavailable = (a: Availability) =>
   a.status === "blocked" ? `blocked (${a.model ? `${a.engine}/${a.model}` : a.engine}: ${a.reason}${a.release_at ? `, release_at ${a.release_at}` : ""})` : a.status;
-export function validateState(state: unknown, schema: Schema = loadSchema(STATE_SCHEMA)): Issue[] {
-  const issues = validate(schema, state);
-  if (issues.length) return issues;
-  const seen = new Set<string>();
-  (state as State).blocks.forEach((b, i) => {
-    const key = `${b.engine}\0${b.model ?? ""}`;
-    if (seen.has(key)) issues.push({ path: `$.blocks[${i}]`, message: "duplicate (engine, model) block" });
-    seen.add(key);
-  });
-  return issues;
-}
-export function readState(path: string): State {
-  if (!existsSync(path)) return { version: 1, blocks: [] };
-  const state = readJson(path);
-  const issues = validateState(state);
-  if (issues.length) throw new CliError(`invalid state file ${path}`, issues);
-  return state;
-}
-export function writeState(path: string, state: State): void {
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
-  try { writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", { mode: 0o600 }); renameSync(tmp, path); }
-  catch (error) { rmSync(tmp, { force: true }); throw error; }
-}
 /** --release-at: an ISO 8601 timestamp with timezone (returned as given), or +<n>m|h|d counted from now (n >= 1). */
 export function parseReleaseAt(value: string, now: number): string {
   const relative = /^\+([1-9][0-9]*)([mhd])$/.exec(value);
@@ -174,7 +154,7 @@ function launch(config: Config, ownerId: string, workerId: string, warnings: str
     }
   }
   const variant = engine.kind === "opencode" ? opencodeVariantWarning(home, worker.model, worker.effort) : undefined;
-  return { ...base, dispatch: "herdr", ...interactive(engine.kind, worker.model, worker.effort), session: config.herdr.worker_session, wait_timeout_ms: waitTimeoutMs(config), warnings: variant ? [...warnings, variant] : warnings };
+  return { ...base, dispatch: "herdr", ...interactive(engine.kind, worker.model, worker.effort), wait_timeout_ms: waitTimeoutMs(config), warnings: variant ? [...warnings, variant] : warnings };
 }
 /** Longest single herdr wait; every herdr agent prompt --wait / agent wait must pass it as --timeout. */
 const waitTimeoutMs = (config: Config) => config.herdr.max_wait_minutes * 60_000;
@@ -208,7 +188,7 @@ export function resolveDispatch(config: Config, blocks: Block[], opts: { owner: 
     if (opts.peer === opts.owner) throw new CliError("--peer must differ from --owner");
     const peer = requireOwner(config, blocks, opts.peer, "peer owner");
     const kind = config.engines[peer.engine]!.kind;
-    return { owner: opts.owner, peer: opts.peer, role: "peer_owner", dispatch: "herdr", ...interactive(kind, peer.model, peer.effort), engine: peer.engine, model: peer.model, effort: peer.effort, session: null, wait_timeout_ms: waitTimeoutMs(config), warnings: [] };
+    return { owner: opts.owner, peer: opts.peer, role: "peer_owner", dispatch: "herdr", ...interactive(kind, peer.model, peer.effort), engine: peer.engine, model: peer.model, effort: peer.effort, wait_timeout_ms: waitTimeoutMs(config), warnings: [] };
   }
   if (opts.worker) {
     if (opts.class !== undefined || opts.tag !== undefined) throw new CliError("--worker cannot be combined with --class or --tag");
@@ -266,8 +246,6 @@ export function configPath(flag: string | undefined, env: Record<string, string 
   const user = join(env.HOME ?? homedir(), ".config", "agents-cooperation", "config.json");
   return existsSync(user) ? { path: user, source: user } : { path: DEFAULT_CONFIG, source: "default" };
 }
-const statePath = (flag: string | undefined, env: Record<string, string | undefined>) =>
-  resolvePath(flag ?? env.AGENTS_COOPERATION_STATE ?? join(env.HOME ?? homedir(), ".local", "state", "agents-cooperation", "availability.json"));
 function loadConfig(path: string, schema: Schema): Config {
   const config = readJson(path);
   const issues = validateConfig(config, schema);
@@ -284,14 +262,16 @@ const USAGE = `Usage: bun agents-config.ts <command> [options]
                                     --tag only with judgment; --worker only for a user-chosen worker or continuing the same package)
   block --engine <id> [--model <m>] [--release-at <ISO8601|+<n>m|h|d>] --reason <text> [--by <owner-id>]
   unblock --engine <id> [--model <m>]
+  migrate-availability --from <path> Import a legacy availability JSON snapshot
   status                           Print active blocks and per-owner/worker availability
 Common: --config <path> --state <path>; env AGENTS_COOPERATION_CONFIG, AGENTS_COOPERATION_STATE, AGENTS_COOPERATION_NOW (tests only)`;
 
 export function run(args: string[], env: Record<string, string | undefined> = process.env): RunResult {
+  let db: ReturnType<typeof openConfiguredState> | undefined;
   try {
     const { values, positionals } = parseArgs({
       args, allowPositionals: true,
-      options: { config: { type: "string" }, state: { type: "string" }, owner: { type: "string" }, worker: { type: "string" }, class: { type: "string" }, tag: { type: "string" }, peer: { type: "string" }, engine: { type: "string" }, model: { type: "string" }, "release-at": { type: "string" }, reason: { type: "string" }, by: { type: "string" }, help: { type: "boolean", short: "h" } },
+      options: { from: { type: "string" }, config: { type: "string" }, state: { type: "string" }, owner: { type: "string" }, worker: { type: "string" }, class: { type: "string" }, tag: { type: "string" }, peer: { type: "string" }, engine: { type: "string" }, model: { type: "string" }, "release-at": { type: "string" }, reason: { type: "string" }, by: { type: "string" }, help: { type: "boolean", short: "h" } },
     });
     const command = positionals[0];
     if (values.help || !command) return { code: values.help ? 0 : 2, stdout: values.help ? USAGE + "\n" : "", stderr: values.help ? "" : USAGE + "\n" };
@@ -299,7 +279,7 @@ export function run(args: string[], env: Record<string, string | undefined> = pr
     const nowEnv = env.AGENTS_COOPERATION_NOW;
     const now = nowEnv ? stamp(nowEnv) : Date.now();
     if (Number.isNaN(now)) throw new CliError("invalid AGENTS_COOPERATION_NOW");
-    const out = (value: unknown): RunResult => ({ code: 0, stdout: JSON.stringify(value, null, 2) + "\n", stderr: "" });
+    const out = (value: unknown): RunResult => ({ code: 0, stdout: JSON.stringify(db && stateWarnings(db).length ? {...(value as object), state_warnings:stateWarnings(db)} : value, null, 2) + "\n", stderr: "" });
     const { path, source } = configPath(values.config, env);
     const schema = loadSchema(CONFIG_SCHEMA);
     if (command === "validate") {
@@ -309,7 +289,8 @@ export function run(args: string[], env: Record<string, string | undefined> = pr
     }
     const config = loadConfig(path, schema);
     const file = statePath(values.state, env);
-    const state = readState(file);
+    db = openConfiguredState(values.state, env);
+    const state: State = {version:1,blocks:listBlocks(db)};
     const blocks = activeBlocks(state, now);
     const need = (name: string, value: string | undefined) => { if (!value) throw new CliError(`--${name} is required`); return value; };
     const availability = () => ({
@@ -317,6 +298,7 @@ export function run(args: string[], env: Record<string, string | undefined> = pr
       workers: Object.fromEntries(Object.entries(config.workers).map(([id, w]) => [id, availabilityOf(config, blocks, w)])),
     });
     switch (command) {
+      case "migrate-availability": return out(migrateAvailability(db,need("from",values.from)));
       case "show": {
         const withAvailability = <T extends Owner | Worker>(group: Record<string, T>) =>
           Object.fromEntries(Object.entries(group).map(([id, e]) => [id, { ...e, availability: availabilityOf(config, blocks, e) }]));
@@ -334,16 +316,13 @@ export function run(args: string[], env: Record<string, string | undefined> = pr
           if (stamp(entry.release_at) <= now) throw new CliError("--release-at must be in the future");
         }
         if (values.by) entry.by = values.by;
-        const kept = blocks.filter(b => !(b.engine === engine && b.model === entry.model));
-        writeState(file, { version: 1, blocks: [...kept, entry] });
-        return out({ block: entry, purged_expired: state.blocks.length - blocks.length });
+        const purged = transaction(db,()=>{ const n=purgeExpired(db!,now); upsertBlock(db!,entry); return n; });
+        return out({ block: entry, purged_expired: purged });
       }
       case "unblock": {
         const engine = need("engine", values.engine);
-        const kept = blocks.filter(b => !(b.engine === engine && b.model === values.model));
-        const removed = blocks.length - kept.length;
-        if (removed || state.blocks.length !== blocks.length) writeState(file, { version: 1, blocks: kept });
-        return out({ removed, purged_expired: state.blocks.length - blocks.length });
+        const result = transaction(db,()=>{const purged_expired=purgeExpired(db!,now); const removed=removeBlock(db!,engine,values.model); return {removed,purged_expired};});
+        return out(result);
       }
       default: throw new CliError(`unknown command ${command}`);
     }
@@ -357,6 +336,7 @@ export function run(args: string[], env: Record<string, string | undefined> = pr
     }
     return { code: 1, stdout: "", stderr: `agents-config: ${(error as Error).message}\n` };
   }
+  finally { db?.close(); }
 }
 if (import.meta.main) {
   const result = run(Bun.argv.slice(2));

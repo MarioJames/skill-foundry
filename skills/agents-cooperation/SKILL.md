@@ -26,8 +26,8 @@ Worker 即子 agent，无论由宿主内置工具还是 Herdr 启动。层级最
 
 - **位置**：`~/.config/agents-cooperation/config.json`（`AGENTS_COOPERATION_CONFIG` 或脚本 `--config` 可覆盖）；不存在时使用 `assets/config.default.json`，它是唯一默认来源，也是用户复制的起点。结构由 `assets/config.schema.json` 定义，不做多层合并。
 - **先 `show`**：首次调度前运行 `bun <skill>/scripts/agents-config.ts show`，按宿主引擎找到自己的 enabled owner（每个引擎至多一个），读取它的 `workers` 列表、模型、`availability` 和并行上限。宿主没有可用的 owner 配置时停下，向用户或接单 owner 说明。
-- **派发前 `resolve`**：`resolve --owner <owner-id> --class mechanical|routine|judgment [--tag <领域>]`，`--class` 必填，取值见[包类别](#包类别)；`--tag` 只能和 `--class judgment` 一起用。`--worker <worker-id>` 只用于用户指定 worker 或续接同一包，台账写明原因，不与 `--class` 同用；指定的 worker 不在该 owner 的 `workers` 列表中时仍可启动，输出 `warnings`。输出字段含义和选择算法见[配置说明](references/config.md#派发方式推导)，herdr 输出另含 `session` 和 `wait_timeout_ms`，见 herdr worker 生命周期；派发方式、工具、模型、effort 和 argv 照抄不改，`warnings` 必读，`peer_suggestion` 按[包类别](#包类别)处理。仍须核对子 agent 实际运行的模型，不符合时停掉重派，台账“角色·模型”列按实际模型填写。
-- **约束走配置**：调度约束一律通过配置表达（`workers` 列表、`enabled`、`tags`、`max_parallel`、`herdr` 的 worker session 与等待上限、block），技能和脚本不另设硬编码限制。
+- **派发前 `resolve`**：`resolve --owner <owner-id> --class mechanical|routine|judgment [--tag <领域>]`，`--class` 必填，取值见[包类别](#包类别)；`--tag` 只能和 `--class judgment` 一起用。`--worker <worker-id>` 只用于用户指定 worker 或续接同一包，台账写明原因，不与 `--class` 同用；指定的 worker 不在该 owner 的 `workers` 列表中时仍可启动，输出 `warnings`。输出字段含义和选择算法见[配置说明](references/config.md#派发方式推导)，herdr 输出另含 `wait_timeout_ms`，见 herdr worker 生命周期；派发方式、工具、模型、effort 和 argv 照抄不改，`warnings` 必读，`peer_suggestion` 按[包类别](#包类别)处理。仍须核对子 agent 实际运行的模型，不符合时停掉重派，台账“角色·模型”列按实际模型填写。
+- **约束走配置**：调度约束一律通过配置表达（`workers` 列表、`enabled`、`tags`、`max_parallel`、`herdr` 的等待上限、block），技能和脚本不另设硬编码限制。
 - **改配置**：修改后先运行 `validate` 并通过，再用 `show` 确认生效；不通过不得继续沿用。
 - **默认值**：模型和 effort 的默认值来自 `assets/config.default.json`；用户当轮指定时以用户为准。其他技能对某类 worker 另有规定时以那个技能为准，例如 browser-harness 规定 Codex 验收 worker 用 `gpt-6.1-sol` medium，这类覆盖直接传给宿主工具，不改配置。
 
@@ -51,11 +51,21 @@ native 派发约束（`resolve` 输出已包含这些参数）：内置子 agent
 
 herdr 派发依赖 Herdr；不可用时跨引擎 worker 无法派发，改用同引擎 native worker，也没有可用的就标阻塞，不改为亲自动手。
 
-**herdr worker 生命周期**（命令、信任提示和清理细节见 [配置说明](references/config.md#herdr-派发流程)）：herdr worker 一律放进 `resolve` 输出 `session` 指定的 hidden session（无 TUI，不占用户主 session 的 agents 面板）；接单 owner 和协作 owner 留在主 session。每个 herdr worker 用 `route-lane --session <session>` 新建独立 tab+pane（session 未运行时自动拉起），`herdr --session <session> agent start` 启动（argv 取自 `resolve`），先读屏处理信任提示再发信封（任务文件和回复文件路径），等待后由 owner 读回复并验收 diff。hidden session 里的所有 `herdr agent` 命令都带 `--session <session>`；用户查看用 `herdr session attach <session>`。协作 owner 的 lane 不带 `--session`。
+**herdr worker 生命周期**（命令、状态机和回收规则见 [配置说明](references/config.md#herdr-派发流程)）：每个 owner 任务实例独占一个 hidden Herdr session（无 TUI，不占用户主 session 的 agents 面板，不与其他 owner 或任务共用）；接单 owner 和协作 owner 留在主 session。run、lane 和 session 由 `<skill>/scripts/agents-runtime.ts`（下称 `agents-runtime`）登记、创建、关闭和回收，owner 不直接调用 `route-lane`，也不自行执行 `cleanup_command` 关闭 hidden lane。顺序如下：
+
+1. 任务首次 herdr 派发前 `agents-runtime run open --owner <owner-id> --collab <collab-id> --request <request-id> --cwd <项目路径> --label 'MMDD｜TYPE｜Topic'`，取输出的 `run_id` 和 `session_name`；同一 `--request` 重复调用返回同一个 run。
+2. 每个 worker 先 `agents-runtime lane open --run <run-id> --worker <worker-id> --class <类别> --name <name> --op <op-id>`，建独立 tab+pane，取输出的 `lane_id` 和 `pane_id`；session 在首个 lane 时创建。
+3. `herdr --session <session_name> agent start/read/send-keys/prompt/wait` 启动并交接（argv 取自 `resolve`），先读屏处理信任提示再发信封（任务文件和回复文件路径），等待后由 owner 读回复并验收 diff。hidden session 里所有 `herdr agent` 命令都带 `--session <session_name>`。
+4. `agents-runtime lane mark --lane <lane-id>` 记录 `--outcome accepted|failed`、需保留时的 `--keep-reason <原因>`，等待轮次有进展时 `--progress`。
+5. `agents-runtime lane close --lane <lane-id>` 关闭 lane，收尾时 `agents-runtime run close --run <run-id>`。
+
+协作 owner 的 lane 不属于 hidden session，也不进状态库。hidden session 只用于查看（`herdr session attach <session_name>`），不要在其中新建 tab 或 pane，收尾期间尤其如此：新建的资源可能随 session 停止一并被关闭。
 
 等待有上限：每个 `agent prompt --wait` 和后台 `agent wait` 都显式带 `--timeout <wait_timeout_ms>`（取自 `resolve`），没有无超时的等待。Claude Code 前台 Bash 最长 10 分钟，超过的等待必须走宿主后台任务（`run_in_background`）。超时后先读输出：无进展标 stale，按下文心跳规则停掉重派；有进展可再等一轮，同样带 `--timeout`，受同一上限约束。
 
-**用完即回收（硬性）**：一次性包验收通过（或失败且已核对部分产物）后立即执行 `route-lane` 返回的 `cleanup_command` 关闭 lane，不留空闲 agent；需要多轮的包留到该包结束再关；本 owner 在 hidden session 中的最后一个 lane 关闭后运行 `route-lane --session <session> --stop-if-empty`。只关本任务创建的 lane，不关用户自己的 pane。
+**登记范围**：状态库只登记 herdr 派发的 worker，native worker 的生命周期归宿主，仍只在台账记录；它不是全部 worker 的登记。
+
+**用完即回收（硬性）**：一次性包验收通过（或失败且已核对部分产物）后立即 `lane mark --outcome` 并 `lane close`，不留空闲 agent；需要多轮的包留到该包结束再关，期间用 `--keep-reason` 写明原因。`run close` 会兜底关闭本 run 仍开着的 lane，但不以此代替逐个回收。只关本任务登记的 lane，不关用户自己的 pane。
 
 ### 并行上限
 
@@ -78,7 +88,7 @@ herdr 派发依赖 Herdr；不可用时跨引擎 worker 无法派发，改用同
 
 ### 额度耗尽
 
-运行状态与配置分离，记录在 `~/.local/state/agents-cooperation/availability.json`，只用 `block` / `unblock` / `status` 读写。
+运行状态与配置分离，记录在状态库 `~/.local/state/agents-cooperation/state.sqlite`（与 herdr run/lane 登记同库，路径可用 `--state` 或 `AGENTS_COOPERATION_STATE` 覆盖），只用 `block` / `unblock` / `status` 读写。
 
 - 派发、herdr prompt 或子 agent 结果中出现额度耗尽信号（429、usage limit、quota exceeded、credit 或额度不足、提示需等待到某时刻的 rate limit）时，owner 立即执行 `block --engine <id> [--model <m>] [--release-at <时间>] --reason <原因> --by <owner-id>`：必须从报错中解析出恢复时间并传 `--release-at`（ISO 8601 含时区，或 `+<n>m|h|d`）；报错没有恢复时间时不传，该条目不自动解封，直到手动 `unblock`；报错只针对某个模型时带 `--model`，账户级额度不带。
 - 然后用 `resolve --owner <owner-id> --class <原类别> [--tag <领域>]` 重新选子 agent，把未完成的工作包整包改派（整包转移，不在包内来回切换），台账写明 block 与改派。
@@ -102,7 +112,7 @@ owner 在以下时机，先执行本节再继续长步骤或等待：首次接�
 
 1. **盘点**：合并新指令、进行中的工作、未推进的待办和积压问题。每项记录所有者、写入范围、依赖和阻塞，不先以“任务小”“同项目”为由筛掉。
 2. **路由**：按下文判定模式与载体。新任务的写入范围和某个运行中子 agent 重叠时，追加给它（Claude Code 用 SendMessage 续接）或排在它之后；不重叠时新开子 agent。替换或取消只停掉被替换的工作：先确认它已停止并核对部分产物，再移交写入权。
-3. **回收 lane**：每个触发点都核对本 owner 在 hidden session 中的 lane（`herdr --session <session> agent list`，只看本任务创建的）。一次性包已验收或已核对部分产物的 lane 立即执行 `cleanup_command`，不得留空闲 agent；确需保留（多轮包、等待验收）的，在台账“阻塞/风险”列写明未关闭 lane 的原因。hidden 后用户看不到这些 agent，不回收就会一直在后台消耗资源。
+3. **回收 lane**：每个触发点运行 `agents-runtime ls`（默认列出全部未关闭 run，本 owner 的用 `--run <run-id>` 限定）。一次性包已验收或已核对部分产物的 lane 立即 `lane close`，不得留空闲 agent；确需保留（多轮包、等待验收）的，用 `lane mark --keep-reason` 写明并在台账“阻塞/风险”列写明原因。`ls` 中的 `health: stale` lane、`unknown` 状态的 lane 或 `session_phase`、`actual.unknown` 非空的未知资源、`actual.missing`、`actual.error`、`last_error`，以及 `owner_life` 为 `dead` 的其他 run，一律原样写入“阻塞/风险”列。owner 已退出的 run 由 `gc` 自动回收，其余只报告；没有 `--force`，未知资源由用户处理。hidden 后用户看不到这些 agent，不回收就会一直在后台消耗资源。
 4. **输出台账**：每个触发点都输出一张台账，它同时就是给用户的进度汇报：
 
    | 任务 | 类别 | 角色·模型 | 状态 | 最近进展 | 阻塞/风险 |
@@ -168,4 +178,4 @@ owner 在以下时机，先执行本节再继续长步骤或等待：首次接�
 
 ## 收尾
 
-接单 owner 汇总已验收的交付，统一集成（解决冲突等需要改文件的集成工作同样派给子 agent），完成项目要求的验证后做一次本地提交；子 agent 和协作 owner 都不提交。只释放本任务创建的子 agent 和 pane，不关闭用户自己的 pane；核对 hidden session 中本任务的 lane 已清零，再运行 `route-lane --session <session> --stop-if-empty`，只关本任务创建的 lane。按 [任务资源生命周期](../cow-workspace/SKILL.md#task-artifacts-and-resource-lifecycle) 核对每个子 agent 的资源闭环，保留最终交付、必要证据和持久业务数据，回收已满足条件的中间产物、CoW 视图与任务基线，不只停止进程。协作消息目录、其中引用的 Convorel 内容版本和送审源码快照属持久证据，不纳入回收；等待进程和 lane 照常清理。最终说明写清交付内容、验证结果、资源释放和保留情况。
+接单 owner 汇总已验收的交付，统一集成（解决冲突等需要改文件的集成工作同样派给子 agent），完成项目要求的验证后做一次本地提交；子 agent 和协作 owner 都不提交。只释放本任务创建的子 agent 和 pane，不关闭用户自己的 pane；本任务的 herdr lane 逐个 `lane close` 后运行 `agents-runtime run close --run <run-id>`，输出 `status: closed` 才算 session 已回收；仍为 `closing`、带 `last_error` 或有未知资源时，写入最终说明的风险，不声称已回收。按 [任务资源生命周期](../cow-workspace/SKILL.md#task-artifacts-and-resource-lifecycle) 核对每个子 agent 的资源闭环，保留最终交付、必要证据和持久业务数据，回收已满足条件的中间产物、CoW 视图与任务基线，不只停止进程。协作消息目录、其中引用的 Convorel 内容版本和送审源码快照属持久证据，不纳入回收；等待进程照常清理。最终说明写清交付内容、验证结果、资源释放和保留情况。
