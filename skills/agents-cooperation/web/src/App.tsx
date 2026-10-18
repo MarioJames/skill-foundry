@@ -209,7 +209,7 @@ export default function App({appearance,onAppearanceChange}:{appearance:'light'|
       {state.availability.warnings?.length?<details><summary>额度状态诊断</summary><ul>{state.availability.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul></details>:null}
     </>:null}
   </Form.Field>;
-  const navigation=[{href:'engines',label:'引擎',icon:Cpu},{href:'owners',label:'协作负责人',icon:Users},{href:'workers',label:'工作代理',icon:Bot},{href:'herdr',label:'系统设置',icon:Settings2},{href:'agents',label:'Agent 看板',icon:Kanban}];
+  const navigation=[{href:'engines',label:'引擎',icon:Cpu},{href:'owners',label:'协作负责人',icon:Users},{href:'workers',label:'工作代理',icon:Bot},{href:'herdr',label:'系统设置',icon:Settings2},{href:'agents',label:'任务看板',icon:Kanban}];
   function addEntity() {
     if(!config||!['engines','owners','workers'].includes(section))return;
     const base=section==='workers'?'new_worker':section==='owners'?'new_owner':'new_engine';let id=base;let n=2;

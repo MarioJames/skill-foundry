@@ -6,7 +6,7 @@ import * as promises from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Database } from "bun:sqlite";
 import { DEFAULT_CONFIG, activeBlocks } from "../../scripts/agents-config.ts";
-import { openState, upsertBlock } from "../../scripts/lib/state-db.ts";
+import { openState, STATE_VERSION, upsertBlock } from "../../scripts/lib/state-db.ts";
 import { ConfigStore } from "../lib/config-store.ts";
 import { readState } from "../lib/read-state.ts";
 import { startServer, BODY_LIMIT } from "../server.ts";
@@ -271,7 +271,7 @@ test("read-only SQLite preserves v1/v2 bytes, permissions and expired rows; wron
   expect(activeBlocks({ version: 1, blocks: state.blocks }, now).map(b => b.model)).toEqual(["1"]);
   expect(readFileSync(path)).toEqual(before); expect(statSync(path).mode).toBe(mode);
   const verify = new Database(path, { readonly: true, create: false });
-  expect((verify.query("PRAGMA user_version").get() as {user_version:number}).user_version).toBe(2);
+  expect((verify.query("PRAGMA user_version").get() as {user_version:number}).user_version).toBe(STATE_VERSION);
   expect(verify.query("SELECT COUNT(*) AS count FROM blocks").get()).toEqual({ count: 3 }); verify.close();
   const historical = join(f.root, "v1.sqlite"), old = new Database(historical);
   old.exec("CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT);INSERT INTO meta VALUES('app','agents-cooperation');CREATE TABLE blocks(engine TEXT,model TEXT,reason TEXT,since TEXT,release_at TEXT,by TEXT);PRAGMA user_version=1;"); old.close();
@@ -293,7 +293,7 @@ test("read-only state sees committed blocks still in live WAL without changing m
     expect(state.status).toBe("ready"); expect(state.blocks).toEqual([block]);
     expect(readFileSync(f.state)).toEqual(main); expect(readFileSync(f.state + "-wal")).toEqual(wal); expect(statSync(f.state).mode).toBe(mode);
     expect(db.query("SELECT value FROM meta WHERE key='availability_imports'").get()).toEqual({ value: "[]" });
-    expect((db.query("PRAGMA user_version").get() as {user_version:number}).user_version).toBe(2);
+    expect((db.query("PRAGMA user_version").get() as {user_version:number}).user_version).toBe(STATE_VERSION);
     expect(db.query("SELECT COUNT(*) AS count FROM blocks").get()).toEqual({ count: 1 });
   } finally { db.close(); }
 });

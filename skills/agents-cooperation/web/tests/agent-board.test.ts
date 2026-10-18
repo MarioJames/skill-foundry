@@ -3,8 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
-import { openState } from "../../scripts/lib/state-db.ts";
-import { readAgentBoard } from "../lib/agent-board.ts";
+import { openState, STATE_VERSION } from "../../scripts/lib/state-db.ts";
+import { readAgentBoard, readAgentTask } from "../lib/agent-board.ts";
 import { HttpError } from "../lib/errors.ts";
 import { startServer } from "../server.ts";
 
@@ -30,6 +30,14 @@ function failure(path: string, env: Record<string, string | undefined>) {
     return error as HttpError;
   }
   throw new Error("read returned a snapshot");
+}
+function taskFailure(path: string, env: Record<string, string | undefined>, taskId = "missing") {
+  try { readAgentTask(taskId, path, env, 1); }
+  catch (error) {
+    expect(error).toBeInstanceOf(HttpError);
+    return error as HttpError;
+  }
+  throw new Error("read returned a detail");
 }
 function insertRun(db: Database, row: {
   run_id: string; collab_id: string; owner_id: string; engine: string; label: string; updated_at: number;
@@ -143,12 +151,33 @@ test("groups tasks, owners and workers without exposing private fields", () => {
   expect(old.owners[0].workers.map(worker => [worker.name, worker.worker_id, worker.outcome, worker.model])).toEqual([["old-child", "w1", "accepted", "claude-model"]]);
   expect(JSON.stringify(live)).not.toContain("old-child");
   expect(JSON.stringify(snapshot)).not.toContain("SECRET_");
+  expect(snapshot.tasks.map(task => [task.id, task.bucket, task.created_at])).toEqual([
+    ["collab-live", "in_progress", 80],
+    ["collab-old", "completed", 200],
+    ["collab-aaa", "closed", 50],
+    ["collab-zzz", "closed", 50],
+  ]);
+  expect(snapshot.tasks.every(task => !("events" in task))).toBe(true);
+  expect(live.owners[0].workers[0].closed_at).toBeNull();
+  const oldDetail = readAgentTask("collab-old", state, f.env, 42);
+  expect(oldDetail.history_incomplete).toBe(false);
+  expect(oldDetail.task.bucket).toBe("completed");
+  expect(oldDetail.events.map(event => event.kind).sort()).toEqual(["lane.created", "lane.outcome", "run.created"]);
+  expect(oldDetail.events.find(event => event.kind === "run.created")).toMatchObject({ source: "recorded", owner_id: "claude", worker_name: null });
+  expect(oldDetail.events.filter(event => event.lane_id === "lane-old").every(event => event.source === "recorded" && event.owner_id === "claude" && event.worker_name === "old-child")).toBe(true);
+  expect(oldDetail.events.map(event => Number(event.id))).toEqual([...oldDetail.events.map(event => Number(event.id))].sort((left, right) => left - right));
+  expect(oldDetail.events.some(event => event.kind === "run.closed" || event.kind === "lane.closed" || event.owner_id === "")).toBe(false);
+  const liveDetail = readAgentTask("collab-live", state, f.env, 42);
+  expect(JSON.stringify(liveDetail)).not.toContain("SECRET_");
+  expect(liveDetail.events.every(event => event.owner_id !== "" && event.engine !== "")).toBe(true);
+  expect(liveDetail.events.some(event => event.lane_id === "lane-1" && event.worker_id === "w1" && event.worker_name === "child-a" && event.model === "old-model")).toBe(true);
 });
 
 test("missing file and legal v1 stay empty without creating, migrating or changing bytes", () => {
   const f = fixture("empty");
   const missing = join(f.root, "absent", "state.sqlite");
   expect(readAgentBoard(missing, f.env, 7)).toEqual({ ok: true, status: "missing", refreshed_at: 7, tasks: [] });
+  expect(taskFailure(missing, f.env).status).toBe(404);
   expect(existsSync(join(f.root, "absent"))).toBe(false);
   const historical = join(f.root, "v1.sqlite");
   const created = new Database(historical);
@@ -156,6 +185,7 @@ test("missing file and legal v1 stay empty without creating, migrating or changi
   created.close();
   const before = readFileSync(historical), mode = statSync(historical).mode;
   expect(readAgentBoard(historical, f.env, 8)).toEqual({ ok: true, status: "ready", refreshed_at: 8, tasks: [] });
+  expect(taskFailure(historical, f.env, "any").status).toBe(404);
   expect(readFileSync(historical)).toEqual(before);
   expect(statSync(historical).mode).toBe(mode);
   expect(existsSync(historical + "-wal")).toBe(false);
@@ -184,7 +214,7 @@ test("reads committed WAL rows and rejects corrupt, future and foreign databases
     expect(readFileSync(live)).toEqual(main);
     expect(readFileSync(live + "-wal")).toEqual(wal);
     expect(statSync(live).mode).toBe(mode);
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(2);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(STATE_VERSION);
   } finally { db.close(); }
 
   const corrupt = join(f.root, "corrupt.sqlite");
@@ -219,6 +249,76 @@ test("reads committed WAL rows and rejects corrupt, future and foreign databases
   expect(statSync(foreignPath).mode).toBe(foreignMode);
 });
 
+test("closed with an error stays closed, and same-millisecond events from parallel lanes sort numerically", () => {
+  const f = fixture("buckets");
+  const state = join(f.root, "state.sqlite");
+  const db = openState(state);
+  const at = 8_000;
+  insertRun(db, { run_id: "run-error", collab_id: "collab-error", owner_id: "grok", engine: "grok", host_session_id: "sess", label: "errored", status: "closed", updated_at: at, last_error: "still-broken" });
+  insertLane(db, { lane_id: "lane-error", run_id: "run-error", worker_id: "w1", engine: "grok", model: "m", name: "done-child", status: "closed", outcome: "accepted", updated_at: at });
+  insertRun(db, { run_id: "run-a", collab_id: "collab-parallel", owner_id: "grok", engine: "grok", host_session_id: "sess-a", label: "parallel", status: "active", updated_at: at });
+  insertRun(db, { run_id: "run-b", collab_id: "collab-parallel", owner_id: "claude", engine: "claude", host_session_id: "sess-b", label: "parallel", status: "active", updated_at: at });
+  for (let index = 0; index < 6; index += 1) {
+    insertLane(db, { lane_id: `lane-a-${index}`, run_id: "run-a", worker_id: `wa-${index}`, engine: "grok", model: "ga", name: `child-a-${index}`, status: "open", updated_at: at });
+    insertLane(db, { lane_id: `lane-b-${index}`, run_id: "run-b", worker_id: `wb-${index}`, engine: "claude", model: "cb", name: `child-b-${index}`, status: "opening", updated_at: at });
+  }
+  db.close();
+  const board = readAgentBoard(state, f.env, 3);
+  expect(board.tasks.find(task => task.id === "collab-error")).toMatchObject({ bucket: "closed", status: "closed" });
+  const detail = readAgentTask("collab-parallel", state, f.env, 3);
+  expect(detail.history_incomplete).toBe(false);
+  expect(detail.events.length).toBeGreaterThan(10);
+  expect(detail.events.every(event => event.at === at)).toBe(true);
+  const ids = detail.events.map(event => event.id);
+  expect(ids.map(Number)).toEqual([...ids.map(Number)].sort((left, right) => left - right));
+  expect(ids).not.toEqual([...ids].sort());
+  const lane = detail.events.find(event => event.lane_id === "lane-b-3");
+  expect(lane).toMatchObject({ owner_id: "claude", owner_key: "claude:claude:sess-b", worker_id: "wb-3", worker_name: "child-b-3", engine: "claude", model: "cb", source: "recorded" });
+  expect(detail.events.find(event => event.lane_id === "lane-a-0")).toMatchObject({ owner_id: "grok", owner_key: "grok:grok:sess-a", worker_name: "child-a-0" });
+  expect(detail.events.some(event => event.owner_id === "" || event.engine === "")).toBe(false);
+});
+
+test("v2 detail is read-only and only reports known creation and close times", () => {
+  const f = fixture("v2");
+  const state = join(f.root, "v2.sqlite");
+  const db = new Database(state);
+  db.exec(`CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    INSERT INTO meta VALUES('app','agents-cooperation');
+    CREATE TABLE blocks(engine TEXT NOT NULL, model TEXT, reason TEXT NOT NULL, since TEXT NOT NULL, release_at TEXT, by TEXT);
+    CREATE TABLE runs(run_id TEXT PRIMARY KEY, collab_id TEXT NOT NULL, request_id TEXT NOT NULL, owner_id TEXT NOT NULL,
+      engine TEXT NOT NULL, cwd TEXT NOT NULL, label TEXT NOT NULL, session_name TEXT NOT NULL UNIQUE, status TEXT NOT NULL,
+      last_error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, closed_at INTEGER, host_session_id TEXT);
+    CREATE TABLE lanes(lane_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, worker_id TEXT NOT NULL, agent_name TEXT NOT NULL,
+      engine TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, outcome TEXT, health TEXT NOT NULL, keep_reason TEXT,
+      last_error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_progress_at INTEGER NOT NULL, closed_at INTEGER);
+    PRAGMA user_version=2;`);
+  db.query(`INSERT INTO runs(run_id,collab_id,request_id,owner_id,engine,host_session_id,cwd,label,session_name,status,created_at,updated_at,closed_at)
+    VALUES('run-v2','collab-v2','req','owner','grok','sess','/secret/path','old','session','closed',10,99,30)`).run();
+  db.query(`INSERT INTO lanes(lane_id,run_id,worker_id,agent_name,engine,model,status,outcome,health,last_progress_at,created_at,updated_at,closed_at)
+    VALUES('lane-v2','run-v2','worker','old-child','grok','old-model','closed',NULL,'ok',99,11,99,NULL)`).run();
+  db.close();
+  const before = readFileSync(state), mode = statSync(state).mode;
+  const board = readAgentBoard(state, f.env, 4);
+  const detail = readAgentTask("collab-v2", state, f.env, 4);
+  expect(readFileSync(state)).toEqual(before);
+  expect(statSync(state).mode).toBe(mode);
+  const verify = new Database(state, { readonly: true, create: false });
+  expect((verify.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(2);
+  verify.close();
+  expect(board.tasks).toEqual([expect.objectContaining({ id: "collab-v2", bucket: "closed", created_at: 10, status: "closed" })]);
+  expect("events" in board.tasks[0]).toBe(false);
+  expect(detail.history_incomplete).toBe(true);
+  expect(detail.events.map(event => [event.kind, event.source, event.at, event.worker_name])).toEqual([
+    ["run.created", "milestone", 10, null],
+    ["lane.created", "milestone", 11, "old-child"],
+    ["run.closed", "milestone", 30, null],
+  ]);
+  expect(detail.events.some(event => event.kind === "lane.closed" || event.kind === "lane.outcome" || event.kind === "lane.progress" || event.owner_id === "")).toBe(false);
+  expect(JSON.stringify(detail)).not.toContain("/secret/path");
+  expect(taskFailure(state, f.env, "missing-v2").status).toBe(404);
+  expect(readFileSync(state)).toEqual(before);
+});
+
 test("GET /api/agents returns the startup snapshot and rejects a foreign host", async () => {
   const f = fixture("http");
   const routed = join(f.root, "routed.sqlite");
@@ -226,12 +326,14 @@ test("GET /api/agents returns the startup snapshot and rejects a foreign host", 
   for (const [path, label] of [[routed, "routed"], [other, "other-path"]] as const) {
     const db = openState(path);
     insertRun(db, {
-      run_id: "run-1", collab_id: "collab-routed", owner_id: "grok", engine: "grok", host_session_id: "sess",
+      run_id: "run-1", collab_id: "collab/任务", owner_id: "grok", engine: "grok", host_session_id: "sess",
       label, status: "active", updated_at: 10,
+      cwd: "/SECRET_PATH", session_proof: "SECRET_PROOF", owner_proc: "SECRET_PROC", owner_pane: "SECRET_PANE",
     });
     insertLane(db, {
       lane_id: "lane-1", run_id: "run-1", worker_id: "grok_worker", engine: "grok", model: "grok-4",
       name: `${label}-child`, status: "open", updated_at: 10,
+      class: "SECRET_CLASS", pane_id: "SECRET_PANE", workspace_id: "SECRET_WORKSPACE",
     });
     db.close();
   }
@@ -251,12 +353,36 @@ test("GET /api/agents returns the startup snapshot and rejects a foreign host", 
   const body = await ok.json();
   expect(body).toMatchObject({
     ok: true, status: "ready",
-    tasks: [{ id: "collab-routed", label: "routed", owners: [{ owner_id: "grok", engine: "grok", workers: [{ name: "routed-child", model: "grok-4", worker_id: "grok_worker" }] }] }],
+    tasks: [{ id: "collab/任务", bucket: "in_progress", label: "routed", owners: [{ owner_id: "grok", engine: "grok", workers: [{ name: "routed-child", model: "grok-4", worker_id: "grok_worker" }] }] }],
   });
+  expect(body.tasks[0].events).toBeUndefined();
+  expect(JSON.stringify(body)).not.toContain("SECRET_");
   const overridden = await fetch(url + "/api/agents?state=" + encodeURIComponent(other));
   expect(overridden.status).toBe(200);
   expect((await overridden.json()).tasks[0].label).toBe("routed");
   const denied = await fetch(url + "/api/agents", { headers: { host: "evil.test" } });
   expect(denied.status).toBe(403);
   expect(await denied.text()).not.toContain("routed");
+  const taskPath = "/api/agents/" + encodeURIComponent("collab/任务");
+  const detail = await fetch(url + taskPath);
+  expect(detail.status).toBe(200);
+  expect(detail.headers.get("cache-control")).toBe("no-store");
+  const task = await detail.json();
+  expect(task.task).toMatchObject({ id: "collab/任务", label: "routed", bucket: "in_progress" });
+  expect(task.history_incomplete).toBe(false);
+  expect(task.events.map((event: { kind: string; worker_name: string | null }) => [event.kind, event.worker_name])).toEqual([
+    ["run.created", null],
+    ["lane.created", "routed-child"],
+  ]);
+  expect(JSON.stringify(task)).not.toContain("SECRET_");
+  const detailOverride = await fetch(url + taskPath + "?state=" + encodeURIComponent(other));
+  expect(detailOverride.status).toBe(200);
+  expect((await detailOverride.json()).task.label).toBe("routed");
+  const missing = await fetch(url + "/api/agents/" + encodeURIComponent("missing-task"));
+  expect(missing.status).toBe(404);
+  const bad = await fetch(url + "/api/agents/%ZZ");
+  expect(bad.status).toBe(400);
+  const detailDenied = await fetch(url + taskPath, { headers: { host: "evil.test" } });
+  expect(detailDenied.status).toBe(403);
+  expect(await detailDenied.text()).not.toContain("routed");
 });

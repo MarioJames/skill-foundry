@@ -5,9 +5,10 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { lintSchema, validate } from "./json-schema.ts";
+import { migrateRuntimeEvents } from "./runtime-events.ts";
 
 export interface Block { engine: string; model?: string; reason: string; since: string; release_at?: string; by?: string }
-export const STATE_VERSION = 2;
+export const STATE_VERSION = 3;
 export function statePath(flag?: string, env: Record<string,string|undefined> = process.env) {
   return resolve(flag ?? env.AGENTS_COOPERATION_STATE ?? join(env.HOME ?? homedir(), ".local/state/agents-cooperation/state.sqlite"));
 }
@@ -41,6 +42,7 @@ const migrations = [
       keep_reason TEXT, last_progress_at INTEGER NOT NULL, last_error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, closed_at INTEGER,
       UNIQUE(run_id,op_id), UNIQUE(run_id,agent_name));`);
   },
+  migrateRuntimeEvents,
 ];
 export function validateLegacy(value: unknown): asserts value is {version:1;blocks:Block[]} {
   const schema = JSON.parse(readFileSync(join(import.meta.dir, "../../assets/availability.schema.json"), "utf8"));

@@ -3,7 +3,7 @@ import { CliError } from "../scripts/agents-config.ts";
 import { enginesOf, planAvailability, writeAvailability } from "./lib/availability.ts";
 import { ConfigStore, checkConfig } from "./lib/config-store.ts";
 import { HttpError } from "./lib/errors.ts";
-import { readAgentBoard } from "./lib/agent-board.ts";
+import { readAgentBoard, readAgentTask } from "./lib/agent-board.ts";
 import { readState } from "./lib/read-state.ts";
 
 export const BODY_LIMIT = 256 * 1024;
@@ -95,6 +95,15 @@ export async function startServer(options: ServerOptions = {}) {
           return json({ ok: true, ...after });
         }
         if (path === "/api/agents" && request.method === "GET") return json(readAgentBoard(options.state, env));
+        if (request.method === "GET" && path.startsWith("/api/agents/")) {
+          const encoded = path.slice("/api/agents/".length);
+          if (encoded && !encoded.includes("/")) {
+            let taskId: string;
+            try { taskId = decodeURIComponent(encoded); }
+            catch { throw new HttpError(400, "任务标识编码无效。"); }
+            return json(readAgentTask(taskId, options.state, env));
+          }
+        }
         if (request.method === "GET" || request.method === "HEAD") {
           const asset = assets.get(path);
           if (asset) return new Response(request.method === "HEAD" ? null : asset, { headers: { "Content-Type": asset.type, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", ...(asset.path.endsWith(".html") ? { "Content-Security-Policy": "frame-ancestors 'none'" } : {}) } });
