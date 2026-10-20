@@ -6,7 +6,7 @@ import { withVerifiedCodexPane, renameVerifiedTab } from "./lib/codex-pane";
 await runCli(async () => {
   const flags = parseFlags(process.argv.slice(2), ["--type", "--topic"], ["--dry-run", "--native-only", "--help"]);
   if (flags.has("--help")) {
-    console.log("Usage: name-codex-session.ts --type FIX --topic '具体任务' [--dry-run] [--native-only]\nNames CODEX_THREAD_ID and verifies its Herdr tab through a temporary native-title challenge. Dry-run never writes or claims tab ownership.");
+    console.log("Usage: name-codex-session.ts --type FIX --topic '具体任务' [--dry-run] [--native-only]\nNames CODEX_THREAD_ID and verifies its Herdr tab through OS process ownership or a fresh native-title challenge. Dry-run never writes or claims tab ownership.");
     return;
   }
   const type = flags.get("--type"); const topic = flags.get("--topic");
@@ -19,7 +19,7 @@ await runCli(async () => {
       return;
     }
     try {
-      const tab = await withVerifiedCodexPane(request, id, herdr, caller => renameVerifiedTab(herdr, caller, native.label));
+      const tab = await withVerifiedCodexPane(request, id, herdr, (caller, proof, verify) => renameVerifiedTab(herdr, caller, native.label, proof, verify));
       emit({ ok: true, ...native, tab });
     } catch (error) {
       emit({ ok: false, native, tab: { status: "failed", error: error instanceof Error ? error.message : String(error) } });
