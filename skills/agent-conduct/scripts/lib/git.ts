@@ -9,9 +9,10 @@ export interface RunResult {
   err: string;
 }
 
-export function run(cmd: string[], cwd?: string): RunResult {
+export function run(cmd: string[], cwd?: string, input?: string): RunResult {
   try {
-    const result = Bun.spawnSync({ cmd, cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const stdin = input === undefined ? "ignore" : Buffer.from(input);
+    const result = Bun.spawnSync({ cmd, cwd, stdin, stdout: "pipe", stderr: "pipe" });
     return { ok: result.exitCode === 0, out: result.stdout.toString(), err: result.stderr.toString() };
   } catch (error) {
     return { ok: false, out: "", err: error instanceof Error ? error.message : String(error) };
@@ -50,18 +51,55 @@ export function findRepositories(root: string, depth = 3): string[] {
   return found;
 }
 
-/** origin/HEAD when the remote declares one, otherwise a local main or master. */
+/** origin/HEAD when recorded, then origin/main or origin/master, then a local main or master. */
 export function defaultRef(repo: string): string | null {
-  const remote = git(repo, "rev-parse", "--abbrev-ref", "origin/HEAD");
-  if (remote.ok && remote.out.trim() && remote.out.trim() !== "origin/HEAD") return remote.out.trim();
-  for (const name of ["main", "master"]) {
-    if (git(repo, "rev-parse", "--verify", "-q", `refs/heads/${name}`).ok) return name;
+  const remote = git(repo, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD").out.trim();
+  if (remote) return remote;
+  for (const ref of ["refs/remotes/origin/main", "refs/remotes/origin/master", "refs/heads/main", "refs/heads/master"]) {
+    if (git(repo, "rev-parse", "--verify", "-q", ref).ok) return ref.replace(/^refs\/(remotes|heads)\//u, "");
   }
   return null;
 }
 
+/** The default branch name origin actually declares; null without origin or network. */
+export function remoteDefault(repo: string): string | null {
+  const result = git(repo, "ls-remote", "--symref", "origin", "HEAD");
+  if (!result.ok) return null;
+  return lines(result.out).find((line) => line.startsWith("ref: "))?.match(/^ref: refs\/heads\/(\S+)/u)?.[1] ?? null;
+}
+
 export function isAncestor(repo: string, commit: string, ref: string): boolean {
   return git(repo, "merge-base", "--is-ancestor", commit, ref).ok;
+}
+
+export type MergeEvidence = "ancestor" | "rebased" | "squashed";
+
+/** Patch ids of the non-merge commits in a range, keyed for `git cherry`-style matching. */
+function patchIds(repo: string, range: string[]): string[] {
+  const log = git(repo, "log", "-p", "--no-color", "--no-merges", "--format=commit %H", ...range);
+  if (!log.ok) return [];
+  return lines(run(["git", "-C", repo, "patch-id", "--stable"], undefined, log.out).out).map((line) => line.split(" ")[0]);
+}
+
+/**
+ * How a commit's content reached `ref`: as an ancestor, as rebased commits, or as one squash commit.
+ * Read-only; null means some change is not on `ref`, or the squash was edited and needs PR evidence.
+ */
+export function mergeEvidence(repo: string, tip: string, ref: string, cache = new Map<string, Set<string>>()): MergeEvidence | null {
+  if (isAncestor(repo, tip, ref)) return "ancestor";
+  const base = git(repo, "merge-base", ref, tip).out.trim();
+  if (!base) return null;
+  let onRef = cache.get(base);
+  if (!onRef) {
+    onRef = new Set(patchIds(repo, [`${base}..${ref}`]));
+    cache.set(base, onRef);
+  }
+  const own = patchIds(repo, [`${ref}..${tip}`]);
+  if (own.length > 0 && own.every((id) => onRef.has(id))) return "rebased";
+  const diff = git(repo, "diff", "--no-color", base, tip);
+  if (!diff.ok || !diff.out) return null;
+  const squash = run(["git", "-C", repo, "patch-id", "--stable"], undefined, `commit ${"0".repeat(40)}\n\n${diff.out}`).out.split(" ")[0];
+  return squash && onRef.has(squash) ? "squashed" : null;
 }
 
 export interface WorktreeEntry {

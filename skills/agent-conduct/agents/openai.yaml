@@ -1,6 +1,6 @@
 interface:
   display_name: "Agent Conduct"
-  short_description: "约束报告、证据、临时目录、worktree 和 Docker 资源的落点与回收；统一新建和回收 worktree，收尾用只读扫描核对遗留"
+  short_description: "约束报告、证据、临时目录、worktree、分支和 Docker 资源的落点与回收；统一新建和回收 worktree，合入后清理本地与远端分支，收尾用只读扫描核对遗留"
   default_prompt: "使用 $agent-conduct 按约定位置存放报告和证据，任务收尾时扫描并回收本任务创建的临时环境，说明保留项的原因和释放条件。"
 
 policy:

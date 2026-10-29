@@ -8,12 +8,13 @@ import {
   defaultRef,
   findRepositories,
   git,
-  isAncestor,
   lastActivity,
   lines,
   listWorktrees,
   mainWorktree,
+  mergeEvidence,
   processesInside,
+  remoteDefault,
   run,
   worktreeGitDir,
   type WorktreeEntry,
@@ -25,10 +26,11 @@ const HELP = `用法:
   bun wt.ts gc --workspace <工作区根>... [--min-idle <时长>] [--apply] [--json]
 
 add     在 $AGENT_WORKTREE_ROOT（默认 ~/.local/share/worktrees）/<仓库名>/<任务名> 建 worktree：
-        从 --base（默认仓库默认分支，而不是主仓库当前检出的分支）新建分支（默认 wt/<任务名>），
+        从 --base（默认先 fetch origin 实际的默认分支；不是主仓库当前检出的分支）新建分支（默认 wt/<任务名>），
         或检出 --branch 指定的已有分支；链接仓库的 .env，
         子模块优先从主仓库本地副本检出，按锁文件离线安装依赖。stdout 输出 JSON。
-remove  核对无未提交改动、无未合入提交、无进程占用后删除 worktree，并删除已合入的任务分支。
+remove  核对无未提交改动、无未合入提交、无进程占用后删除 worktree，并删除已合入的任务分支；
+        祖先、rebase、squash 合入都算已合入。远端还有同名分支时在 remoteBranch 中列出，由 branch.ts 处理。
         --force 跳过前两项核对，保留未合入的分支；有进程占用时始终拒绝。
 gc      列出工作区内所有仓库的 worktree（不论由谁创建）：失效记录标 prune（HEAD 不在任何分支上的保留），
         已合入、无改动、无进程且闲置超过 --min-idle（默认 24h）的标 remove，其余 keep。
@@ -166,6 +168,18 @@ function install(path: string): { command: string | null; ok: boolean; log: stri
   return { command: commands.at(-1)!.join(" "), ok: false, log };
 }
 
+/** Explicit --base, else origin's real default branch freshly fetched, else the local record. */
+function chooseBase(repo: string, explicit: string | undefined): { base: string; baseNote?: string } {
+  if (explicit) return { base: explicit };
+  if (git(repo, "remote", "get-url", "origin").ok) {
+    const name = remoteDefault(repo);
+    if (name && git(repo, "fetch", "--quiet", "origin", `+refs/heads/${name}:refs/remotes/origin/${name}`).ok) return { base: `origin/${name}` };
+    const fallback = defaultRef(repo) ?? "HEAD";
+    return { base: fallback, baseNote: `无法从 origin 获取最新默认分支，改用本地记录 ${fallback}，可能不是最新` };
+  }
+  return { base: defaultRef(repo) ?? "HEAD" };
+}
+
 function add(flags: Map<string, string[]>) {
   const repo = resolve(required(flags, "repo"));
   const name = required(flags, "name");
@@ -179,7 +193,7 @@ function add(flags: Map<string, string[]>) {
   if (existsSync(path)) fail(`目录已存在：${path}`);
   const explicitBranch = flags.get("branch")?.[0];
   const branch = explicitBranch ?? `wt/${name}`;
-  const base = flags.get("base")?.[0] ?? defaultRef(repo) ?? "HEAD";
+  const { base, baseNote } = chooseBase(repo, flags.get("base")?.[0]);
   mkdirSync(join(worktreeRoot(), basename(repo)), { recursive: true });
 
   if (branchExists(repo, branch)) {
@@ -192,7 +206,7 @@ function add(flags: Map<string, string[]>) {
   const submodules = checkoutSubmodules(repo, path);
   const envLinked = linkEnv(repo, path);
   const installed = flags.has("no-install") ? { command: null, ok: true, log: null } : install(path);
-  const report = { ok: installed.ok, cwd: path, branch, base, repo, envLinked, submodules, install: installed };
+  const report = { ok: installed.ok, cwd: path, branch, base, ...(baseNote ? { baseNote } : {}), repo, envLinked, submodules, install: installed };
   if (!installed.ok) {
     console.log(JSON.stringify(report, null, 2));
     console.error(`依赖安装失败，worktree 已保留在 ${path}；日志 ${installed.log}`);
@@ -221,7 +235,7 @@ function assess(repo: string, entry: WorktreeEntry, ref: string | null, minIdle:
   const dirty = git(entry.path, "status", "--porcelain", "--untracked-files=normal").out.trim();
   if (dirty) return { ...base, action: "keep", reason: "有未提交改动" };
   if (!ref) return { ...base, action: "keep", reason: "无法确定默认分支" };
-  if (!isAncestor(repo, entry.head, ref)) return { ...base, action: "keep", reason: `有未合入 ${ref} 的提交` };
+  if (!mergeEvidence(repo, entry.head, ref)) return { ...base, action: "keep", reason: `有未合入 ${ref} 的提交` };
   const pids = processesInside(entry.path);
   if (pids.length > 0) return { ...base, action: "keep", reason: `进程 ${pids.slice(0, 5).join(",")} 正在使用` };
   const idle = Date.now() - lastActivity(entry.path);
@@ -232,7 +246,7 @@ function assess(repo: string, entry: WorktreeEntry, ref: string | null, minIdle:
 function removeWorktree(repo: string, entry: WorktreeEntry, ref: string | null): string | null {
   mustGit(repo, "worktree", "remove", "--force", entry.path);
   let branchDeleted: string | null = null;
-  if (entry.branch && ref && branchExists(repo, entry.branch) && isAncestor(repo, entry.branch, ref)) {
+  if (entry.branch && ref && branchExists(repo, entry.branch) && mergeEvidence(repo, entry.branch, ref)) {
     if (git(repo, "branch", "-D", entry.branch).ok) branchDeleted = entry.branch;
   }
   return branchDeleted;
@@ -273,10 +287,11 @@ function remove(flags: Map<string, string[]>) {
   if (!flags.has("force")) {
     if (git(path, "status", "--porcelain", "--untracked-files=normal").out.trim()) fail(`有未提交的改动：${path}；确认可丢弃再加 --force`);
     if (!ref) fail(`无法确定 ${repo} 的默认分支；确认已合入再加 --force`);
-    if (!isAncestor(repo, entry.head, ref)) fail(`有未合入 ${ref} 的提交：${path}；确认已另行合入或可丢弃再加 --force`);
+    if (!mergeEvidence(repo, entry.head, ref)) fail(`有未合入 ${ref} 的提交：${path}；确认已另行合入或可丢弃再加 --force`);
   }
   const branchDeleted = removeWorktree(repo, entry, ref);
-  return { ok: true, removed: path, repo, branchDeleted };
+  const remoteBranch = entry.branch && git(repo, "rev-parse", "--verify", "-q", `refs/remotes/origin/${entry.branch}`).ok ? `origin/${entry.branch}` : null;
+  return { ok: true, removed: path, repo, branchDeleted, remoteBranch };
 }
 
 function gc(flags: Map<string, string[]>) {

@@ -18,7 +18,7 @@
 | Area | Skill | What it does |
 | --- | --- | --- |
 | Orchestration | [`herdr`](skills/herdr/SKILL.md) | Herdr tabs and panes, persistent terminals, agent start/stop, verified naming and precise cleanup |
-| | [`agent-conduct`](skills/agent-conduct/SKILL.md) | Where reports, evidence and temporary files go; ready-to-run task worktrees and their reclamation; Docker and test leftovers; a read-only closure scan |
+| | [`agent-conduct`](skills/agent-conduct/SKILL.md) | Where reports, evidence and temporary files go; ready-to-run task worktrees and their reclamation; local and remote branch cleanup after merge; Docker and test leftovers; a read-only closure scan |
 | Quality | [`tdd`](skills/tdd/SKILL.md) | Decides before coding which checks a change needs; writes tests only when they can fail |
 | | [`feature-acceptance`](skills/feature-acceptance/SKILL.md) | Engineering preferences, interaction states and recovery paths for front-end and back-end work; records corrections where they belong |
 | | [`browser-harness`](skills/browser-harness/SKILL.md) | Browser acceptance with agent-browser: services, login state, screenshot/console/network evidence |
@@ -89,7 +89,7 @@ Bun 1.3 or newer runs every script and hook entrypoint. Some skills also need ho
 | Skill | Also needs |
 | --- | --- |
 | `herdr` | Herdr CLI; the CLI response decides availability, and inherited `HERDR_*` variables are not trusted for identity |
-| `agent-conduct` | Git; the project's package manager for worktree installs; Docker CLI for the container and volume part of the scan (skipped when absent) |
+| `agent-conduct` | Git; the project's package manager for worktree installs; GitHub CLI for pull-request evidence when cleaning GitHub branches (remote branches are kept without it); Docker CLI for the container and volume part of the scan (skipped when absent) |
 | `browser-harness` | agent-browser with its bundled Chromium; `DISPLAY` or `WAYLAND_DISPLAY` for headed login ([runtime setup](skills/browser-harness/references/runtime.md)) |
 | `public-acceptance` | `cloudflared` for anonymous Quick Tunnels |
 | `trigger-build-workflow` | Git and an authenticated `gh` for workflow dispatch |
@@ -108,6 +108,7 @@ Use browser-harness to open the app and collect screenshot, console and network 
 Use public-acceptance to start this project in DEV, create a public URL and give me the login details.
 Use asset-validation to validate this skill before release.
 Use agent-conduct to scan what this task left behind since it started and clean up what it owns.
+Use agent-conduct to list this repository's local and remote branches that are already merged, then delete the ones I confirm.
 Use trigger-build-workflow to commit and push these files without dispatching a build.
 Use changelog-writing to produce customer-facing notes for the changes since v1.2.0.
 Use persistent-ssh-ops to inspect the service, apply the config change, verify it and close the session.

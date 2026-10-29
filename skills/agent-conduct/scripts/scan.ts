@@ -4,7 +4,7 @@
 import { lstatSync, readdirSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
-import { defaultRef, findRepositories, isAncestor, lines, listWorktrees, run } from "./lib/git";
+import { defaultRef, findRepositories, lines, listWorktrees, mergeEvidence, run } from "./lib/git";
 
 const HELP = `用法: bun scan.ts [--since <时间>] [--workspace <目录>]... [--temp-root <目录>]... [--no-docker] [--json]
 
@@ -96,12 +96,12 @@ function parseArgs(argv: string[]): Options {
   return options;
 }
 
-function scanWorktrees(repo: string, ref: string | null): Worktree[] {
+function scanWorktrees(repo: string, ref: string | null, cache: Map<string, Set<string>>): Worktree[] {
   return listWorktrees(repo).map(({ path, head, branch, prunable }) => ({
     path,
     branch,
     prunable,
-    merged: Boolean(ref && head && !prunable && isAncestor(repo, head, ref)),
+    merged: Boolean(ref && head && !prunable && mergeEvidence(repo, head, ref, cache)),
     insideRepository: path.startsWith(repo + sep),
   }));
 }
@@ -117,13 +117,15 @@ function scanRepository(repo: string): RepositoryReport {
     .map((line) => line.slice(3))
     .filter((path) => ARTIFACT_NAME.test(basename(path.replace(/\/$/u, ""))));
   const current = run(["git", "-C", repo, "branch", "--show-current"]).out.trim();
+  const cache = new Map<string, Set<string>>();
   const defaultName = ref?.replace(/^origin\//u, "");
   const mergedBranches = ref
-    ? lines(run(["git", "-C", repo, "for-each-ref", "--format=%(refname:short)", "--merged", ref, "refs/heads"]).out)
+    ? lines(run(["git", "-C", repo, "for-each-ref", "--format=%(refname:short)", "refs/heads"]).out)
         .filter((name) => name !== current && name !== defaultName && name !== "main" && name !== "master")
+        .filter((name) => mergeEvidence(repo, name, ref, cache))
         .sort()
     : [];
-  return { path: repo, defaultRef: ref, worktrees: scanWorktrees(repo, ref), untracked, ignoredArtifacts, mergedBranches };
+  return { path: repo, defaultRef: ref, worktrees: scanWorktrees(repo, ref, cache), untracked, ignoredArtifacts, mergedBranches };
 }
 
 function scanWorkspaceRoot(workspace: string, repositories: string[]): string[] {
@@ -247,7 +249,7 @@ function printText(report: ReturnType<typeof buildReport>): void {
     if (repo.mergedBranches.length > 0) {
       const shown = repo.mergedBranches.slice(0, 8).join(", ");
       const more = repo.mergedBranches.length > 8 ? ` 等 ${repo.mergedBranches.length} 个` : "";
-      notes.push(`  已并入 ${repo.defaultRef} 的本地分支：${shown}${more}`);
+      notes.push(`  已并入 ${repo.defaultRef} 的本地分支（含 squash）：${shown}${more}；用 branch.ts 核对和清理`);
     }
     if (notes.length > 0) out.push("", `[仓库] ${repo.path}`, ...notes);
   }
