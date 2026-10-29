@@ -109,6 +109,7 @@ Report the resolved host identity, important files changed, validation commands,
 
 ## Gotchas
 
+- `systemctl show -p LoadCredential` 的复杂属性即使以 root 执行或通过管道读取，也可能显示 `[unprintable]`；这不能证明配置缺失或权限不足，不可解析为空值。核验此类 `a(ss)` 凭据属性时，使用 `busctl --json=short get-property org.freedesktop.systemd1 <unit-object-path> org.freedesktop.systemd1.Service LoadCredential`，按预期来源核对 JSON 的 `type` 与 `data` 元组。对象路径从 systemd 单元路径编码规则或 manager 的 `GetUnit` 获取，不盲目拼接。真实只读验证先执行 `busctl --json=short call org.freedesktop.systemd1 /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager GetUnit s <unit-name>`，再查询返回的对象路径；此结构化查询路线已在本机非 root 条件下验证。不要将凭据内容写入日志。
 - A local listener or green service status does not prove the service is reachable externally.
 - Automatic JSON password authentication disables keyboard-interactive and refuses effective ProxyJump/ProxyCommand connections. Key authentication retains proxy support. See [profile-setup.md](references/profile-setup.md) for supported prompts and identity paths.
 - A registered profile must be executed through `server-runtime.zsh`; its URI is discovery metadata, not an executable command.
