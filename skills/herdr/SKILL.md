@@ -1,13 +1,13 @@
 ---
 name: herdr
-description: 在会话开始或主任务变化时命名当前会话与可验证归属的 Herdr 标签页，包括只读问答和无并行工作的评估，无需显式提及 Herdr。负责 Herdr tab/pane、持久终端、Agent 启停与精确资源清理；任务并行与模型决策使用 agents-cooperation。
+description: 在会话开始或主任务变化时命名当前会话与可验证归属的 Herdr 标签页，包括只读问答和无并行工作的评估，无需显式提及 Herdr。负责 Herdr tab/pane、持久终端、Agent 启停与精确资源清理；任务拆分、派发与模型选择由 Weaver（agents-weaver）负责。
 ---
 
 # Herdr
 
 At conversation start or a main-task change, name the current conversation and, where ownership can be verified, its Herdr tab as soon as the task is clear, before substantive task work or a final answer. This applies to read-only questions and evaluations as well as implementation; neither an explicit Herdr request nor a need for parallel work is required. Use the CLI result to establish availability, but require process ownership or a fresh native-title challenge to establish identity; if the caller cannot be verified, continue the task without naming.
 
-Herdr owns terminal operations and tab naming. Task decomposition, parallel decisions, model routing and acceptance policy belong to `agents-cooperation`; load it when deciding whether or how to delegate. A terminal command may still use a `oneshot` lane; peer main-agent panes follow that skill's protocol.
+Herdr owns terminal operations and tab naming. Task decomposition, dispatch and model routing belong to Weaver (`agents-weaver`) when the user invokes it; Herdr does not decide them. A terminal command may still use a `oneshot` lane.
 
 ## Codex with a shared local app-server
 
@@ -64,8 +64,8 @@ Hidden session: for background agents the user does not need to watch (for examp
 
 - `--create-session NAME --op-tag TAG` creates a brand-new session for the first lane and never adopts an existing one. A same-name running or stopped session, directory or scope fails with `session_exists`. On success `session` is `{name, created: true, proof: {unit, invocation_id, server_pid, server_starttime, boot_id}, dir_id: {dev, ino}}`, with `server_pid` verified to hold the session socket inside that scope. The session directory is claimed with an atomic `mkdir` and must still be empty when the server is forked. A directory written to in between, restored workspaces, or a socket served by another process fails with `session_foreign`: only reported, never stopped or deleted. A failure after creation also returns `session`. Excludes `--session`, `--dry-run`, `--caller-pane` and `--scope same-task`.
 - `--session NAME` uses an existing session (started on demand if stopped) and reports `session.created: false` without proof. After the last lane closes, `route-lane.ts --session NAME --stop-if-empty` stops it only when no workspaces remain.
-- `--session NAME --require-running` reuses only a running server, with `created: false, started: false`; an unavailable server or later native failure never triggers a start or restart. Agents-cooperation runtime uses this path for later lanes bound to its registered session proof, then verifies that original proof before recording the lane as open. See `--help` for parameter constraints and failure codes.
-- `--op-tag TAG` is kept verbatim in the router's and launcher's argv and exported as `AGENTS_COOPERATION_OP_TAG` to every child (herdr, systemd-run, systemctl), so a supervisor can find an in-flight call in `/proc`; the long-lived server does not carry it.
+- `--session NAME --require-running` reuses only a running server, with `created: false, started: false`; an unavailable server or later native failure never triggers a start or restart. See `--help` for parameter constraints and failure codes.
+- `--op-tag TAG` is kept verbatim in the router's and launcher's argv and exported as `HERDR_LANE_OP_TAG` to every child (herdr, systemd-run, systemctl), so a supervisor can find an in-flight call in `/proc`; the long-lived server does not carry it.
 - On Herdr 0.9.3, closing a tab's last pane closes the tab and a workspace's last tab removes the workspace; closing the only pane of a worktree parent that still has worktree workspaces is refused (`confirmation_required`).
 
 Consult the installed CLI's relevant group help for Agent start, prompt, wait, reads, or concrete failures. Use the returned cleanup command for each lane and inspect failures before choosing recovery.

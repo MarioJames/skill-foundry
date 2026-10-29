@@ -40,5 +40,5 @@ if [ -n "$entries" ]; then
 fi
 
 # The op tag identifies this call only; the long-lived server must not carry it.
-env -u AGENTS_COOPERATION_OP_TAG herdr --session "$name" server </dev/null >/dev/null 2>&1 &
+env -u HERDR_LANE_OP_TAG herdr --session "$name" server </dev/null >/dev/null 2>&1 &
 echo "$!"

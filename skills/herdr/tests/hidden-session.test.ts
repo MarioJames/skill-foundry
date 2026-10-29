@@ -186,7 +186,7 @@ test("a stopped session is started under a memory-capped systemd scope and used 
   expect(s.systemd).toEqual([[
     "--user", "--scope", "--collect", "--unit=herdr-session-hidden",
     "-p", "MemoryHigh=8G", "-p", "MemoryMax=10G",
-    "--", "env", "-u", "AGENTS_COOPERATION_OP_TAG", "herdr", "--session", "hidden", "server",
+    "--", "env", "-u", "HERDR_LANE_OP_TAG", "herdr", "--session", "hidden", "server",
   ]]);
   expect(s.output.session).toEqual({
     name: "hidden", created: false, running_before: false, started: true, unit: "herdr-session-hidden.scope",

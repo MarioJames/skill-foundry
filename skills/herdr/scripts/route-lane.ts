@@ -54,7 +54,7 @@ Options:
                                  Mutually exclusive with --session; same exclusions as --session; no --dry-run.
                                  Requires --op-tag.
   --op-tag TAG                   Opaque token kept verbatim in this process's argv (and the session launcher's)
-                                 and exported as AGENTS_COOPERATION_OP_TAG to every child process (herdr,
+                                 and exported as HERDR_LANE_OP_TAG to every child process (herdr,
                                  systemd-run, systemctl, launcher), so a supervisor can find in-flight calls
                                  in /proc. The long-lived Herdr server does not carry it.
   --stop-if-empty                With --session only: stop that session if it has no workspaces left.

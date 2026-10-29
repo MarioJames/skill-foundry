@@ -17,7 +17,7 @@ const home = join(process.env.XDG_CONFIG_HOME, 'herdr');
 const sessionsDir = join(home, 'sessions');
 let a = process.argv.slice(2);
 appendFileSync(join(root, 'calls.log'), JSON.stringify(a) + '\\n');
-appendFileSync(join(root, 'tags.log'), 'herdr ' + (process.env.AGENTS_COOPERATION_OP_TAG ?? '-') + '\\n');
+appendFileSync(join(root, 'tags.log'), 'herdr ' + (process.env.HERDR_LANE_OP_TAG ?? '-') + '\\n');
 const out = value => console.log(JSON.stringify(value));
 const fail = (code, status = 1) => { console.log(JSON.stringify({ error: { code } })); process.exit(status); };
 let session = null;
@@ -46,7 +46,7 @@ if (a[0] === 'server' && a.length === 1) {
   }
   writeFileSync(join(dir, 'herdr-server.log'), 'started\\n');
   writeFileSync(join(root, 'pids', String(process.pid)), session ?? 'default');
-  writeFileSync(join(root, 'server-env.log'), process.env.AGENTS_COOPERATION_OP_TAG === undefined ? 'absent' : 'present');
+  writeFileSync(join(root, 'server-env.log'), process.env.HERDR_LANE_OP_TAG === undefined ? 'absent' : 'present');
   setInterval(() => {}, 1000);
 } else if (a[0] === 'session' && a[1] === 'list') {
   if (process.env.FAKE_LIST_FAIL) fail('list_failed');
@@ -89,7 +89,7 @@ if (a[0] === 'server' && a.length === 1) {
 // Like the real one in scope mode: registers the unit, then runs the command in place.
 const fakeSystemdRun = `#!/bin/sh
 printf '%s\\n' "$*" >> "$FAKE_ROOT/systemd-run.log"
-echo "systemd-run \${AGENTS_COOPERATION_OP_TAG:--}" >> "$FAKE_ROOT/tags.log"
+echo "systemd-run \${HERDR_LANE_OP_TAG:--}" >> "$FAKE_ROOT/tags.log"
 unit=
 for arg in "$@"; do case $arg in --unit=*) unit=\${arg#--unit=} ;; esac; done
 if [ -e "$FAKE_ROOT/units/$unit.scope" ]; then
@@ -104,7 +104,7 @@ shift_to_command "$@"
 
 const fakeSystemctl = `#!/bin/sh
 printf '%s\\n' "$*" >> "$FAKE_ROOT/systemctl.log"
-echo "systemctl \${AGENTS_COOPERATION_OP_TAG:--}" >> "$FAKE_ROOT/tags.log"
+echo "systemctl \${HERDR_LANE_OP_TAG:--}" >> "$FAKE_ROOT/tags.log"
 echo "InvocationID=0123456789abcdef0123456789abcdef"
 echo "ControlGroup=$(sed 's/^0:://' /proc/self/cgroup)"
 `;
@@ -112,7 +112,7 @@ echo "ControlGroup=$(sed 's/^0:://' /proc/self/cgroup)"
 // `ls -A` is the launcher's last step before forking the server: this shim lets a test write into the
 // session directory exactly between the atomic mkdir and the fork.
 const fakeLs = `#!/bin/sh
-echo "ls \${AGENTS_COOPERATION_OP_TAG:--}" >> "$FAKE_ROOT/tags.log"
+echo "ls \${HERDR_LANE_OP_TAG:--}" >> "$FAKE_ROOT/tags.log"
 if [ -n "$FAKE_INJECT" ]; then echo '{}' > "$2/$FAKE_INJECT"; fi
 exec /bin/ls "$@"
 `;
@@ -331,7 +331,7 @@ test("the op tag reaches every child process through the environment but not the
   // The fake server is a real process: its own environ must not carry the tag.
   expect(s.serverEnv()).toBe("absent");
   const [serverPid] = s.servers();
-  expect(readFileSync(`/proc/${serverPid}/environ`, "utf8").split("\0").some((entry) => entry.startsWith("AGENTS_COOPERATION_OP_TAG="))).toBe(false);
+  expect(readFileSync(`/proc/${serverPid}/environ`, "utf8").split("\0").some((entry) => entry.startsWith("HERDR_LANE_OP_TAG="))).toBe(false);
   // Every non-server herdr call (list, workspace, tab, pane) carried it.
   const herdrLines = s.tags().filter((line) => line.startsWith("herdr"));
   expect(herdrLines.filter((line) => line.endsWith(" op-env-7")).length).toBeGreaterThan(3);
@@ -414,9 +414,9 @@ test("on-demand --session start keeps the op tag in systemd-run's start-up and d
 
   const environ = (pid: number) => readFileSync(`/proc/${pid}/environ`, "utf8").split("\0");
   const startup = Number(readFileSync(join(s.root, "startup.pid"), "utf8"));
-  expect(environ(startup)).toContain("AGENTS_COOPERATION_OP_TAG=op-lazy-3");
+  expect(environ(startup)).toContain("HERDR_LANE_OP_TAG=op-lazy-3");
 
-  expect(s.systemd()[0]).toContain("-- env -u AGENTS_COOPERATION_OP_TAG herdr --session cs-lazy server");
+  expect(s.systemd()[0]).toContain("-- env -u HERDR_LANE_OP_TAG herdr --session cs-lazy server");
   const [serverPid] = s.servers();
-  expect(environ(serverPid).some((entry) => entry.startsWith("AGENTS_COOPERATION_OP_TAG="))).toBe(false);
+  expect(environ(serverPid).some((entry) => entry.startsWith("HERDR_LANE_OP_TAG="))).toBe(false);
 });

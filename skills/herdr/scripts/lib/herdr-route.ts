@@ -473,7 +473,7 @@ export function parseSessionName(raw: string, flag = "--session"): string {
 }
 
 /** Environment variable carrying the op tag to every child process (they cannot all take `--op-tag`). */
-export const OP_TAG_ENV = "AGENTS_COOPERATION_OP_TAG";
+export const OP_TAG_ENV = "HERDR_LANE_OP_TAG";
 
 const OP_TAG = /^[A-Za-z0-9][A-Za-z0-9._:=@+-]{0,127}$/u;
 

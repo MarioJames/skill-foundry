@@ -17,8 +17,7 @@
 
 | Area | Skill | What it does |
 | --- | --- | --- |
-| Orchestration | [`agents-cooperation`](skills/agents-cooperation/SKILL.md) | Owner agents design, review and dispatch; workers chosen from a local config make every change |
-| | [`herdr`](skills/herdr/SKILL.md) | Herdr tabs and panes, persistent terminals, agent start/stop, verified naming and precise cleanup |
+| Orchestration | [`herdr`](skills/herdr/SKILL.md) | Herdr tabs and panes, persistent terminals, agent start/stop, verified naming and precise cleanup |
 | | [`agent-conduct`](skills/agent-conduct/SKILL.md) | Where reports, evidence and temporary files go; ready-to-run task worktrees and their reclamation; Docker and test leftovers; a read-only closure scan |
 | Quality | [`tdd`](skills/tdd/SKILL.md) | Decides before coding which checks a change needs; writes tests only when they can fail |
 | | [`feature-acceptance`](skills/feature-acceptance/SKILL.md) | Engineering preferences, interaction states and recovery paths for front-end and back-end work; records corrections where they belong |
@@ -33,28 +32,18 @@
 | Knowledge & content | [`repo-knowledge-graph`](skills/repo-knowledge-graph/SKILL.md) | Repository knowledge, project paths and cross-project relations in OpenViking |
 | | [`awesome-presentation`](skills/awesome-presentation/SKILL.md) | React slide decks from materials or a brief, built on the awesome-presentation scaffold |
 
-`chatgpt-review` used to live here. It is now bundled and maintained with [Convorel](https://github.com/MarioJames/convorel); install it from there.
+`chatgpt-review` used to live here. It is now bundled and maintained with [Convorel](https://github.com/MarioJames/convorel); install it from there. `agents-cooperation` was retired in favour of [Weaver](https://github.com/MarioJames/weaver), which dispatches work to agents on other engines.
 
 ## How they fit together
 
 A typical development task touches several skills:
 
-1. **Plan.** `agents-cooperation` picks a mode and prints a progress ledger. Design questions go to a discussion between two owner agents (for example Claude Code and Codex); only high-risk designs then go through a ChatGPT review called via Convorel's `chatgpt-review`.
-2. **Isolate.** Workers that would collide get their own worktree from `agent-conduct`; the second owner agent and long-running processes live in `herdr` panes.
-3. **Build and check.** Workers implement. `tdd` decides which tests are worth writing; `feature-acceptance` and `browser-harness` verify behavior; `public-acceptance` shares a temporary URL when someone else needs to look.
+1. **Plan.** The agent plans the work itself, or hands it to [Weaver](https://github.com/MarioJames/weaver) when you ask for dispatch to other engines; high-risk designs go through a ChatGPT review called via Convorel's `chatgpt-review`.
+2. **Isolate.** Work that would collide gets its own worktree from `agent-conduct`; long-running processes live in `herdr` panes.
+3. **Build and check.** `tdd` decides which tests are worth writing; `feature-acceptance` and `browser-harness` verify behavior; `public-acceptance` shares a temporary URL when someone else needs to look.
 4. **Ship.** `trigger-build-workflow` commits, pushes or dispatches a build only within what you authorized; `changelog-writing` turns the result into release notes.
 
 Each skill also works alone.
-
-### `agents-cooperation` in brief
-
-- **Roles.** Every top-level session is an owner agent. The one facing you takes the order and also talks to you, arbitrates disagreements and commits; a collaborating owner on another engine takes assigned work packages. Owners only design, review and dispatch, so the expensive models stay out of execution. Workers (native sub-agents or other-engine CLIs in `herdr` panes, one-shot or multi-round) make every file change.
-- **Config.** `~/.config/agents-cooperation/config.json` (default: `assets/config.default.json`) defines engines, owners, their `workers` lists (with domain `tags` describing each model's strengths), models, efforts, and per-owner parallel limits. Dispatch is derived: same engine is native, a worker on another engine runs in its own `herdr` tab and pane that is closed once a one-shot package is accepted. Every package has a class (mechanical, routine or judgment) and `resolve --class` is required: mechanical and routine packages go to free workers first, while judgment packages default to the owner's native worker and use a domain `--tag` only when the work is another engine's strength. Owners dispatch only the workers in their configured `workers` list; a judgment package that belongs to the other owner's strengths is assigned to that owner instead (`resolve` returns a `peer_suggestion`). `resolve` yields the exact model, effort and arguments for every dispatch, and a usage-limit hit blocks that engine or model until its reset time, after which it unblocks itself.
-- **Modes.** Design discussion, parallel development split between both sides, or ordinary dispatch. A progress ledger accompanies every update.
-- **Review gate.** ChatGPT review is mandatory only for high-risk designs: security, migrations of persisted data, costly-to-reverse architecture, irreversible effects, an owner deadlock, or an explicit request. Such a design must pass review after owner discussion, and only the work that depends on it waits; everything else keeps moving. Other designs are frozen by the order-taking owner after owner discussion. Rounds are budgeted per stage: discussion 3, cross review 2, design review 2, result review 2. Each round is logged before it is sent, and revisions never reset the count. When the budget runs out, the order-taking owner decides within the user's authorization and records that ChatGPT did not pass the design.
-- **Trace.** Each requirement keeps an append-only `decision-log.md`, every plan version as its own message file, source snapshots for uncommitted code, and Convorel task, run and content-version references.
-
-Install the same skill on every host; the role follows the message source, not the vendor. Details: [skill entry](skills/agents-cooperation/SKILL.md), [config reference](skills/agents-cooperation/references/config.md) and [owner protocol](skills/agents-cooperation/references/peer-protocol.md).
 
 ## Install
 
@@ -65,7 +54,7 @@ Use the [`skills`](https://github.com/vercel-labs/skills) CLI. `pnpm dlx` or `np
 bunx skills add MarioJames/skill-foundry --all
 
 # Selected skills
-bunx skills add MarioJames/skill-foundry --skill agents-cooperation tdd
+bunx skills add MarioJames/skill-foundry --skill agent-conduct tdd
 
 # A specific agent, or a global install
 bunx skills add MarioJames/skill-foundry --skill '*' --agent claude-code   # or: codex
@@ -99,7 +88,6 @@ Bun 1.3 or newer runs every script and hook entrypoint. Some skills also need ho
 
 | Skill | Also needs |
 | --- | --- |
-| `agents-cooperation` | Herdr for the collaborating owner and cross-engine sub-agents (falls back to own native sub-agents without it); Convorel with `chatgpt-review` for high-risk designs |
 | `herdr` | Herdr CLI; the CLI response decides availability, and inherited `HERDR_*` variables are not trusted for identity |
 | `agent-conduct` | Git; the project's package manager for worktree installs; Docker CLI for the container and volume part of the scan (skipped when absent) |
 | `browser-harness` | agent-browser with its bundled Chromium; `DISPLAY` or `WAYLAND_DISPLAY` for headed login ([runtime setup](skills/browser-harness/references/runtime.md)) |
@@ -112,10 +100,9 @@ Bun 1.3 or newer runs every script and hook entrypoint. Some skills also need ho
 
 ## Usage
 
-Ask in normal language. Name a skill when you want to require it; selection is otherwise model-driven and never guaranteed by installation alone. `agents-cooperation` and `tdd` are written to activate on development work without being named.
+Ask in normal language. Name a skill when you want to require it; selection is otherwise model-driven and never guaranteed by installation alone. `agent-conduct` and `tdd` are written to activate on development work without being named.
 
 ```text
-Use agents-cooperation to split this work across sub-agents, discuss the design with a Codex owner first, and cross-review the result.
 Use agent-conduct to give this task its own ready-to-run worktree, and remove it once the branch is merged.
 Use browser-harness to open the app and collect screenshot, console and network evidence.
 Use public-acceptance to start this project in DEV, create a public URL and give me the login details.
