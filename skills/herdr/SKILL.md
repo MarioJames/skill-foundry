@@ -48,7 +48,7 @@ Only change the tab label; keep workspace names, focus, order, and panes intact.
 
 - Receive the target cwd, selected native execution profile, explicit caller/destination IDs and naming ownership from the task owner. Herdr does not classify complexity or change models.
 - Keep focus and unrelated resources intact. Before a repeated start/prompt, inspect the existing pane/session; an uncertain response is not permission to repeat execution.
-- Close only resources created for the task after the owner has collected the result and verified that no actual dependency remains. Never close the caller pane or widen cleanup after a failure. Follow [task resource lifecycle](../cow-workspace/SKILL.md#task-artifacts-and-resource-lifecycle) for artifacts, data and workspaces; retain final deliverables and necessary evidence, and reclaim eligible task intermediates rather than stopping processes alone.
+- Close only resources created for the task after the owner has collected the result and verified that no actual dependency remains. Never close the caller pane or widen cleanup after a failure. Follow [task resource lifecycle](../agent-conduct/SKILL.md#收尾回收) for artifacts, data and workspaces; retain final deliverables and necessary evidence, and reclaim eligible task intermediates rather than stopping processes alone.
 
 ## Herdr operations
 

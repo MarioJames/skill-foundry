@@ -19,7 +19,7 @@
 | --- | --- | --- |
 | Orchestration | [`agents-cooperation`](skills/agents-cooperation/SKILL.md) | Owner agents design, review and dispatch; workers chosen from a local config make every change |
 | | [`herdr`](skills/herdr/SKILL.md) | Herdr tabs and panes, persistent terminals, agent start/stop, verified naming and precise cleanup |
-| | [`cow-workspace`](skills/cow-workspace/SKILL.md) | Copy-on-write Git workspaces per task, Git bundle handoff, task resource lifecycle |
+| | [`agent-conduct`](skills/agent-conduct/SKILL.md) | Where reports, evidence and temporary files go; ready-to-run task worktrees and their reclamation; Docker and test leftovers; a read-only closure scan |
 | Quality | [`tdd`](skills/tdd/SKILL.md) | Decides before coding which checks a change needs; writes tests only when they can fail |
 | | [`feature-acceptance`](skills/feature-acceptance/SKILL.md) | Engineering preferences, interaction states and recovery paths for front-end and back-end work; records corrections where they belong |
 | | [`browser-harness`](skills/browser-harness/SKILL.md) | Browser acceptance with agent-browser: services, login state, screenshot/console/network evidence |
@@ -40,7 +40,7 @@
 A typical development task touches several skills:
 
 1. **Plan.** `agents-cooperation` picks a mode and prints a progress ledger. Design questions go to a discussion between two owner agents (for example Claude Code and Codex); only high-risk designs then go through a ChatGPT review called via Convorel's `chatgpt-review`.
-2. **Isolate.** Workers that would collide get their own `cow-workspace` view; the second owner agent and long-running processes live in `herdr` panes.
+2. **Isolate.** Workers that would collide get their own worktree from `agent-conduct`; the second owner agent and long-running processes live in `herdr` panes.
 3. **Build and check.** Workers implement. `tdd` decides which tests are worth writing; `feature-acceptance` and `browser-harness` verify behavior; `public-acceptance` shares a temporary URL when someone else needs to look.
 4. **Ship.** `trigger-build-workflow` commits, pushes or dispatches a build only within what you authorized; `changelog-writing` turns the result into release notes.
 
@@ -101,7 +101,7 @@ Bun 1.3 or newer runs every script and hook entrypoint. Some skills also need ho
 | --- | --- |
 | `agents-cooperation` | Herdr for the collaborating owner and cross-engine sub-agents (falls back to own native sub-agents without it); Convorel with `chatgpt-review` for high-risk designs |
 | `herdr` | Herdr CLI; the CLI response decides availability, and inherited `HERDR_*` variables are not trusted for identity |
-| `cow-workspace` | Linux, Git, `flock`, `fuse-overlayfs`, `fusermount3`, usable `/dev/fuse`; prepare from a clean, committed repository ([details](skills/cow-workspace/SKILL.md#prepare-once-create-as-needed)) |
+| `agent-conduct` | Git; the project's package manager for worktree installs; Docker CLI for the container and volume part of the scan (skipped when absent) |
 | `browser-harness` | agent-browser with its bundled Chromium; `DISPLAY` or `WAYLAND_DISPLAY` for headed login ([runtime setup](skills/browser-harness/references/runtime.md)) |
 | `public-acceptance` | `cloudflared` for anonymous Quick Tunnels |
 | `trigger-build-workflow` | Git and an authenticated `gh` for workflow dispatch |
@@ -116,10 +116,11 @@ Ask in normal language. Name a skill when you want to require it; selection is o
 
 ```text
 Use agents-cooperation to split this work across sub-agents, discuss the design with a Codex owner first, and cross-review the result.
-Prepare an isolated workspace for this repository so another agent can edit it without copying node_modules; export the commits when done.
+Use agent-conduct to give this task its own ready-to-run worktree, and remove it once the branch is merged.
 Use browser-harness to open the app and collect screenshot, console and network evidence.
 Use public-acceptance to start this project in DEV, create a public URL and give me the login details.
 Use asset-validation to validate this skill before release.
+Use agent-conduct to scan what this task left behind since it started and clean up what it owns.
 Use trigger-build-workflow to commit and push these files without dispatching a build.
 Use changelog-writing to produce customer-facing notes for the changes since v1.2.0.
 Use persistent-ssh-ops to inspect the service, apply the config change, verify it and close the session.
@@ -134,7 +135,7 @@ Each skill lives in `skills/<name>/` with `SKILL.md` plus optional `agents/`, `s
 Metadata conventions:
 
 - The directory name and `SKILL.md` frontmatter `name` are the same lowercase, hyphenated identifier; installers and `$skill-name` references use it.
-- `agents/openai.yaml` is present in every skill. `interface.display_name` is an English title that keeps product names and acronyms (`ChatGPT`, `CoW`, `SSH`, `TDD`).
+- `agents/openai.yaml` is present in every skill. `interface.display_name` is an English title that keeps product names and acronyms (`ChatGPT`, `SSH`, `TDD`).
 - Frontmatter `description`, `interface.short_description` and `interface.default_prompt` are written in Chinese, state when the skill applies and keep meaningful exclusions.
 - Scripts are TypeScript run with an explicit `bun`; documented commands must not call `scripts/*.ts` directly.
 
@@ -149,12 +150,12 @@ bun test skills/public-acceptance/tests
 bun test skills/herdr/tests
 bun test skills/trigger-build-workflow/tests
 bun test skills/persistent-ssh-ops/tests
-bun test skills/cow-workspace/tests                  # Linux, fuse-overlayfs, /dev/fuse
+bun test skills/agent-conduct/tests
 bun test skills/debian-testvm/tests/doctor.test.ts   # host diagnostics only
 bun test skills/debian-testvm/tests/testvm.test.ts   # needs /dev/kvm, QEMU and built images
 ```
 
-Behavioral acceptance of a changed skill goes through `asset-validation` with a real CLI; re-run the affected scenarios after each change. For example, `cow-workspace` passed fixture-based acceptance on 2026-09-09 with a real Codex CLI: natural selection, real CoW mounts, isolation of source, dependencies and configuration, Git bundle export of two task commits, and uncommitted changes surviving a remount. Compatibility reports live in [`reports/`](reports/).
+Behavioral acceptance of a changed skill goes through `asset-validation` with a real CLI; re-run the affected scenarios after each change. Compatibility reports live in [`reports/`](reports/).
 
 ## License
 

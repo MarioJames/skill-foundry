@@ -173,10 +173,10 @@ owner 在以下时机，先执行本节再继续长步骤或等待：首次接�
 - 禁止事项：不提交、不推送、不改 Git index 和锁文件以外的共享状态、不清理持久数据、不再派发；
 - 回报格式：改动文件、验证命令及结果、未解决的风险或阻塞；需要越界或补充授权时停下回报，不自行扩大范围。
 
-写入范围不重叠的子 agent 可以共享工作树；写入范围重叠，或需要改依赖、锁文件时，用 `cow-workspace` 隔离。文件隔离不隔离数据库、Redis 和对象存储，这些按项目规则单独隔离。
+写入范围不重叠的子 agent 可以共享工作树；写入范围重叠，或需要改依赖、锁文件时，用 `agent-conduct` 的 `wt.ts add` 建独立 worktree。文件隔离不隔离数据库、Redis 和对象存储，这些按项目规则单独隔离。
 
 子 agent 完成不等于验收通过：owner 要亲自查看 diff，复跑关键验证，确认通过后才解锁依赖或移交写入权。发现问题时把 findings 交回原子 agent（Claude Code 用 SendMessage 续接）或新派子 agent 修复，owner 不自己打补丁。失败或取消的子 agent 要先核对部分写入，再派子 agent 修复、重派或回滚。
 
 ## 收尾
 
-接单 owner 汇总已验收的交付，统一集成（解决冲突等需要改文件的集成工作同样派给子 agent），完成项目要求的验证后做一次本地提交；子 agent 和协作 owner 都不提交。`chatgpt_review` 有效值为 `false` 时，提交前不补做自动 ChatGPT 结果复审，最终说明写 `ChatGPT：关闭（配置）` 或明确跳过，不写成 Pro 已通过。只释放本任务创建的子 agent 和 pane，不关闭用户自己的 pane；本任务的 herdr lane 逐个 `lane close` 后运行 `agents-runtime run close --run <run-id>`，输出 `status: closed` 才算 session 已回收；仍为 `closing`、带 `last_error` 或有未知资源时，写入最终说明的风险，不声称已回收。按 [任务资源生命周期](../cow-workspace/SKILL.md#task-artifacts-and-resource-lifecycle) 核对每个子 agent 的资源闭环，保留最终交付、必要证据和持久业务数据，回收已满足条件的中间产物、CoW 视图与任务基线，不只停止进程。协作消息目录、其中引用的 Convorel 内容版本和送审源码快照属持久证据，不纳入回收；等待进程照常清理。最终说明写清交付内容、验证结果、资源释放和保留情况。
+接单 owner 汇总已验收的交付，统一集成（解决冲突等需要改文件的集成工作同样派给子 agent），完成项目要求的验证后做一次本地提交；子 agent 和协作 owner 都不提交。`chatgpt_review` 有效值为 `false` 时，提交前不补做自动 ChatGPT 结果复审，最终说明写 `ChatGPT：关闭（配置）` 或明确跳过，不写成 Pro 已通过。只释放本任务创建的子 agent 和 pane，不关闭用户自己的 pane；本任务的 herdr lane 逐个 `lane close` 后运行 `agents-runtime run close --run <run-id>`，输出 `status: closed` 才算 session 已回收；仍为 `closing`、带 `last_error` 或有未知资源时，写入最终说明的风险，不声称已回收。按 [任务资源生命周期](../agent-conduct/SKILL.md#收尾回收) 核对每个子 agent 的资源闭环，保留最终交付、必要证据和持久业务数据，回收已满足条件的中间产物和任务 worktree，不只停止进程。协作消息目录、其中引用的 Convorel 内容版本和送审源码快照属持久证据，不纳入回收；等待进程照常清理。最终说明写清交付内容、验证结果、资源释放和保留情况。

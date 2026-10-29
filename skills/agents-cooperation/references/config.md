@@ -138,7 +138,7 @@ runtime 目前只支持 `HOME/.config/herdr/sessions`：`XDG_CONFIG_HOME` 为空
    | --- | --- | --- | --- |
    | claude | 都弹（“Quick safety check … trust”），不按前缀继承 | 默认 No, exit：`send-keys <name> down`，读屏确认选中 `Yes, I trust this folder` 后再 `enter` | blocked（`agent start` 返回 `agent_not_ready`） |
    | codex | 都弹（“Trust this folder?”），不按前缀继承 | 默认 Trust and continue：`send-keys <name> enter` | blocked（同上） |
-   | qodercli | 按 `~/.qoder/settings.json` 的 `permissions.trustDirectories` 前缀继承：已信任目录（本机含 `/home/mocha`，其下项目与默认位于 `~/.local/share/cow-workspace` 的视图）不弹，`/tmp` 等范围之外弹 “Trust folder” | 默认 Trust：读屏确认后 `send-keys <name> enter`；`--dangerously-skip-permissions` 与 `--permission-mode bypass_permissions` 都跳不过 | **idle**：`agent start` 看起来成功，直接发 prompt 会进信任对话框，必须读屏，不能只看状态 |
+   | qodercli | 按 `~/.qoder/settings.json` 的 `permissions.trustDirectories` 前缀继承：已信任目录（本机含 `/home/mocha`，其下项目与默认位于 `~/.local/share/worktrees` 的 worktree）不弹，`/tmp` 等范围之外弹 “Trust folder” | 默认 Trust：读屏确认后 `send-keys <name> enter`；`--dangerously-skip-permissions` 与 `--permission-mode bypass_permissions` 都跳不过 | **idle**：`agent start` 看起来成功，直接发 prompt 会进信任对话框，必须读屏，不能只看状态 |
    | grok | 不弹 | 直接就绪；状态栏显示模型与 effort（如 `Grok 4.7 (low) · always-approve`），与 `resolve` 对照 | 就绪 |
    | opencode | 不弹（实测 `/tmp`） | 读屏确认模型和 variant（如 `· max`），与 `resolve` 的 `warnings` 对照 | 就绪 |
 
