@@ -15,7 +15,9 @@ import {
   mergeEvidence,
   processesInside,
   remoteDefault,
+  remoteDefaults,
   run,
+  trustedDefaultRef,
   worktreeGitDir,
   type WorktreeEntry,
 } from "./lib/git";
@@ -281,7 +283,7 @@ function remove(flags: Map<string, string[]>) {
   if (repo === path) fail(`这是主工作树，不能删除：${path}`);
   const entry = listWorktrees(repo).find((candidate) => candidate.path === path);
   if (!entry) fail(`${repo} 没有登记这个 worktree：${path}`);
-  const ref = defaultRef(repo);
+  const ref = trustedDefaultRef(repo);
   const pids = processesInside(path);
   if (pids.length > 0) fail(`进程 ${pids.join(",")} 正在使用 ${path}，先停止它们`);
   if (!flags.has("force")) {
@@ -294,15 +296,17 @@ function remove(flags: Map<string, string[]>) {
   return { ok: true, removed: path, repo, branchDeleted, remoteBranch };
 }
 
-function gc(flags: Map<string, string[]>) {
+async function gc(flags: Map<string, string[]>) {
   const workspaces = (flags.get("workspace") ?? []).map((workspace) => resolve(workspace));
   if (workspaces.length === 0) throw new UsageError("缺少 --workspace");
   const minIdle = parseDuration(flags.get("min-idle")?.[0] ?? "24h");
   const apply = flags.has("apply");
   const assessments: (Assessment & { done?: string })[] = [];
   for (const workspace of workspaces) {
-    for (const repo of findRepositories(workspace)) {
-      const ref = defaultRef(repo);
+    const repos = findRepositories(workspace).filter((repo) => listWorktrees(repo).length > 0);
+    const defaults = await remoteDefaults(repos);
+    for (const repo of repos) {
+      const ref = trustedDefaultRef(repo, defaults.get(repo) ?? null);
       const entries = listWorktrees(repo);
       const results = entries.map((entry) => assess(repo, entry, ref, minIdle));
       if (apply) {
@@ -322,7 +326,7 @@ function gc(flags: Map<string, string[]>) {
   return { ok: true, applied: apply, worktrees: assessments };
 }
 
-function printGc(report: ReturnType<typeof gc>): void {
+function printGc(report: Awaited<ReturnType<typeof gc>>): void {
   const label = { prune: "清理记录", remove: "可回收", keep: "保留" };
   const out = [report.applied ? "worktree 回收结果：" : "worktree 盘点（只列出，加 --apply 执行）："];
   for (const item of report.worktrees) {
@@ -342,7 +346,7 @@ try {
   else if (command === "remove") console.log(JSON.stringify(remove(parseFlags(rest, ["force"])), null, 2));
   else if (command === "gc") {
     const flags = parseFlags(rest, ["apply", "json"]);
-    const report = gc(flags);
+    const report = await gc(flags);
     if (flags.has("json")) console.log(JSON.stringify(report, null, 2));
     else printGc(report);
   } else throw new UsageError(`未知子命令: ${command}`);

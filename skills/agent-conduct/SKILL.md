@@ -64,12 +64,12 @@ bun <skill-dir>/scripts/wt.ts gc --workspace <工作区根>... [--apply]
   - 按锁文件离线安装依赖；pnpm 从 store 硬链接，通常几秒完成。
   - stdout 输出 JSON，`cwd` 就是工作目录。
 - **改用 `add`，不要直接 `git worktree add`。** 运行环境自带的隔离（如 Claude Code 的 `isolation: worktree`）会自建 worktree，本技能管不到创建这一步。这类 worktree 照样在收尾时用 `remove` 回收，或者由 `gc` 兜底。
-- **`remove` 先核对，再删除。** 依次核对：没有未提交改动、没有未合入默认分支的提交、没有进程在用；通过后删除 worktree，已合入的本地任务分支一并删除。合入的判断和 branch.ts 相同，squash、rebase 合入都算。远端还有同名分支时，输出的 `remoteBranch` 会列出，按下面的「分支」一节处理。确认成果可以丢弃时才加 `--force`；有进程在用时，加 `--force` 也拒绝。
+- **`remove` 先核对，再删除。** 依次核对：没有未提交改动、没有未合入默认分支的提交、没有进程在用；通过后删除 worktree，已合入的本地任务分支一并删除。合入的判断和 branch.ts 相同：以 origin 实际声明的默认分支为准，squash、rebase 合入都算。远端还有同名分支时，输出的 `remoteBranch` 会列出，按下面的「分支」一节处理。确认成果可以丢弃时才加 `--force`；有进程在用时，加 `--force` 也拒绝。
 - **`gc` 是兜底，不管 worktree 是谁建的。** 它盘点工作区内所有仓库的 worktree，分三类：
   - 失效记录：HEAD 仍在某个分支上的，标为清理；
   - 已合入、无改动、无进程占用、闲置超过 `--min-idle`（默认 24h）的，标为可回收；
   - 其余一律保留。
-  默认只列出，加 `--apply` 才执行；失效记录逐条删除，不做整仓 prune。
+  默认只列出，加 `--apply` 才执行；失效记录逐条删除，不做整仓 prune。`remove`、`gc` 和收尾扫描都向 origin 查询实际默认分支（只读），连不上时才用本地 `origin/HEAD` 记录。
 - **端口和数据不随 worktree 隔离。** 并行服务各用各的端口；数据库、Redis、对象存储按全局数据规则隔离。数据库文件、bind mount 和私有配置不放进 worktree，删除 worktree 时被忽略的文件会一起删掉。
 
 ## 分支

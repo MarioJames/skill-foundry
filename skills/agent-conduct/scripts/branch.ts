@@ -128,7 +128,6 @@ function inspect(options: ReturnType<typeof parseFlags>) {
 
   const wanted = options.branches.length > 0 ? new Set(options.branches) : null;
   const worktrees = checkedOut(repo);
-  const cache = new Map<string, Set<string>>();
 
   const prCovering = (branch: string, sha: string) =>
     mergedPrs?.find(
@@ -152,7 +151,7 @@ function inspect(options: ReturnType<typeof parseFlags>) {
       if (!pr) return { ...base, action: "keep", reason: `没有覆盖分支头 ${sha.slice(0, 10)} 且已合入 ${ref} 的 PR` };
       return { ...base, action: "delete", reason: `PR #${pr.number} 已合入 ${ref}`, evidence: "pull-request", pr: pr.url };
     }
-    const evidence = mergeEvidence(repo, sha, ref, cache);
+    const evidence = mergeEvidence(repo, sha, ref);
     if (evidence) {
       const how = { ancestor: "已是其祖先", rebased: "提交已 rebase 合入", squashed: "已 squash 合入" }[evidence];
       return { ...base, action: "delete", reason: `${ref} ${how}`, evidence, ...(pr ? { pr: pr.url } : {}) };

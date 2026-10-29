@@ -9,10 +9,11 @@ export interface RunResult {
   err: string;
 }
 
-export function run(cmd: string[], cwd?: string, input?: string): RunResult {
+export function run(cmd: string[], cwd?: string, input?: string, timeout?: number): RunResult {
   try {
     const stdin = input === undefined ? "ignore" : Buffer.from(input);
-    const result = Bun.spawnSync({ cmd, cwd, stdin, stdout: "pipe", stderr: "pipe" });
+    const env = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
+    const result = Bun.spawnSync({ cmd, cwd, env, stdin, stdout: "pipe", stderr: "pipe", timeout });
     return { ok: result.exitCode === 0, out: result.stdout.toString(), err: result.stderr.toString() };
   } catch (error) {
     return { ok: false, out: "", err: error instanceof Error ? error.message : String(error) };
@@ -61,11 +62,45 @@ export function defaultRef(repo: string): string | null {
   return null;
 }
 
+function parseSymref(out: string): string | null {
+  return lines(out).find((line) => line.startsWith("ref: "))?.match(/^ref: refs\/heads\/(\S+)/u)?.[1] ?? null;
+}
+
 /** The default branch name origin actually declares; null without origin or network. */
 export function remoteDefault(repo: string): string | null {
-  const result = git(repo, "ls-remote", "--symref", "origin", "HEAD");
-  if (!result.ok) return null;
-  return lines(result.out).find((line) => line.startsWith("ref: "))?.match(/^ref: refs\/heads\/(\S+)/u)?.[1] ?? null;
+  if (!git(repo, "remote", "get-url", "origin").ok) return null;
+  const result = run(["git", "-C", repo, "ls-remote", "--symref", "origin", "HEAD"], undefined, undefined, 20_000);
+  return result.ok ? parseSymref(result.out) : null;
+}
+
+/** remoteDefault for many repositories at once; each query is a network round trip. */
+export async function remoteDefaults(repos: string[]): Promise<Map<string, string | null>> {
+  const query = async (repo: string): Promise<[string, string | null]> => {
+    if (!git(repo, "remote", "get-url", "origin").ok) return [repo, null];
+    try {
+      const proc = Bun.spawn(["git", "-C", repo, "ls-remote", "--symref", "origin", "HEAD"], {
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "ignore",
+        signal: AbortSignal.timeout(20_000),
+      });
+      const out = await new Response(proc.stdout).text();
+      return [repo, (await proc.exited) === 0 ? parseSymref(out) : null];
+    } catch {
+      return [repo, null];
+    }
+  };
+  return new Map(await Promise.all(repos.map(query)));
+}
+
+/**
+ * The default branch to judge merges against: origin's declared default when reachable
+ * (the local origin/HEAD record can be stale), otherwise the local record.
+ */
+export function trustedDefaultRef(repo: string, name = remoteDefault(repo)): string | null {
+  if (name && git(repo, "rev-parse", "--verify", "-q", `refs/remotes/origin/${name}`).ok) return `origin/${name}`;
+  return defaultRef(repo);
 }
 
 export function isAncestor(repo: string, commit: string, ref: string): boolean {
@@ -74,32 +109,30 @@ export function isAncestor(repo: string, commit: string, ref: string): boolean {
 
 export type MergeEvidence = "ancestor" | "rebased" | "squashed";
 
-/** Patch ids of the non-merge commits in a range, keyed for `git cherry`-style matching. */
-function patchIds(repo: string, range: string[]): string[] {
-  const log = git(repo, "log", "-p", "--no-color", "--no-merges", "--format=commit %H", ...range);
-  if (!log.ok) return [];
-  return lines(run(["git", "-C", repo, "patch-id", "--stable"], undefined, log.out).out).map((line) => line.split(" ")[0]);
+function patchId(repo: string, diff: string): string | null {
+  return run(["git", "-C", repo, "patch-id", "--stable"], undefined, `commit ${"0".repeat(40)}\n${diff}`).out.split(" ")[0] || null;
 }
 
 /**
  * How a commit's content reached `ref`: as an ancestor, as rebased commits, or as one squash commit.
  * Read-only; null means some change is not on `ref`, or the squash was edited and needs PR evidence.
  */
-export function mergeEvidence(repo: string, tip: string, ref: string, cache = new Map<string, Set<string>>()): MergeEvidence | null {
+export function mergeEvidence(repo: string, tip: string, ref: string): MergeEvidence | null {
   if (isAncestor(repo, tip, ref)) return "ancestor";
   const base = git(repo, "merge-base", ref, tip).out.trim();
   if (!base) return null;
-  let onRef = cache.get(base);
-  if (!onRef) {
-    onRef = new Set(patchIds(repo, [`${base}..${ref}`]));
-    cache.set(base, onRef);
-  }
-  const own = patchIds(repo, [`${ref}..${tip}`]);
-  if (own.length > 0 && own.every((id) => onRef.has(id))) return "rebased";
-  const diff = git(repo, "diff", "--no-color", base, tip);
-  if (!diff.ok || !diff.out) return null;
-  const squash = run(["git", "-C", repo, "patch-id", "--stable"], undefined, `commit ${"0".repeat(40)}\n\n${diff.out}`).out.split(" ")[0];
-  return squash && onRef.has(squash) ? "squashed" : null;
+  const cherry = lines(git(repo, "cherry", ref, tip, base).out);
+  if (cherry.length > 0 && cherry.every((line) => line.startsWith("- "))) return "rebased";
+  // A squash commit changes exactly the branch's files; only those candidates get a full patch id.
+  const files = lines(git(repo, "diff", "--name-only", "--no-renames", base, tip).out).sort();
+  if (files.length === 0) return null;
+  const sameFiles = lines(git(repo, "log", "--no-merges", "--format=%H", `${base}..${ref}`, "--", ...files).out).filter(
+    (commit) => lines(git(repo, "diff-tree", "--no-commit-id", "--name-only", "--no-renames", "-r", commit).out).sort().join("\n") === files.join("\n"),
+  );
+  if (sameFiles.length === 0) return null;
+  const squash = patchId(repo, git(repo, "diff", "--no-color", "--no-renames", base, tip).out);
+  if (!squash) return null;
+  return sameFiles.some((commit) => patchId(repo, git(repo, "diff-tree", "-p", "--no-color", "--no-renames", "--no-commit-id", commit).out) === squash) ? "squashed" : null;
 }
 
 export interface WorktreeEntry {

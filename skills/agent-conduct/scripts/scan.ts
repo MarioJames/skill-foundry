@@ -4,7 +4,7 @@
 import { lstatSync, readdirSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
-import { defaultRef, findRepositories, lines, listWorktrees, mergeEvidence, run } from "./lib/git";
+import { findRepositories, lines, listWorktrees, mergeEvidence, remoteDefaults, run, trustedDefaultRef } from "./lib/git";
 
 const HELP = `用法: bun scan.ts [--since <时间>] [--workspace <目录>]... [--temp-root <目录>]... [--no-docker] [--json]
 
@@ -96,18 +96,18 @@ function parseArgs(argv: string[]): Options {
   return options;
 }
 
-function scanWorktrees(repo: string, ref: string | null, cache: Map<string, Set<string>>): Worktree[] {
+function scanWorktrees(repo: string, ref: string | null): Worktree[] {
   return listWorktrees(repo).map(({ path, head, branch, prunable }) => ({
     path,
     branch,
     prunable,
-    merged: Boolean(ref && head && !prunable && mergeEvidence(repo, head, ref, cache)),
+    merged: Boolean(ref && head && !prunable && mergeEvidence(repo, head, ref)),
     insideRepository: path.startsWith(repo + sep),
   }));
 }
 
-function scanRepository(repo: string): RepositoryReport {
-  const ref = defaultRef(repo);
+function scanRepository(repo: string, remoteDefault: string | null): RepositoryReport {
+  const ref = trustedDefaultRef(repo, remoteDefault);
   const status = lines(
     run(["git", "-C", repo, "status", "--porcelain=v1", "--untracked-files=normal", "--ignored=matching"]).out,
   );
@@ -117,15 +117,14 @@ function scanRepository(repo: string): RepositoryReport {
     .map((line) => line.slice(3))
     .filter((path) => ARTIFACT_NAME.test(basename(path.replace(/\/$/u, ""))));
   const current = run(["git", "-C", repo, "branch", "--show-current"]).out.trim();
-  const cache = new Map<string, Set<string>>();
   const defaultName = ref?.replace(/^origin\//u, "");
   const mergedBranches = ref
     ? lines(run(["git", "-C", repo, "for-each-ref", "--format=%(refname:short)", "refs/heads"]).out)
         .filter((name) => name !== current && name !== defaultName && name !== "main" && name !== "master")
-        .filter((name) => mergeEvidence(repo, name, ref, cache))
+        .filter((name) => mergeEvidence(repo, name, ref))
         .sort()
     : [];
-  return { path: repo, defaultRef: ref, worktrees: scanWorktrees(repo, ref, cache), untracked, ignoredArtifacts, mergedBranches };
+  return { path: repo, defaultRef: ref, worktrees: scanWorktrees(repo, ref), untracked, ignoredArtifacts, mergedBranches };
 }
 
 function scanWorkspaceRoot(workspace: string, repositories: string[]): string[] {
@@ -224,7 +223,7 @@ function scanDocker(since: Date): DockerReport | null {
   };
 }
 
-function printText(report: ReturnType<typeof buildReport>): void {
+function printText(report: Awaited<ReturnType<typeof buildReport>>): void {
   const out: string[] = [`扫描窗口起点：${report.since}（只读，未删除任何内容）`];
   const docker = report.docker;
   if (docker) {
@@ -260,12 +259,13 @@ function printText(report: ReturnType<typeof buildReport>): void {
   console.log(out.join("\n"));
 }
 
-function buildReport(options: Options) {
+async function buildReport(options: Options) {
   const repositories: RepositoryReport[] = [];
   const workspaceStrays: { workspace: string; entries: string[] }[] = [];
   for (const workspace of options.workspaces) {
     const repos = findRepositories(workspace).filter((repo) => repo !== workspace);
-    repositories.push(...repos.map(scanRepository));
+    const defaults = await remoteDefaults(repos);
+    repositories.push(...repos.map((repo) => scanRepository(repo, defaults.get(repo) ?? null)));
     workspaceStrays.push({ workspace, entries: scanWorkspaceRoot(workspace, repos) });
   }
   return {
@@ -279,7 +279,7 @@ function buildReport(options: Options) {
 
 try {
   const options = parseArgs(process.argv.slice(2));
-  const report = buildReport(options);
+  const report = await buildReport(options);
   if (options.json) console.log(JSON.stringify(report, null, 2));
   else printText(report);
 } catch (error) {
