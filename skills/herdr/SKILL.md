@@ -31,6 +31,17 @@ The helper does not start/restart the daemon, resume threads, modify projects, o
 
 Shared app-server tools are not descendants of the TUI process. The installed Herdr Codex SessionStart hook may also report every thread to a daemon-inherited `HERDR_PANE_ID`. Consequently, a Herdr `agent_session` match alone is not independent ownership evidence. OS ancestry avoids relying on either inherited IDs or that hook report. When that proof is unavailable, the fresh client echo provides independent evidence; no echo or multiple matching panes fails safely without changing any tab.
 
+## LobeHub-hosted conversations
+
+When `LOBEHUB_TOPIC_ID` is set and equals `LOBEHUB_PROCESS_TOPIC`, the conversation title is that LobeHub topic's title, independent of Herdr. Name it first, even if Herdr caller resolution fails:
+
+```sh
+"$LOBEHUB_CLI" topic view "$LOBEHUB_TOPIC_ID" --json   # read topic.createdAt → Asia/Shanghai MMDD
+"$LOBEHUB_CLI" topic edit "$LOBEHUB_TOPIC_ID" --title '<MMDD｜TYPE｜Topic>'
+```
+
+Read the title back after editing. A delegate spawned by this conversation inherits these variables; it leaves the parent's topic title alone unless its handoff assigns naming. A Herdr tab, if verifiable, is named separately below.
+
 ## Name your own tab
 
 When the task is clear, automatically give your tab a short, concrete task label in the user's language, including for work that needs no parallel lanes. Use `MMDD｜TYPE｜Topic`: derive MMDD only from the session createdAt in Asia/Shanghai, use FEA/DES/FIX/OPT/REL/EXP/DOC/RES, and a short concrete topic. Do not infer the creation date from updatedAt or today; if it is unavailable, preserve the title and report that gap. Re-evaluate the label when the user replaces or switches the main task, even if the existing label is already descriptive or was set in an earlier session. Progress updates, follow-up questions, and subtasks of the same goal do not require renaming.
