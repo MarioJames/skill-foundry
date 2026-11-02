@@ -9,7 +9,7 @@ import { findRepositories, lines, listWorktrees, mergeEvidence, remoteDefaults, 
 const HELP = `用法: bun scan.ts [--since <时间>] [--workspace <目录>]... [--temp-root <目录>]... [--no-docker] [--json]
 
 只读扫描本机可能遗留的任务资源，不删除任何内容。结果是待核实的候选，不是删除清单。
-  --since       时间窗起点：ISO 时间或相对时长（90m、6h、2d），默认 24h；作用于临时位置和 Docker
+  --since       时间窗起点：ISO 时间或相对时长（90m、6h、2d），默认 24h；作用于临时位置和 Docker（带 owner 标签的容器不限窗口）
   --workspace   工作区根（仓库的上一级目录，如 ~/workspaces/<项目组>），可重复；检查其下仓库和根目录杂项
   --temp-root   替换默认临时位置（$TMPDIR、/tmp、~/.cache、~/.local/share），可重复
   --no-docker   跳过 Docker
@@ -54,6 +54,7 @@ interface TemporaryGroup {
 interface DockerReport {
   stoppedContainers: { name: string; image: string; created: string; owner: string; status: string }[];
   unlabeledRunning: { name: string; image: string; created: string }[];
+  labelled: { name: string; image: string; created: string; owner: string; releaseWhen: string; status: string }[];
   danglingVolumes: { total: number; inWindow: number; anonymousInWindow: number };
 }
 
@@ -193,12 +194,12 @@ function dockerTime(value: string): Date {
 }
 
 function scanDocker(since: Date): DockerReport | null {
-  const format = "{{.Names}}\t{{.Image}}\t{{.CreatedAt}}\t{{.Label \"owner\"}}\t{{.Status}}";
+  const format = "{{.Names}}\t{{.Image}}\t{{.CreatedAt}}\t{{.Label \"owner\"}}\t{{.Label \"release-when\"}}\t{{.Status}}";
   const all = run(["docker", "ps", "-a", "--format", format]);
   if (!all.ok) return null;
   const containers = lines(all.out).map((line) => {
-    const [name, image, created, owner, status] = line.split("\t");
-    return { name, image, created: dockerTime(created).toISOString(), owner, status };
+    const [name, image, created, owner, releaseWhen, status] = line.split("\t");
+    return { name, image, created: dockerTime(created).toISOString(), owner, releaseWhen, status };
   });
   const inWindow = containers.filter((container) => new Date(container.created) >= since);
   const volumeNames = lines(run(["docker", "volume", "ls", "-q", "--filter", "dangling=true"]).out);
@@ -215,10 +216,13 @@ function scanDocker(since: Date): DockerReport | null {
     }
   }
   return {
-    stoppedContainers: inWindow.filter((container) => !container.status.startsWith("Up")),
+    stoppedContainers: inWindow
+      .filter((container) => !container.status.startsWith("Up"))
+      .map(({ name, image, created, owner, status }) => ({ name, image, created, owner, status })),
     unlabeledRunning: inWindow
       .filter((container) => container.status.startsWith("Up") && !container.owner)
       .map(({ name, image, created }) => ({ name, image, created })),
+    labelled: containers.filter((container) => container.owner),
     danglingVolumes: { total: volumeNames.length, inWindow: windowCount, anonymousInWindow: anonymous },
   };
 }
@@ -230,6 +234,9 @@ function printText(report: Awaited<ReturnType<typeof buildReport>>): void {
     out.push("", "[Docker]");
     for (const c of docker.stoppedContainers) out.push(`  已停止容器 ${c.name} (${c.image}) ${c.status} owner=${c.owner || "-"}`);
     for (const c of docker.unlabeledRunning) out.push(`  运行中未加 owner 标签 ${c.name} (${c.image}) 创建于 ${c.created}`);
+    for (const c of docker.labelled) {
+      out.push(`  带 owner 标签（不限窗口）${c.name} (${c.image}) owner=${c.owner} release-when=${c.releaseWhen || "-"} ${c.status} 创建于 ${c.created}`);
+    }
     const v = docker.danglingVolumes;
     out.push(`  悬空卷：窗口内新增 ${v.inWindow} 个（匿名 ${v.anonymousInWindow}），全部 ${v.total} 个`);
   }
