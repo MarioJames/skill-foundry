@@ -79,7 +79,9 @@ agent-browser network requests --type xhr,fetch --json | jq '.data.requests[].re
 agent-browser network request <requestId>                              # 看某条 request/response 全文（含 body）
 ```
 
-**DO NOT** 一次性 dump 全部 body，会爆 token；按需查指定 requestId。
+请求“列表”也可能包含 `postData`、请求头和响应正文；完成登录后，不能把它当作安全元数据直接输出。先在进程内投影允许字段（如 `requestId`、`method`、去除敏感查询参数的 URL、`status`、`resourceType`），再输出或持久化；登录/认证请求的 body、Cookie、Authorization 和 token 不进入工具结果、截图说明或交付证据。`network-xhr.json`、`network-errors.json` 和 HAR 也按此边界检查与脱敏，不能先 `cat` 原文再清理。
+
+**DO NOT** 一次性 dump 全部 body；按需查指定 requestId，先确认不是登录、认证或其他含秘密的请求。意外输出凭据后立即停止使用该引用并报告需在源系统轮换；删除本地证据不能撤回历史工具输出。
 
 ## 证据文件
 
