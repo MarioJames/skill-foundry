@@ -14,7 +14,7 @@ export type Rule = {
   exceptions?: { glob: string; reason: string; until: string }[];
 };
 type Store = { version: 1; rules: Rule[] };
-const DEFAULT_RULES = '.agents/feature-acceptance/rules.json';
+const DEFAULT_RULES = '.agents/feature-delivery/rules.json';
 const SEEDS = resolve(import.meta.dir, 'rules.json');
 const SOURCE_GLOBS = ['**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,vue,svelte,css,scss,html,py,go,rs,java,kt,rb,php,cs}', '**/package.json'];
 const SKIP_PARTS = new Set(['.git', 'node_modules', 'vendor', 'dist', 'build', '.next', 'coverage', '.turbo', '.cache', '.agents', '.acceptance', '__pycache__']);

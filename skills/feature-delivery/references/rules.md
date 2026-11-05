@@ -5,13 +5,13 @@
 ## 命令
 
 ```bash
-bun "$FA_DIR/scripts/accept.ts" scan --project "$PROJECT" [--base COMMIT] [--rules PROJECT_PATH]
-bun "$FA_DIR/scripts/accept.ts" check-rules --project "$PROJECT" [--rules PROJECT_PATH]
-bun "$FA_DIR/scripts/accept.ts" learn --project "$PROJECT" --feedback "$PRIVATE_FEEDBACK_JSON"
-bun "$FA_DIR/scripts/accept.ts" promote --project "$PROJECT" --id project-example --review "$PRIVATE_REVIEW_JSON"
+bun "$FD_DIR/scripts/accept.ts" scan --project "$PROJECT" [--base COMMIT] [--rules PROJECT_PATH]
+bun "$FD_DIR/scripts/accept.ts" check-rules --project "$PROJECT" [--rules PROJECT_PATH]
+bun "$FD_DIR/scripts/accept.ts" learn --project "$PROJECT" --feedback "$PRIVATE_FEEDBACK_JSON"
+bun "$FD_DIR/scripts/accept.ts" promote --project "$PROJECT" --id project-example --review "$PRIVATE_REVIEW_JSON"
 ```
 
-方括号表示可选参数，实际调用删除方括号。`--rules` 所有命令通用：优先指向项目已有、适合此格式的规则文件；没有时使用 `.agents/feature-acceptance/rules.json`。不搜索多层配置，不自动修改 AGENTS.md、package.json、CI 或 .gitignore。若项目已有原生 lint 配置，优先在原配置实现规则，本 JSON 只保留需 Agent review 的项目约束，避免两个重复真相源。
+方括号表示可选参数，实际调用删除方括号。`--rules` 所有命令通用：优先指向项目已有、适合此格式的规则文件；没有时使用 `.agents/feature-delivery/rules.json`。不搜索多层配置，不自动修改 AGENTS.md、package.json、CI 或 .gitignore。若项目已有原生 lint 配置，优先在原配置实现规则，本 JSON 只保留需 Agent review 的项目约束，避免两个重复真相源。
 
 `scan/check-rules` 默认文件不存在时按无项目规则处理；显式 `--rules` 路径不存在时报错，避免拼错路径静默跳过门禁。规则路径必须在项目内且不能经过符号链接。Git 项目的 `--project` 必须为 Git 根，避免扫描相邻仓库。`learn` 将新规则设为 candidate，拒绝重复 ID；`promote` 只激活 candidate，验证失败不会写入半成品。写入用锁和原子替换，遇锁冲突交回 Agent，不能删除未知所有者的锁。
 

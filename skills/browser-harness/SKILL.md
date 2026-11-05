@@ -27,7 +27,7 @@ description: 验收前端页面：准备服务和登录态，通过 agent-browse
 4. 验收通过或必要失败诊断完成后，默认 cleanup 本任务拥有清理权且无实际依赖的服务，并关闭本次浏览器和验证进程；借用服务不执行其 target 的 cleanup。中间产物和一次性验收数据按 [任务资源生命周期](../agent-conduct/SKILL.md#收尾回收) 回收，先保留交付所需的最小证据。已有用户远程走查或保留服务要求时才进入 [远程与保留分支](references/remote-review.md)，不额外询问是否走查。
 5. 报告实际 `APP_URL`、关键页面结果、console/network 错误、证据目录和清理动作；说明服务、浏览器、验证进程是否释放。保留资源时写明原因、PID 和端口。
 
-既有流程需要或用户要求独立验收报告时，默认交付 `REPORT.html`，生成前读取 [HTML 验收报告规范](../feature-acceptance/references/html-report.md)；既有 JSON 采证结果保持原契约。
+既有流程需要或用户要求独立验收报告时，默认交付 `REPORT.html`，生成前读取 [HTML 验收报告规范](../feature-delivery/references/html-report.md)；既有 JSON 采证结果保持原契约。
 
 以下命令展示尚未准备环境、且已确认 target 没有其他所有者服务的项目分支；已有服务按交接复用，URL target 无本地服务需要 cleanup。
 

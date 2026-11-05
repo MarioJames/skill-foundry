@@ -22,4 +22,4 @@ UI 工作中，遇到仅运行时暴露的缺陷、库行为与类型/文档/参
 
 不要把单个页面的业务结果抽象成普遍规则，也不要把有依据的个人偏好删成泛泛的“遵循最佳实践”。来源和判断依据留在规则 sources，正文保持简洁；无需重建历史或调用 Jev。
 
-本 CLI 默认落地到项目 .agents/feature-acceptance/rules.json，原生 lint 已能承载的规则只在原工具维护。需要复制 CLI 时复制完整 scripts/；本技能的 references 按需读取，扫描不再携带一份重复的通用审查索引。用户只要求审查时提供具体发现，不写项目规则或 Agent 入口。
+本 CLI 默认落地到项目 .agents/feature-delivery/rules.json，原生 lint 已能承载的规则只在原工具维护。需要复制 CLI 时复制完整 scripts/；本技能的 references 按需读取，扫描不再携带一份重复的通用审查索引。用户只要求审查时提供具体发现，不写项目规则或 Agent 入口。

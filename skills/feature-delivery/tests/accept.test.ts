@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 const CLI = resolve(import.meta.dir, '../scripts/accept.ts');
 const dirs: string[] = [];
-function project() { const p = mkdtempSync(join(tmpdir(), 'feature-acceptance-test-')); dirs.push(p); return p; }
+function project() { const p = mkdtempSync(join(tmpdir(), 'feature-delivery-test-')); dirs.push(p); return p; }
 function write(p: string, file: string, value: string) { const full = join(p, file); mkdirSync(resolve(full, '..'), { recursive: true }); writeFileSync(full, value); }
 function exec(p: string, cmd: string[]) { const r = Bun.spawnSync({ cmd, cwd: p, stdout: 'pipe', stderr: 'pipe' }); return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() }; }
 function cli(p: string, ...args: string[]) { return exec(p, [process.execPath, CLI, ...args, '--project', p]); }
@@ -27,7 +27,7 @@ describe('扫描和反馈闭环的真实 CLI 契约', () => {
   test('正反例不满足时拒绝晋升，保留原候选', () => {
     const p = project(); expect(learn(p, rule({ examples: { bad: [{ path: 'src/a.tsx', content: 'legacyError(x)' }], good: [{ path: 'src/a.tsx', content: 'legacyError(ok)' }] } })).code).toBe(0);
     expect(promote(p).code).toBe(2);
-    const store = JSON.parse(readFileSync(join(p, '.agents/feature-acceptance/rules.json'), 'utf8'));
+    const store = JSON.parse(readFileSync(join(p, '.agents/feature-delivery/rules.json'), 'utf8'));
     expect(store.rules[0].status).toBe('candidate'); expect(store.rules[0].review).toBeUndefined();
   });
   test('拒绝重复规则、非法 regex、无证据 active 和语义 error', () => {
@@ -107,7 +107,7 @@ describe('扫描和反馈闭环的真实 CLI 契约', () => {
     expect(learn(p, rule({ exceptions: [{ glob: 'src/edit.tsx', reason: '旧页面迁移中', until: '2999-01-01' }] })).code).toBe(0);
     expect(promote(p).code).toBe(0); let r = cli(p, 'scan'); expect(r.code).toBe(0);
     expect(JSON.parse(r.out).suppressed).toEqual([expect.objectContaining({ rule: 'project-legacy-call', reason: '旧页面迁移中' })]);
-    const file = join(p, '.agents/feature-acceptance/rules.json'), store = JSON.parse(readFileSync(file, 'utf8'));
+    const file = join(p, '.agents/feature-delivery/rules.json'), store = JSON.parse(readFileSync(file, 'utf8'));
     store.rules[0].exceptions[0].until = '2000-01-01'; writeFileSync(file, JSON.stringify(store));
     r = cli(p, 'scan'); expect(r.code).toBe(1); expect(JSON.parse(r.out).findings.filter((f: any) => f.rule === 'project-legacy-call')).toHaveLength(1);
   });
@@ -136,7 +136,7 @@ describe('扫描和反馈闭环的真实 CLI 契约', () => {
   test('项目规则不越界，不穿透 symlink，也不静默忽略显式路径拼错', () => {
     const p = project(), other = project(); write(p, 'feedback.json', JSON.stringify(rule())); symlinkSync(other, join(p, '.agents'));
     expect(cli(p, 'learn', '--feedback', join(p, 'feedback.json')).code).toBe(2);
-    expect(existsSync(join(other, 'feature-acceptance/rules.json'))).toBe(false);
+    expect(existsSync(join(other, 'feature-delivery/rules.json'))).toBe(false);
     expect(cli(p, 'scan', '--rules', '../outside.json').code).toBe(2);
     expect(cli(other, 'scan', '--rules', 'missing.json').code).toBe(2);
   });
