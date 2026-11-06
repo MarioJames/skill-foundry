@@ -6,7 +6,7 @@ type Status = 'pass' | 'fail' | 'blocked' | 'skipped';
 type Evidence = { path: string; description: string };
 type Check = { id: string; title: string; status: Status; expected?: string; observation: string; evidence?: Evidence[] };
 type Section = { title: string; items: string[] };
-type Result = { title: string; summary: string; meta?: Record<string, string>; checks: Check[]; sections?: Section[] };
+type Result = { title: string; summary: string; meta?: Record<string, string>; checklist?: string; checks: Check[]; sections?: Section[] };
 
 const STATUS: Record<Status, string> = { pass: '通过', fail: '失败', blocked: '阻塞', skipped: '未执行' };
 const IMAGE = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.avif']);
@@ -15,6 +15,8 @@ const USAGE = 'bun report.ts render --input <result.json> --out <REPORT.html>';
 const text = (x: unknown): x is string => typeof x === 'string' && x.trim().length > 0;
 const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const href = (p: string) => p.split('/').map(encodeURIComponent).join('/');
+const relative = (p: string) => !isAbsolute(p) && !/^[a-z]+:/i.test(p) && !p.includes('\\');
+const isFile = (p: string) => existsSync(p) && statSync(p).isFile();
 
 export function verdict(checks: Check[]) {
   if (checks.some(c => c.status === 'fail')) return { key: 'fail', label: '不通过' };
@@ -46,13 +48,26 @@ export function validate(data: any, outDir: string): string[] {
       const ea = `${at}.evidence[${j}]`;
       if (!e || !text(e.path)) { problems.push(`${ea}.path 必填`); continue; }
       if (!text(e.description)) problems.push(`${ea}.description 必填：说明证据内容及其与检查项的关系`);
-      if (isAbsolute(e.path) || /^[a-z]+:/i.test(e.path) || e.path.includes('\\')) problems.push(`${ea}.path 须为相对报告文件的路径: ${e.path}`);
-      else if (!existsSync(resolve(outDir, e.path)) || !statSync(resolve(outDir, e.path)).isFile()) problems.push(`${ea}.path 不存在: ${e.path}`);
+      if (!relative(e.path)) problems.push(`${ea}.path 须为相对报告文件的路径: ${e.path}`);
+      else if (!isFile(resolve(outDir, e.path))) problems.push(`${ea}.path 不存在: ${e.path}`);
     }
   }
+  if (data.checklist !== undefined) problems.push(...checklistProblems(data.checklist, data.checks, outDir));
   for (const [i, s] of (data.sections ?? []).entries())
     if (!s || !text(s.title) || !Array.isArray(s.items) || !s.items.every(text)) problems.push(`sections[${i}] 须有 title 和非空 items`);
   return problems;
+}
+
+// 设计文档的验收清单每行带 data-check-id，清单中每一项都须作为带预期的检查项出现
+function checklistProblems(path: unknown, checks: unknown, outDir: string): string[] {
+  if (!text(path) || !relative(path)) return [`checklist 须为设计文档相对报告文件的路径: ${String(path)}`];
+  const file = resolve(outDir, path);
+  if (!isFile(file)) return [`checklist 不存在: ${path}`];
+  const ids = [...new Set([...readFileSync(file, 'utf8').matchAll(/\bdata-check-id="([^"]+)"/g)].map(m => m[1]))];
+  if (ids.length === 0) return [`checklist 中没有 data-check-id 标记的清单项: ${path}`];
+  const byId = new Map((Array.isArray(checks) ? checks : []).filter(c => c && typeof c === 'object').map(c => [c.id, c]));
+  return ids.flatMap(id => !byId.has(id) ? [`验收清单 ${id} 没有对应检查项，未执行也须列出并写原因`]
+    : text(byId.get(id).expected) ? [] : [`验收清单 ${id} 的检查项缺 expected：照抄清单预期`]);
 }
 
 function evidenceHtml(c: Check) {
@@ -67,7 +82,8 @@ function evidenceHtml(c: Check) {
 export function render(data: Result) {
   const v = verdict(data.checks);
   const counts = (Object.keys(STATUS) as Status[]).map(s => [s, data.checks.filter(c => c.status === s).length] as const).filter(([, n]) => n > 0);
-  const meta = Object.entries(data.meta ?? {}).map(([k, val]) => `<div><dt>${esc(k)}</dt><dd>${esc(val)}</dd></div>`).join('');
+  const meta = Object.entries(data.meta ?? {}).map(([k, val]) => `<div><dt>${esc(k)}</dt><dd>${esc(val)}</dd></div>`).join('')
+    + (data.checklist ? `<div><dt>验收清单</dt><dd><a href="${href(data.checklist)}">${esc(basename(data.checklist))}</a></dd></div>` : '');
   const checks = data.checks.map(c => `
 <section class="check" id="check-${esc(c.id)}" data-title="${esc(c.title)}" data-status="${c.status}">
   <h3><span class="chip ${c.status}">${STATUS[c.status]}</span><span class="cid">${esc(c.id)}</span>${esc(c.title)}</h3>
@@ -128,7 +144,7 @@ main{max-width:1080px;margin:0 auto;padding:32px 20px 64px}h1{font-size:24px;mar
 figure a{display:block;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--soft);cursor:zoom-in}
 figure img{display:block;width:100%;height:150px;object-fit:cover;object-position:top}
 figcaption{font-size:13px;color:var(--muted);margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.files{font-size:13px;margin:8px 0 0;padding-left:18px}.files a{color:inherit}.extra ul{padding-left:18px}
+.files{font-size:13px;margin:8px 0 0;padding-left:18px}.files a,.meta a{color:inherit}.extra ul{padding-left:18px}
 dialog{border:0;padding:0;width:100vw;height:100vh;max-width:none;max-height:none;background:var(--bg);color:var(--fg)}
 dialog[open]{display:grid;grid-template-columns:60vw minmax(0,1fr);grid-template-rows:minmax(0,1fr);overflow:hidden}dialog::backdrop{background:rgba(0,0,0,.6)}
 .stage{overflow:auto;outline:none;display:flex;flex-direction:column;background:#0d0f12;min-height:0}

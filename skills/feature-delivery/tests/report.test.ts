@@ -68,6 +68,34 @@ describe('HTML 验收报告渲染', () => {
     expect(problems.some(p => p.includes('相对'))).toBe(true);
   });
 
+  test('验收清单的每一项都须作为带预期的检查项出现，清单外问题可追加', () => {
+    const root = workspace();
+    writeFileSync(join(root, 'reports/1105-orders.html'), '<table><tr data-check-id="A1"><td>空态</td></tr><tr data-check-id="A2"><td>失败重试</td></tr></table>');
+    const withList = (checks: unknown[]) => ({ ...result(checks), checklist: '../1105-orders.html' });
+
+    const missing = run(root, withList([check({ id: 'A1', expected: '显示空态' }), check({ id: 'X1' })]));
+    expect(missing.code).toBe(2); expect(missing.html).toBe('');
+    expect(JSON.parse(missing.err).problems.some((p: string) => p.includes('A2'))).toBe(true);
+
+    const noExpected = run(root, withList([check({ id: 'A1', expected: '显示空态' }), check({ id: 'A2' })]));
+    expect(noExpected.code).toBe(2);
+    expect(JSON.parse(noExpected.err).problems.some((p: string) => p.includes('A2') && p.includes('expected'))).toBe(true);
+
+    const ok = run(root, withList([check({ id: 'A1', expected: '显示空态' }), check({ id: 'A2', expected: '失败后可重试' }), check({ id: 'X1' })]));
+    expect(ok.code).toBe(0);
+    expect(ok.html).toContain('<a href="../1105-orders.html">1105-orders.html</a>');
+  });
+
+  test('验收清单路径不存在或其中没有编号时拒绝生成', () => {
+    const root = workspace();
+    writeFileSync(join(root, 'reports/empty.html'), '<p>没有清单</p>');
+    for (const checklist of ['../missing.html', '../empty.html']) {
+      const r = run(root, { ...result([check()]), checklist });
+      expect(r.code).toBe(2);
+      expect(JSON.parse(r.err).problems.some((p: string) => p.includes('checklist'))).toBe(true);
+    }
+  });
+
   test('检查项缺实际观察或 id 重复时拒绝生成', () => {
     const root = workspace();
     const r = run(root, result([check({ observation: '' }), check()]));

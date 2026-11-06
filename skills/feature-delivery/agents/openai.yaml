@@ -1,4 +1,4 @@
 interface:
   display_name: "Feature Delivery"
-  short_description: "从调研、HTML 设计拍板到实现审查与 HTML 验收报告，按归属沉淀纠偏"
-  default_prompt: "使用 $feature-delivery 先调研现有能力，必要时用 HTML 设计文档只列出需要我拍板的点；实现时检查前后端约束、交互状态与恢复路径，验收后交付可放大查看证据的 HTML 报告，并把已验证的可复用纠偏沉淀到所属技能或项目门禁。"
+  short_description: "从调研、HTML 设计拍板与验收清单，到实现审查和逐项验收的 HTML 报告，按归属沉淀纠偏"
+  default_prompt: "使用 $feature-delivery 先调研现有能力，必要时用 HTML 设计文档只列出需要我拍板的点，并在设计时定下验收清单；实现时检查前后端约束、交互状态与恢复路径，按验收清单逐项验收后交付可放大查看证据的 HTML 报告，并把已验证的可复用纠偏沉淀到所属技能或项目门禁。"

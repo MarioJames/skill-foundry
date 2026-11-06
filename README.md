@@ -20,7 +20,7 @@
 | Orchestration | [`herdr`](skills/herdr/SKILL.md) | Herdr tabs and panes, persistent terminals, agent start/stop, verified naming and precise cleanup |
 | | [`agent-conduct`](skills/agent-conduct/SKILL.md) | Where reports, evidence and temporary files go; ready-to-run task worktrees and their reclamation; local and remote branch cleanup after merge; Docker and test leftovers; a read-only closure scan |
 | Quality | [`tdd`](skills/tdd/SKILL.md) | Decides before coding which checks a change needs; writes tests only when they can fail |
-| | [`feature-delivery`](skills/feature-delivery/SKILL.md) | A feature from design to acceptance: an HTML design demo that asks only the decisions you must make, engineering preferences and interaction checks while building, and an HTML acceptance report whose evidence opens large with its description; records corrections where they belong |
+| | [`feature-delivery`](skills/feature-delivery/SKILL.md) | A feature from design to acceptance: an HTML design demo that asks only the decisions you must make and fixes the acceptance checklist up front, engineering preferences and interaction checks while building, then item-by-item acceptance in an HTML report whose evidence opens large with its description; records corrections where they belong |
 | | [`browser-harness`](skills/browser-harness/SKILL.md) | Browser acceptance with agent-browser: services, login state, screenshot/console/network evidence |
 | | [`public-acceptance`](skills/public-acceptance/SKILL.md) | Starts a DEV service, opens a temporary Cloudflare URL and hands over login details |
 | | [`asset-validation`](skills/asset-validation/SKILL.md) | Reviews skills, plugins, rules and agents; runs real CLI acceptance when behavior must be proven |
@@ -38,7 +38,7 @@
 
 A typical development task touches several skills:
 
-1. **Plan.** For a new feature or a real trade-off, `feature-delivery` researches what already exists and shows the design as an HTML demo with only the decisions you need to make. The agent plans the work itself, or hands it to [Weaver](https://github.com/MarioJames/weaver) when you ask for dispatch to other engines; high-risk designs go through a ChatGPT review called via Convorel's `chatgpt-review`.
+1. **Plan.** For a new feature or a real trade-off, `feature-delivery` researches what already exists and shows the design as an HTML demo with only the decisions you need to make, plus the acceptance checklist that will be verified item by item. The agent plans the work itself, or hands it to [Weaver](https://github.com/MarioJames/weaver) when you ask for dispatch to other engines; high-risk designs go through a ChatGPT review called via Convorel's `chatgpt-review`.
 2. **Isolate.** Work that would collide gets its own worktree from `agent-conduct`; long-running processes live in `herdr` panes.
 3. **Build and check.** `tdd` decides which tests are worth writing; `feature-delivery` and `browser-harness` verify behavior and render the HTML report; `public-acceptance` shares a temporary URL when someone else needs to look.
 4. **Ship.** `trigger-build-workflow` commits, pushes or dispatches a build only within what you authorized; `changelog-writing` turns the result into release notes.
