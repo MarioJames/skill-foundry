@@ -131,7 +131,7 @@ ${sections}
 const CSS = `
 :root{color-scheme:light dark;--bg:#fff;--fg:#1f2329;--muted:#646a73;--line:#e4e6eb;--soft:#f5f6f7;--pass:#1a7f37;--fail:#cf222e;--blocked:#9a6700;--skipped:#57606a}
 @media (prefers-color-scheme:dark){:root{--bg:#16181c;--fg:#e6e8eb;--muted:#9aa0a8;--line:#2c3037;--soft:#1f2227;--pass:#3fb950;--fail:#f85149;--blocked:#d29922;--skipped:#8b949e}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif;overflow-wrap:anywhere}
 main{max-width:1080px;margin:0 auto;padding:32px 20px 64px}h1{font-size:24px;margin:0 0 12px}h2{font-size:17px;margin:32px 0 12px}
 .verdict{font-size:16px;display:flex;gap:10px;align-items:baseline;margin:0 0 8px}.counts{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}
 .chip{display:inline-block;border:1px solid currentColor;border-radius:4px;padding:0 6px;font-size:12px;font-weight:600;line-height:20px;white-space:nowrap}
