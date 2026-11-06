@@ -20,7 +20,7 @@ export interface CreatedSession {
   dir_id: { dev: number; ino: number };
 }
 
-const LAUNCHER = resolve(import.meta.dir, "../session-launcher.sh");
+const LAUNCHER = resolve(import.meta.dir, "../session-launcher.ts");
 const EXIT_SESSION_EXISTS = 73;
 const EXIT_SESSION_FOREIGN = 75;
 // systemd refuses a second scope with the same name (wording differs between versions).
@@ -95,7 +95,7 @@ export async function createSession(name: string, opTag: string, timeoutMs = 10_
   const child = Bun.spawn([
     "systemd-run", "--user", "--scope", "--collect", `--unit=${unit}`,
     "-p", "MemoryHigh=8G", "-p", "MemoryMax=10G",
-    "--", "sh", LAUNCHER, "--op-tag", opTag, name,
+    "--", process.execPath, LAUNCHER, "--op-tag", opTag, name,
   ], { stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true, env: process.env });
   child.unref();
   const stdout = Bun.readableStreamToText(child.stdout);

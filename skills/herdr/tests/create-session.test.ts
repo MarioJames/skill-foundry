@@ -5,9 +5,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { startIfEmpty } from "../scripts/session-launcher";
 
 // Replaces only the herdr, systemd-run and systemctl process boundaries. route-lane.ts and the real
-// session-launcher.sh run unchanged; the fake server is a real long-lived process listening on the socket.
+// session-launcher.ts run unchanged; the fake server is a real long-lived process listening on the socket.
 const fakeHerdr = `#!${process.execPath}
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { connect, createServer } from 'node:net';
@@ -98,6 +99,13 @@ if [ -e "$FAKE_ROOT/units/$unit.scope" ]; then
 fi
 mkdir -p "$FAKE_ROOT/units" && : > "$FAKE_ROOT/units/$unit.scope"
 shift_to_command() { while [ "$1" != "--" ]; do shift; done; shift; exec "$@"; }
+# Stands in for a launcher that found its freshly claimed directory already written to (exit 75).
+if [ -n "$FAKE_LAUNCHER_FOREIGN" ]; then
+  for name; do :; done
+  mkdir -p "$XDG_CONFIG_HOME/herdr/sessions/$name" && echo '{}' > "$XDG_CONFIG_HOME/herdr/sessions/$name/$FAKE_LAUNCHER_FOREIGN"
+  echo "session directory was written to before the server started" >&2
+  exit 75
+fi
 echo "Running as unit: $unit.scope; invocation ID: 00000000000000000000000000000000" >&2
 shift_to_command "$@"
 `;
@@ -109,14 +117,6 @@ echo "InvocationID=0123456789abcdef0123456789abcdef"
 echo "ControlGroup=$(sed 's/^0:://' /proc/self/cgroup)"
 `;
 
-// `ls -A` is the launcher's last step before forking the server: this shim lets a test write into the
-// session directory exactly between the atomic mkdir and the fork.
-const fakeLs = `#!/bin/sh
-echo "ls \${HERDR_LANE_OP_TAG:--}" >> "$FAKE_ROOT/tags.log"
-if [ -n "$FAKE_INJECT" ]; then echo '{}' > "$2/$FAKE_INJECT"; fi
-exec /bin/ls "$@"
-`;
-
 const roots: string[] = [];
 
 function scenario() {
@@ -126,7 +126,7 @@ function scenario() {
   const home = join(root, "home");
   mkdirSync(bin);
   mkdirSync(home);
-  for (const [name, body] of [["herdr", fakeHerdr], ["systemd-run", fakeSystemdRun], ["systemctl", fakeSystemctl], ["ls", fakeLs]]) {
+  for (const [name, body] of [["herdr", fakeHerdr], ["systemd-run", fakeSystemdRun], ["systemctl", fakeSystemctl]]) {
     writeFileSync(join(bin, name!), body!);
     chmodSync(join(bin, name!), 0o755);
   }
@@ -208,9 +208,9 @@ test("create-session starts one memory-capped scope and returns a verifiable pro
   expect(created.output).toMatchObject({ ok: true });
   expect(created.status).toBe(0);
 
-  const launcher = resolve(import.meta.dir, "../scripts/session-launcher.sh");
+  const launcher = resolve(import.meta.dir, "../scripts/session-launcher.ts");
   expect(s.systemd()).toEqual([
-    `--user --scope --collect --unit=herdr-session-cs-one -p MemoryHigh=8G -p MemoryMax=10G -- sh ${launcher} --op-tag op-123 cs-one`,
+    `--user --scope --collect --unit=herdr-session-cs-one -p MemoryHigh=8G -p MemoryMax=10G -- ${process.execPath} ${launcher} --op-tag op-123 cs-one`,
   ]);
 
   const [serverPid] = s.servers();
@@ -261,7 +261,7 @@ test("the op tag stays visible in the launcher argv while it runs", async () => 
   child.kill();
   for (const pid of pids) { try { process.kill(Number(pid)); } catch {} }
   expect(argvs.some((argv) => argv.some((arg) => arg.endsWith("route-lane.ts")))).toBe(true);
-  expect(argvs.some((argv) => argv.some((arg) => arg.endsWith("session-launcher.sh")) && argv.includes("--op-tag"))).toBe(true);
+  expect(argvs.some((argv) => argv.some((arg) => arg.endsWith("session-launcher.ts")) && argv.includes("--op-tag"))).toBe(true);
 });
 
 test("an existing scope unit means session_exists and nothing is started", async () => {
@@ -303,9 +303,21 @@ test("a stopped session with the same name still counts as existing", async () =
   expect([second.status, second.output.error.code]).toEqual([1, "session_exists"]);
 });
 
-test("a directory written to between the atomic mkdir and the fork is session_foreign and no server starts", async () => {
+test("the launcher refuses to fork a server into a claimed directory that is no longer empty", () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "herdr-launcher-test-")));
+  roots.push(dir);
+  let started = 0;
+  writeFileSync(join(dir, "foreign-data.json"), "{}");
+  expect(startIfEmpty(dir, () => ++started)).toBe(75);
+  expect(started).toBe(0);
+  rmSync(join(dir, "foreign-data.json"));
+  expect(startIfEmpty(dir, () => ++started)).toBe(0);
+  expect(started).toBe(1);
+});
+
+test("a launcher exit 75 (directory written to before the fork) is session_foreign and no server starts", async () => {
   const s = scenario();
-  const r = await s.route([...lane, "--create-session", "cs-old", "--op-tag", "t"], { FAKE_INJECT: "foreign-data.json" });
+  const r = await s.route([...lane, "--create-session", "cs-old", "--op-tag", "t"], { FAKE_LAUNCHER_FOREIGN: "foreign-data.json" });
   expect([r.status, r.output.ok, r.output.error.code]).toEqual([1, false, "session_foreign"]);
   expect(s.servers()).toEqual([]);
   expect(s.calls().some((call) => call.includes("server"))).toBe(false);
@@ -326,7 +338,7 @@ test("the op tag reaches every child process through the environment but not the
   const created = await s.route([...lane, "--create-session", "cs-env", "--op-tag", "op-env-7"]);
   expect(created.output).toMatchObject({ ok: true });
   const seen = new Set(s.tags().map((line) => line.split(" ")[0]));
-  expect([...seen].sort()).toEqual(["herdr", "ls", "systemctl", "systemd-run"]);
+  expect([...seen].sort()).toEqual(["herdr", "systemctl", "systemd-run"]);
   for (const line of s.tags().filter((line) => !line.startsWith("herdr"))) expect(line.endsWith(" op-env-7")).toBe(true);
   // The fake server is a real process: its own environ must not carry the tag.
   expect(s.serverEnv()).toBe("absent");
