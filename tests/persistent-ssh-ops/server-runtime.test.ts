@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initializeServerConfig } from "../scripts/init-server-config";
+import { initializeServerConfig } from "../../skills/persistent-ssh-ops/scripts/init-server-config";
 
 const roots: string[] = [];
 function home(config: unknown = { servers: {} }) {
@@ -161,7 +161,7 @@ test("real OpenSSH -G respects -- before destination and remote -o remains a com
 test("unsearchable configuration parents are errors and do not become missing", () => {
   const root = home({ servers: { prod: profile } }); const directory = join(root, ".config");
   chmodSync(directory, 0o600);
-  try { expect(run(root, 'source "$RUNTIME_SOURCE"; printf "%s:%s:%s" "$SERVER_PROFILES_STATUS" "$SERVER_PROFILES_REASON" "${#SERVER_PROFILES}"', { RUNTIME_SOURCE: join(import.meta.dir, "../assets/server-runtime.zsh") }).out).toBe("error:invalid_configuration:0"); }
+  try { expect(run(root, 'source "$RUNTIME_SOURCE"; printf "%s:%s:%s" "$SERVER_PROFILES_STATUS" "$SERVER_PROFILES_REASON" "${#SERVER_PROFILES}"', { RUNTIME_SOURCE: join(import.meta.dir, "../../skills/persistent-ssh-ops/assets/server-runtime.zsh") }).out).toBe("error:invalid_configuration:0"); }
   finally { chmodSync(directory, 0o700); }
 });
 

@@ -14,9 +14,9 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
-import { projectProfileName } from "../scripts/lib/common.ts";
+import { projectProfileName } from "../../skills/browser-harness/scripts/lib/common.ts";
 
-const skillDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const skillDir = resolve(dirname(fileURLToPath(import.meta.url)), "../../skills/browser-harness");
 const bhEntry = join(skillDir, "scripts", "bh.ts");
 const temporaryRoots = new Set<string>();
 

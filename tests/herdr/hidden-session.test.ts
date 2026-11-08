@@ -80,7 +80,7 @@ async function route(args: string[], options: Options = {}) {
       symlinkSync(Bun.which("git")!, join(bin, "git"));
     }
     const child = Bun.spawn(
-      [process.execPath, resolve(import.meta.dir, "../scripts/route-lane.ts"), ...args.map((arg) => arg === "$CWD" ? cwd : arg)],
+      [process.execPath, resolve(import.meta.dir, "../../skills/herdr/scripts/route-lane.ts"), ...args.map((arg) => arg === "$CWD" ? cwd : arg)],
       { env: { ...process.env, PATH: path, HERDR_TEST_STATE: state }, stdout: "pipe", stderr: "pipe" },
     );
     const [stdout, status] = await Promise.all([Bun.readableStreamToText(child.stdout), child.exited]);

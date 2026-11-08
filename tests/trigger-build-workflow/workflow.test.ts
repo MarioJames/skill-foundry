@@ -3,9 +3,9 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, chmodSync,
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { detectBuildWorkflow, inspectWorkflowText } from "../scripts/lib/workflow";
+import { detectBuildWorkflow, inspectWorkflowText } from "../../skills/trigger-build-workflow/scripts/lib/workflow";
 
-const script = resolve(dirname(fileURLToPath(import.meta.url)), "../scripts/dispatch-build-workflow.ts");
+const script = resolve(dirname(fileURLToPath(import.meta.url)), "../../skills/trigger-build-workflow/scripts/dispatch-build-workflow.ts");
 const temporaryDirectories: string[] = [];
 
 function command(args: string[], cwd?: string): { code: number; stdout: string; stderr: string } {

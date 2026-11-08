@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { ancestorPids, ownsPane } from "../scripts/lib/caller-identity";
+import { ancestorPids, ownsPane } from "../../skills/herdr/scripts/lib/caller-identity";
 
 const pane = (pid: number) => ({ pane_id: "w1:p1", foreground_processes: [{ pid }] });
 
@@ -37,7 +37,7 @@ const result = process.argv[3] === 'current' ? {pane} : {
 };
 console.log(JSON.stringify({result}));
 `, { mode: 0o755 });
-      const child = Bun.spawn([process.execPath, resolve(import.meta.dir, "../scripts/resolve-caller.ts")], {
+      const child = Bun.spawn([process.execPath, resolve(import.meta.dir, "../../skills/herdr/scripts/resolve-caller.ts")], {
         env: { ...process.env, PATH: `${dir}:${process.env.PATH}` }, stdout: "pipe", stderr: "pipe",
       });
       const [stdout, stderr, code] = await Promise.all([

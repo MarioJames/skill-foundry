@@ -5,7 +5,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { startIfEmpty } from "../scripts/session-launcher";
+import { startIfEmpty } from "../../skills/herdr/scripts/session-launcher";
 
 // Replaces only the herdr, systemd-run and systemctl process boundaries. route-lane.ts and the real
 // session-launcher.ts run unchanged; the fake server is a real long-lived process listening on the socket.
@@ -144,7 +144,7 @@ function scenario() {
     servers: () => existsSync(join(root, "pids")) ? readdirSync(join(root, "pids")).map(Number) : [],
     async route(args: string[], extraEnv: Record<string, string> = {}) {
       const child = Bun.spawn(
-        [process.execPath, resolve(import.meta.dir, "../scripts/route-lane.ts"), ...args.map((arg) => arg === "$CWD" ? cwd : arg)],
+        [process.execPath, resolve(import.meta.dir, "../../skills/herdr/scripts/route-lane.ts"), ...args.map((arg) => arg === "$CWD" ? cwd : arg)],
         {
           env: {
             ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, XDG_CONFIG_HOME: join(home, ".config"),
@@ -208,7 +208,7 @@ test("create-session starts one memory-capped scope and returns a verifiable pro
   expect(created.output).toMatchObject({ ok: true });
   expect(created.status).toBe(0);
 
-  const launcher = resolve(import.meta.dir, "../scripts/session-launcher.ts");
+  const launcher = resolve(import.meta.dir, "../../skills/herdr/scripts/session-launcher.ts");
   expect(s.systemd()).toEqual([
     `--user --scope --collect --unit=herdr-session-cs-one -p MemoryHigh=8G -p MemoryMax=10G -- ${process.execPath} ${launcher} --op-tag op-123 cs-one`,
   ]);
@@ -244,7 +244,7 @@ test("the op tag stays visible in the launcher argv while it runs", async () => 
   writeFileSync(stall, `#!/bin/sh\nexec sleep 30\n`);
   chmodSync(stall, 0o755);
   const child = Bun.spawn(
-    [process.execPath, resolve(import.meta.dir, "../scripts/route-lane.ts"), ...lane.map((a) => a === "$CWD" ? s.cwd : a),
+    [process.execPath, resolve(import.meta.dir, "../../skills/herdr/scripts/route-lane.ts"), ...lane.map((a) => a === "$CWD" ? s.cwd : a),
       "--create-session", "cs-tag", "--op-tag", "op-visible-9"],
     {
       env: { ...process.env, PATH: `${join(s.root, "bin")}:${process.env.PATH}`, HOME: join(s.root, "home"), XDG_CONFIG_HOME: join(s.root, "home", ".config"), FAKE_ROOT: s.root },

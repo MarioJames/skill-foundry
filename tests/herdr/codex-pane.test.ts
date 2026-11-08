@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { withVerifiedCodexPane, renameVerifiedTab } from "../scripts/lib/codex-pane";
+import { withVerifiedCodexPane, renameVerifiedTab } from "../../skills/herdr/scripts/lib/codex-pane";
 
 const threadId = "current-thread";
 const label = "1010｜FIX｜会话绑定";

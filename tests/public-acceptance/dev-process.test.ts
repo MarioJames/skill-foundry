@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { closeSync, mkdtempSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { ancestry, belongs, inspect, matchingPanes, type ProcessInfo } from "../scripts/lib/dev-process";
+import { ancestry, belongs, inspect, matchingPanes, type ProcessInfo } from "../../skills/public-acceptance/scripts/lib/dev-process";
 
 const roots: string[] = [];
 const children: ReturnType<typeof Bun.spawn>[] = [];
@@ -55,7 +55,7 @@ describe("project and pane ownership", () => {
 });
 
 test("missing scanner is an explicit error, not an empty discovery result", () => {
-  const result = Bun.spawnSync([process.execPath, resolve(import.meta.dir, "../scripts/dev.ts"), "inspect", "--project", scratch()], {
+  const result = Bun.spawnSync([process.execPath, resolve(import.meta.dir, "../../skills/public-acceptance/scripts/dev.ts"), "inspect", "--project", scratch()], {
     env: { ...process.env, PATH: "/nonexistent-public-dev-test-bin" }, stdout: "pipe", stderr: "pipe",
   });
   expect(result.exitCode).toBe(1);

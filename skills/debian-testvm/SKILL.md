@@ -106,8 +106,9 @@ The store defaults to `~/.local/share/debian-testvm` (`--root` overrides): `imag
 
 ```bash
 bun <skill-dir>/scripts/testvm.ts --help
-bun test <skill-dir>/tests/doctor.test.ts  # no KVM, image or package installation needed
-bun test <skill-dir>/tests/testvm.test.ts  # real VM lifecycle; prerequisites below
+# Tests ship only in the skill-foundry repository; run them from its root
+bun test tests/debian-testvm/doctor.test.ts  # no KVM, image or package installation needed
+bun test tests/debian-testvm/testvm.test.ts  # real VM lifecycle; prerequisites below
 ```
 
 The lifecycle tests boot real VMs in the default store (or `TESTVM_TEST_ROOT`) and need the fetched `debian` image and a built `docker` image for the default release. They cover password login, Docker and Compose, the bare official image, copy, reset to a clean disk, user components composed through `requires` and with `docker`, layer caching and stale rebuilds, automatic reclaim of superseded layers, failed-build reporting and cleanup, VM annotations, protection of disks used by unknown VMs, and removal. Test components and their layers are removed afterwards. They fail rather than skip when KVM or images are unavailable.

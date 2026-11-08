@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { codexThreadId, nameCodexSession, taskLabel } from "../scripts/lib/codex-session";
+import { codexThreadId, nameCodexSession, taskLabel } from "../../skills/herdr/scripts/lib/codex-session";
 
 const threadId = "01a12306-d08c-7571-ae96-702784b75a5f";
 const createdAt = Date.parse("2026-10-09T19:36:51Z") / 1000;

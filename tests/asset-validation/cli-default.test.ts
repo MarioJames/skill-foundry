@@ -1,6 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
-import { parseCli } from "../scripts/cli.ts";
-import { preflight } from "../scripts/profiles.ts";
+import { parseCli } from "../../skills/asset-validation/scripts/cli.ts";
+import { preflight } from "../../skills/asset-validation/scripts/profiles.ts";
 
 const routes = [
   ["start", "--acceptance", "example", "--mode", "collect-first"],

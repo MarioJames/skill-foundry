@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initializeServerConfig } from "../scripts/init-server-config.ts";
+import { initializeServerConfig } from "../../skills/persistent-ssh-ops/scripts/init-server-config.ts";
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 test("initialization is repeatable, preserves user JSON and adds precisely one runtime source", () => {

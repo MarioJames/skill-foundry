@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-const CLI = resolve(import.meta.dir, '../scripts/accept.ts');
+const CLI = resolve(import.meta.dir, '../../skills/feature-delivery/scripts/accept.ts');
 const dirs: string[] = [];
 function project() { const p = mkdtempSync(join(tmpdir(), 'feature-delivery-test-')); dirs.push(p); return p; }
 function write(p: string, file: string, value: string) { const full = join(p, file); mkdirSync(resolve(full, '..'), { recursive: true }); writeFileSync(full, value); }

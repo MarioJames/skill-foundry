@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-const CLI = resolve(import.meta.dir, '../scripts/report.ts');
+const CLI = resolve(import.meta.dir, '../../skills/feature-delivery/scripts/report.ts');
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 

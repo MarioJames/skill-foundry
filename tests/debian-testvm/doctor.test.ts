@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { runtimeReport, type RuntimeFacts } from "../scripts/lib/host-runtime.ts";
+import { runtimeReport, type RuntimeFacts } from "../../skills/debian-testvm/scripts/lib/host-runtime.ts";
 
 const ready: RuntimeFacts = {
   platform: "linux", arch: "x64", cpuVirtualization: "vmx", hypervisor: "vmware",
@@ -58,7 +58,7 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 test("doctor fails without tools and never creates a store or configuration", () => {
   const scratch = mkdtempSync(join(tmpdir(), "testvm-doctor-")); roots.push(scratch);
   const root = join(scratch, "store"), config = join(scratch, "config");
-  const result = Bun.spawnSync([process.execPath, resolve(import.meta.dir, "../scripts/testvm.ts"),
+  const result = Bun.spawnSync([process.execPath, resolve(import.meta.dir, "../../skills/debian-testvm/scripts/testvm.ts"),
     "doctor", "--root", root, "--config", config], { env: { ...process.env, PATH: join(scratch, "missing-bin") } });
   expect(result.exitCode).toBe(1);
   expect(result.stderr.toString()).toBe("");

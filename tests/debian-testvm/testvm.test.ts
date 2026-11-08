@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 
 setDefaultTimeout(900_000);
-const cli = resolve(import.meta.dir, "../scripts/testvm.ts");
+const cli = resolve(import.meta.dir, "../../skills/debian-testvm/scripts/testvm.ts");
 const root = process.env.TESTVM_TEST_ROOT ?? join(homedir(), ".local/share/debian-testvm");
 const password = `T-${randomBytes(9).toString("base64url")}`;
 const createdVms: string[] = [];

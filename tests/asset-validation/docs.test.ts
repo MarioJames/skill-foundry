@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const SKILL_DIR = join(import.meta.dir, "..");
+const SKILL_DIR = join(import.meta.dir, "../../skills/asset-validation");
 
 describe("runtime and external validator documentation", () => {
   test("keeps ACC on Bun while retaining the authoritative external Python fallback", () => {

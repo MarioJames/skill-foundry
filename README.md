@@ -119,7 +119,7 @@ Use awesome-presentation to turn these materials into a React deck and verify it
 
 ## Development
 
-Each skill lives in `skills/<name>/` with `SKILL.md` plus optional `agents/`, `scripts/`, `references/`, `assets/` and `tests/`.
+Each skill lives in `skills/<name>/` with `SKILL.md` plus optional `agents/`, `scripts/`, `references/` and `assets/`. Its tests live in `tests/<name>/` at the repository root, so installed skills ship without them.
 
 Metadata conventions:
 
@@ -132,16 +132,9 @@ Checks before publishing:
 
 ```bash
 bun scripts/check-runtime-contract.ts
-bun test skills/asset-validation/tests
-bun test skills/browser-harness/tests
-bun test skills/feature-delivery/tests
-bun test skills/public-acceptance/tests
-bun test skills/herdr/tests
-bun test skills/trigger-build-workflow/tests
-bun test skills/persistent-ssh-ops/tests
-bun test skills/agent-conduct/tests
-bun test skills/debian-testvm/tests/doctor.test.ts   # host diagnostics only
-bun test skills/debian-testvm/tests/testvm.test.ts   # needs /dev/kvm, QEMU and built images
+bun test tests                                   # every skill; tests/debian-testvm/testvm.test.ts needs /dev/kvm, QEMU and built images
+bun test tests/<skill>                           # one skill
+bun test tests/debian-testvm/doctor.test.ts      # host diagnostics only
 ```
 
 Behavioral acceptance of a changed skill goes through `asset-validation` with a real CLI; re-run the affected scenarios after each change. Compatibility reports live in [`reports/`](reports/).

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { active, publicUrl, remove, upload, type Config, type Deps } from '../scripts/share';
+import { active, publicUrl, remove, upload, type Config, type Deps } from '../../skills/feature-delivery/scripts/share';
 
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
@@ -59,7 +59,7 @@ function fakeCloud(config: Config, opts: { planAccount?: string; failUpload?: bo
 describe('R2 分享上传与回收', () => {
   test('缺本机配置或字段无效时拒绝并给出格式，list 不需要配置', () => {
     const { root } = workspace();
-    const cli = (args: string[], config: string) => Bun.spawnSync({ cmd: [process.execPath, join(import.meta.dir, '../scripts/share.ts'), ...args],
+    const cli = (args: string[], config: string) => Bun.spawnSync({ cmd: [process.execPath, join(import.meta.dir, '../../skills/feature-delivery/scripts/share.ts'), ...args],
       env: { ...process.env, R2_SHARE_CONFIG: config, XDG_STATE_HOME: join(root, 'state') }, stdout: 'pipe', stderr: 'pipe' });
     writeFileSync(join(root, 'reports/a.html'), '<p>a</p>');
     const missing = cli(['upload', '--file', join(root, 'reports/a.html'), '--task', 't'], join(root, 'none.json'));
