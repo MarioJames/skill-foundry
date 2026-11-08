@@ -28,11 +28,12 @@ skills/herdr/tests/*
 skills/public-acceptance/tests/*
 !skills/public-acceptance/tests/dev-process.test.ts
 
-# Ship the feature delivery scan, rule evolution and report rendering contracts.
+# Ship the feature delivery scan, rule evolution, report rendering and R2 share contracts.
 !skills/feature-delivery/tests/
 skills/feature-delivery/tests/*
 !skills/feature-delivery/tests/accept.test.ts
 !skills/feature-delivery/tests/report.test.ts
+!skills/feature-delivery/tests/share.test.ts
 
 # Ship the real-VM lifecycle contract for clean Debian test machines.
 !skills/debian-testvm/tests/

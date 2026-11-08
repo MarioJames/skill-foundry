@@ -20,7 +20,7 @@
 | Orchestration | [`herdr`](skills/herdr/SKILL.md) | Herdr tabs and panes, persistent terminals, agent start/stop, verified naming and precise cleanup |
 | | [`agent-conduct`](skills/agent-conduct/SKILL.md) | Where reports, evidence and temporary files go; ready-to-run task worktrees and their reclamation; local and remote branch cleanup after merge; Docker and test leftovers; a read-only closure scan |
 | Quality | [`tdd`](skills/tdd/SKILL.md) | Decides before coding which checks a change needs; writes tests only when they can fail |
-| | [`feature-delivery`](skills/feature-delivery/SKILL.md) | A feature from design to acceptance: an HTML design demo that asks only the decisions you must make and fixes the acceptance checklist up front, engineering preferences and interaction checks while building, then item-by-item acceptance in an HTML report whose evidence opens large with its description; records corrections where they belong |
+| | [`feature-delivery`](skills/feature-delivery/SKILL.md) | A feature from design to acceptance: an HTML design demo that asks only the decisions you must make and fixes the acceptance checklist up front, engineering preferences and interaction checks while building, then item-by-item acceptance in an HTML report whose evidence opens large with its description; shares the design doc and report as a public R2 link that opens on a phone; records corrections where they belong |
 | | [`browser-harness`](skills/browser-harness/SKILL.md) | Browser acceptance with agent-browser: services, login state, screenshot/console/network evidence |
 | | [`public-acceptance`](skills/public-acceptance/SKILL.md) | Starts a DEV service, opens a temporary Cloudflare URL and hands over login details |
 | | [`asset-validation`](skills/asset-validation/SKILL.md) | Reviews skills, plugins, rules and agents; runs real CLI acceptance when behavior must be proven |
@@ -90,6 +90,7 @@ Bun 1.3 or newer runs every script and hook entrypoint. Some skills also need ho
 | --- | --- |
 | `herdr` | Herdr CLI; the CLI response decides availability, and inherited `HERDR_*` variables are not trusted for identity |
 | `agent-conduct` | Git; the project's package manager for worktree installs; GitHub CLI for pull-request evidence when cleaning GitHub branches (remote branches are kept without it); Docker CLI for the container and volume part of the scan (skipped when absent) |
+| `feature-delivery` | For share links only: an authenticated Cloudflare `cf` CLI and `~/.config/r2-share/config.json` naming the account, bucket and its custom domain |
 | `browser-harness` | agent-browser with its bundled Chromium; `DISPLAY` or `WAYLAND_DISPLAY` for headed login ([runtime setup](skills/browser-harness/references/runtime.md)) |
 | `public-acceptance` | `cloudflared` for anonymous Quick Tunnels |
 | `trigger-build-workflow` | Git and an authenticated `gh` for workflow dispatch |
