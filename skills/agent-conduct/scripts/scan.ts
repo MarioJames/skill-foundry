@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 // Read-only scan for leftovers an agent task may have left on this host. Deletes nothing.
 
-import { lstatSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { findRepositories, lines, listWorktrees, mergeEvidence, remoteDefaults, run, trustedDefaultRef } from "./lib/git";
 
 const HELP = `用法: bun scan.ts [--since <时间>] [--workspace <目录>]... [--temp-root <目录>]... [--no-docker] [--json]
@@ -13,9 +13,12 @@ const HELP = `用法: bun scan.ts [--since <时间>] [--workspace <目录>]... [
   --workspace   工作区根（仓库的上一级目录，如 ~/workspaces/<项目组>），可重复；检查其下仓库和根目录杂项
   --temp-root   替换默认临时位置（$TMPDIR、/tmp、~/.cache、~/.local/share），可重复
   --no-docker   跳过 Docker
+R2 分享对象读取 feature-delivery 的 share.ts 登记，列出全部未删除的对象（不限窗口，附任务和释放条件），不访问远端。
   --json        输出 JSON`;
 
 const WORKSPACE_KEEP = new Set(["reports", "evidence"]);
+// 与 agent-conduct 同级安装的 feature-delivery；不存在时跳过
+const SHARE_SCRIPT = join(dirname(import.meta.dir), "..", "feature-delivery", "scripts", "share.ts");
 const ARTIFACT_NAME = /^\.?(task-artifacts|reports?|evidence|screenshots?|worktrees|tmp)$/i;
 
 interface Options {
@@ -227,6 +230,21 @@ function scanDocker(since: Date): DockerReport | null {
   };
 }
 
+interface ShareReport {
+  ledger: string;
+  objects: { task: string; releaseWhen: string; at: string; key: string; url: string; entry: string }[];
+  error?: string;
+}
+
+function scanShares(): ShareReport | null {
+  if (!existsSync(SHARE_SCRIPT)) return null;
+  const result = run([process.execPath, SHARE_SCRIPT, "list"]);
+  try {
+    if (result.ok) return JSON.parse(result.out) as ShareReport;
+  } catch {}
+  return { ledger: "", objects: [], error: result.err.trim() || "share.ts list 输出无法解析" };
+}
+
 function printText(report: Awaited<ReturnType<typeof buildReport>>): void {
   const out: string[] = [`扫描窗口起点：${report.since}（只读，未删除任何内容）`];
   const docker = report.docker;
@@ -243,6 +261,18 @@ function printText(report: Awaited<ReturnType<typeof buildReport>>): void {
   if (report.temporary.length > 0) {
     out.push("", "[临时位置：窗口内新建]");
     for (const g of report.temporary) out.push(`  ${g.root}/${g.pattern} ×${g.count}（最新 ${g.newest}）例：${g.example}`);
+  }
+  const shares = report.shares;
+  if (shares && (shares.error || shares.objects.length > 0)) {
+    out.push("", `[R2 分享对象：登记中未删除，不限窗口] ${shares.ledger}`);
+    if (shares.error) out.push(`  读取失败：${shares.error}`);
+    const entries = new Map<string, ShareReport["objects"]>();
+    for (const o of shares.objects) entries.set(o.entry, [...(entries.get(o.entry) ?? []), o]);
+    for (const group of entries.values()) {
+      const page = group.find((o) => o.key === o.entry) ?? group[0];
+      const more = group.length > 1 ? `（含资源共 ${group.length} 个对象）` : "";
+      out.push(`  task=${page.task} release-when=${page.releaseWhen} 上传于 ${page.at}${more} ${page.url}`);
+    }
   }
   for (const repo of report.repositories) {
     const notes: string[] = [];
@@ -279,6 +309,7 @@ async function buildReport(options: Options) {
     since: options.since.toISOString(),
     docker: options.docker ? scanDocker(options.since) : null,
     temporary: scanTemporary(options.tempRoots, options.since),
+    shares: scanShares(),
     repositories,
     workspaceStrays,
   };
