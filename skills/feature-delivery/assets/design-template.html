@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 设计文档模板：保留 <style> 与区块结构，替换为本次调研得到的真实数据和文案；不需要的区块整块删除。用法见 references/design.md。 -->
+<title>订单列表按退款状态筛选 · 设计</title>
+<style>
+:root{
+  --paper:#f4f2ec; --ink:#1f1f1c; --ink2:#55534c; --ink3:#8b887e; --line:#c9c5b9; --line2:#e3e0d6; --card:#fffefb;
+  --accent:#d9480f; --accent-soft:#fff0e6;
+  --issue:#c92a2a; --issue-soft:#fff5f5; --change:#2b8a3e; --change-soft:#ebfbee; --info:#1c5d99; --info-soft:#e7f1fb;
+  --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --serif:"Noto Serif SC","Source Han Serif SC","Songti SC","STSong",serif;
+  --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.65 var(--sans);
+  background-image:linear-gradient(var(--line2) 1px,transparent 1px),linear-gradient(90deg,var(--line2) 1px,transparent 1px);
+  background-size:28px 28px;background-attachment:fixed}
+.wrap{max-width:1160px;margin:0 auto;padding:0 20px}
+
+/* 顶部 */
+header.hero{padding:52px 0 24px}
+.kicker{font:12px/1 var(--mono);letter-spacing:.14em;color:var(--accent);text-transform:uppercase}
+h1{font:700 32px/1.25 var(--serif);margin:12px 0}
+h2{font:700 23px/1.3 var(--serif);margin:0}
+h3{font:600 15px/1.4 var(--sans);margin:0 0 8px}
+.lead{font-size:15.5px;color:var(--ink2);max-width:800px;margin:0}
+.notice{display:inline-block;margin-top:16px;padding:6px 12px;border:1.5px dashed var(--ink3);border-radius:4px;font:12px/1.5 var(--mono);color:var(--ink2);background:var(--card)}
+.legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:12.5px;color:var(--ink2)}
+.legend i{display:inline-block;width:22px;height:12px;border-radius:2px;vertical-align:-1px;margin-right:6px}
+.legend .li{border:2px dashed var(--issue);background:var(--issue-soft)}
+.legend .lc{border:2px dashed var(--change);background:var(--change-soft)}
+
+/* 目录 */
+nav.toc{position:sticky;top:0;z-index:30;background:rgba(244,242,236,.94);backdrop-filter:blur(6px);border-bottom:1.5px solid var(--ink)}
+nav.toc .wrap{display:flex;gap:4px;overflow-x:auto;padding-top:8px;padding-bottom:8px}
+nav.toc a{flex:none;text-decoration:none;font-size:13px;padding:7px 12px;border-radius:999px;color:var(--ink2)}
+nav.toc a:hover{background:var(--card);color:var(--ink)}
+nav.toc a b{font-family:var(--mono);color:var(--accent);margin-right:6px}
+
+/* 区块 */
+section.block{padding:40px 0 4px;scroll-margin-top:44px}
+.sec-head{display:flex;gap:12px;align-items:baseline;margin-bottom:8px}
+.sec-no{font:700 13px/1 var(--mono);color:#fff;background:var(--ink);padding:5px 8px;border-radius:3px}
+.sec-desc{color:var(--ink2);max-width:840px;margin:0 0 16px}
+
+/* 待拍板 */
+.decisions{background:var(--card);border:1.5px solid var(--ink);border-radius:4px}
+.decision{display:grid;grid-template-columns:44px 1fr;gap:10px;padding:12px 14px;border-bottom:1px dashed var(--line)}
+.decision:last-child{border-bottom:0}
+.decision .id{font:700 13px/1.6 var(--mono);color:var(--accent)}
+.decision .rec{display:inline-block;margin-top:4px;padding:2px 8px;border-radius:3px;background:var(--change-soft);border:1px solid var(--change);color:var(--change);font-size:12.5px}
+.decision .why{color:var(--ink2);font-size:13px}
+
+/* 功能示意图：流程 */
+.flow{display:grid;grid-template-columns:repeat(4,1fr);margin:6px 0 0}
+.flow .step{position:relative;background:var(--card);border:1.5px solid var(--ink);padding:14px;margin-right:22px;border-radius:4px}
+.flow .step:not(:last-child)::after{content:"";position:absolute;right:-22px;top:50%;width:22px;border-top:1.5px solid var(--ink)}
+.flow .step:not(:last-child)::before{content:"";position:absolute;right:-16px;top:calc(50% - 5px);border:5px solid transparent;border-left:7px solid var(--ink)}
+.flow .step:last-child{margin-right:0}
+.flow .step.end{background:var(--ink);color:#fff}
+.flow .step.new{border-style:dashed;border-color:var(--change);background:var(--change-soft)}
+.flow .who{font:11px/1 var(--mono);letter-spacing:.08em;color:var(--ink3);margin-bottom:8px}
+.flow .step.end .who{color:#bdb9ad}
+.flow .t{font:700 15px/1.4 var(--serif);margin-bottom:4px}
+.flow .d{font-size:12.5px;color:var(--ink2)}
+.flow .step.end .d{color:#dcd8cc}
+
+/* 场景：左右对比 */
+.compare{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px;align-items:start}
+.col-label{font:700 12px/1 var(--mono);letter-spacing:.08em;margin:0 0 8px;display:flex;gap:8px;align-items:center}
+.col-label.before{color:var(--issue)}
+.col-label.after{color:var(--change)}
+.col-label span{font:12.5px var(--sans);letter-spacing:0;color:var(--ink2);font-weight:400}
+.scene-note{margin-top:12px;padding:9px 12px;border-left:3px solid var(--ink3);background:var(--card);font-size:13px;color:var(--ink2)}
+
+/* 线框 */
+.frame{background:var(--card);border:1.5px solid var(--ink);border-radius:6px;box-shadow:5px 5px 0 rgba(31,31,28,.12);overflow:hidden}
+.frame-bar{display:flex;align-items:center;gap:10px;border-bottom:1.5px solid var(--ink);padding:8px 12px;font:12px/1 var(--mono);color:var(--ink2);background:repeating-linear-gradient(-45deg,#fbfaf6,#fbfaf6 6px,#f3f1ea 6px,#f3f1ea 12px)}
+.frame-bar .url{flex:1;border:1.2px solid var(--line);background:#fff;border-radius:3px;padding:5px 8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.frame-bar .app{border:1.2px solid var(--ink3);padding:3px 6px;border-radius:3px}
+.frame-body{padding:14px}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
+.toolbar .grow{flex:1}
+.btn{font:12.5px/1 var(--sans);border:1.5px solid var(--ink);background:#fff;color:var(--ink);padding:7px 11px;border-radius:4px;white-space:nowrap}
+.btn.primary{background:var(--ink);color:#fff}
+.input{font:12.5px var(--sans);border:1.5px solid var(--line);border-radius:4px;padding:6px 9px;background:#fff;color:var(--ink3);min-width:0}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font:12px/1 var(--sans);border:1.5px solid var(--line);background:#fff;padding:6px 9px;border-radius:999px;color:var(--ink2)}
+.chip.on{border-color:var(--ink);color:var(--ink);background:#f0eee6;font-weight:600}
+.tablewrap{overflow-x:auto;border:1.5px solid var(--line);border-radius:4px}
+table.wf{border-collapse:collapse;width:100%;min-width:420px;background:#fff}
+table.wf th,table.wf td{text-align:left;padding:8px 9px;border-bottom:1px solid var(--line2);font-size:12.5px}
+table.wf th{font-weight:600;color:var(--ink2);background:#faf9f5;white-space:nowrap}
+table.wf tr:last-child td{border-bottom:0}
+.tag{display:inline-block;font:11px/1 var(--sans);padding:3px 6px;border-radius:3px;border:1px solid var(--line);color:var(--ink2);white-space:nowrap}
+.tag.ok{border-color:var(--change);color:var(--change);background:var(--change-soft)}
+.tag.no{border-color:var(--issue);color:var(--issue);background:var(--issue-soft)}
+.tag.info{border-color:var(--info);color:var(--info);background:var(--info-soft)}
+.mono{font-family:var(--mono);font-size:11.5px;color:var(--ink3)}
+.muted{color:var(--ink3)}
+
+/* 标注：问题红虚线、改动绿虚线，编号对应下方旁注 */
+.mk{position:relative;border:2px dashed;border-radius:4px;padding:6px;margin:4px 0 10px}
+.mk.issue{border-color:var(--issue);background:var(--issue-soft)}
+.mk.change{border-color:var(--change);background:var(--change-soft)}
+.mk>.pin{position:absolute;top:-11px;left:-11px}
+.pin{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;color:#fff;font:700 11px/1 var(--mono);flex:none;background:var(--accent)}
+.mk.issue>.pin,.note.issue .pin{background:var(--issue)}
+.mk.change>.pin,.note.change .pin{background:var(--change)}
+.notes{margin-top:12px}
+.note{display:grid;grid-template-columns:22px 1fr;gap:8px;margin-bottom:8px;font-size:13px;color:var(--ink2)}
+.note b{color:var(--ink)}
+
+/* 验收清单 */
+.checklist{width:100%;border-collapse:collapse;background:var(--card);border:1.5px solid var(--ink)}
+.checklist th,.checklist td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line2);font-size:13px;vertical-align:top}
+.checklist th{font:600 12px var(--sans);color:var(--ink2);background:#faf9f5;border-bottom:1.5px solid var(--ink)}
+.checklist .group td{background:#f0eee6;font-weight:600;border-top:1.5px solid var(--ink)}
+.checklist .id{font:700 12px var(--mono);white-space:nowrap}
+.fail{display:inline-block;margin-left:4px;font:600 10.5px/1 var(--sans);padding:3px 5px;border-radius:3px;color:var(--issue);border:1px solid var(--issue)}
+
+footer{padding:36px 0 56px;color:var(--ink3);font:12px/1.6 var(--mono)}
+
+@media (max-width:920px){
+  .compare{grid-template-columns:minmax(0,1fr)}
+  .flow{grid-template-columns:1fr 1fr;gap:12px}
+  .flow .step{margin-right:0}
+  .flow .step::after,.flow .step::before{display:none}
+}
+@media (max-width:600px){
+  h1{font-size:25px}
+  .wrap{padding:0 12px}
+  .flow{grid-template-columns:1fr}
+  .checklist thead{display:none}
+  .checklist,.checklist tbody,.checklist tr,.checklist td{display:block;width:100%}
+  .checklist tr[data-check-id]{border-bottom:1.5px solid var(--line);padding:6px 0}
+  .checklist tr[data-check-id] td{border:0;padding:3px 10px}
+  .checklist tr[data-check-id] td::before{content:attr(data-label);display:block;font:600 11px var(--mono);color:var(--ink3)}
+}
+</style>
+</head>
+<body>
+
+<!-- 顶部：标题 + 一段话说明数据来源、沿用的现有能力或文案 + 示意声明 + 标注图例 -->
+<header class="hero wrap">
+  <div class="kicker">Design · 订单中心</div>
+  <h1>订单列表按退款状态筛选</h1>
+  <p class="lead">客服需要快速找出退款失败的订单回访。数据与文案取自当前订单列表（状态枚举、现有筛选栏、空态文案），筛选沿用列表已有的标签筛选组件与 URL 参数同步。</p>
+  <div class="notice">▣ 界面为交互线框示意，保留真实布局、数据和文案，不代表最终视觉样式。</div>
+  <div class="legend"><span><i class="li"></i>现状问题</span><span><i class="lc"></i>本次改动</span></div>
+</header>
+
+<nav class="toc"><div class="wrap">
+  <a href="#decisions"><b>D</b>待拍板</a>
+  <a href="#overview"><b>00</b>功能示意</a>
+  <a href="#s1"><b>01</b>按退款状态筛选</a>
+  <a href="#checklist"><b>✓</b>验收清单</a>
+</div></nav>
+
+<main class="wrap">
+
+<!-- 待拍板：有才写，1～3 行：问题 + 推荐 + 一句理由 -->
+<section class="block" id="decisions">
+  <div class="sec-head"><span class="sec-no">D</span><h2>待拍板</h2></div>
+  <div class="decisions">
+    <div class="decision"><span class="id">D1</span><div><b>「退款失败」是否单独作为筛选项？</b><br><span class="rec">推荐：单独列出</span> <span class="why">回访的就是这一类，并入「退款中」会让客服再翻一遍。</span></div></div>
+  </div>
+</section>
+
+<!-- 功能示意图（可选）：有规则、链路或状态流转要先讲清时使用，放在场景之前 -->
+<section class="block" id="overview">
+  <div class="sec-head"><span class="sec-no">00</span><h2>功能示意：退款状态流转</h2></div>
+  <p class="sec-desc">筛选项与状态一一对应，绿色虚线为本次新增可筛选的状态。</p>
+  <div class="flow">
+    <div class="step"><div class="who">买家</div><div class="t">申请退款</div><div class="d">订单进入「待退款」。</div></div>
+    <div class="step"><div class="who">客服</div><div class="t">审核</div><div class="d">通过后进入「退款中」。</div></div>
+    <div class="step"><div class="who">支付渠道</div><div class="t">退款中</div><div class="d">渠道回调决定结果。</div></div>
+    <div class="step new"><div class="who">结果</div><div class="t">已退款 / 退款失败</div><div class="d">「退款失败」需客服回访。</div></div>
+  </div>
+</section>
+
+<!-- 场景：编号标题 + 一两句描述（谁、什么情况、遇到什么）+ 左现状右改后 + 编号旁注 + 可选的不变行为注释 -->
+<section class="block" id="s1">
+  <div class="sec-head"><span class="sec-no">01</span><h2>客服筛出退款失败的订单</h2></div>
+  <p class="sec-desc">客服每天上午回访退款失败的买家。现在只能导出全部订单后在表格里筛，改后在列表上一键筛出。</p>
+  <div class="compare">
+    <div>
+      <div class="col-label before">现状 <span>只能按关键词和日期筛</span></div>
+      <div class="frame">
+        <div class="frame-bar"><span class="app">商家后台</span><span class="url">/orders</span></div>
+        <div class="frame-body">
+          <div class="mk issue"><span class="pin">1</span>
+            <div class="toolbar" style="margin:0"><input class="input" value="搜索订单号或买家" readonly style="width:150px"><span class="btn">下单日期 ▾</span><span class="grow"></span><span class="btn">导出</span></div>
+          </div>
+          <div class="tablewrap"><table class="wf">
+            <thead><tr><th>订单号</th><th>买家</th><th>金额</th><th>状态</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">SO-240611-0832</td><td>王**</td><td>¥129.00</td><td><span class="tag">已完成</span></td></tr>
+              <tr><td class="mono">SO-240611-0827</td><td>李**</td><td>¥58.50</td><td><span class="tag no">退款失败</span></td></tr>
+              <tr><td class="mono">SO-240611-0819</td><td>陈**</td><td>¥310.00</td><td><span class="tag info">退款中</span></td></tr>
+            </tbody>
+          </table></div>
+        </div>
+      </div>
+      <div class="notes"><div class="note issue"><span class="pin">1</span><div><b>没有状态筛选。</b>回访前要导出全部订单再在表格里筛。</div></div></div>
+    </div>
+    <div>
+      <div class="col-label after">改后 <span>新增退款状态标签筛选</span></div>
+      <div class="frame">
+        <div class="frame-bar"><span class="app">商家后台</span><span class="url">/orders?refund=failed</span></div>
+        <div class="frame-body">
+          <div class="toolbar"><input class="input" value="搜索订单号或买家" readonly style="width:150px"><span class="btn">下单日期 ▾</span><span class="grow"></span><span class="btn">导出</span></div>
+          <div class="mk change"><span class="pin">2</span>
+            <div class="chips"><span class="chip">全部</span><span class="chip">待退款</span><span class="chip">退款中</span><span class="chip">已退款</span><span class="chip on">退款失败 (1)</span></div>
+          </div>
+          <div class="tablewrap"><table class="wf">
+            <thead><tr><th>订单号</th><th>买家</th><th>金额</th><th>状态</th></tr></thead>
+            <tbody><tr><td class="mono">SO-240611-0827</td><td>李**</td><td>¥58.50</td><td><span class="tag no">退款失败</span></td></tr></tbody>
+          </table></div>
+        </div>
+      </div>
+      <div class="notes"><div class="note change"><span class="pin">2</span><div><b>状态标签筛选</b>，带计数；选中项写入 URL，刷新和分享链接保持筛选。</div></div></div>
+    </div>
+  </div>
+  <div class="scene-note">不变：关键词与日期筛选可与状态筛选叠加；导出按当前筛选结果导出。</div>
+</section>
+
+<!-- 验收清单：按场景分组，每项一行 data-check-id，失败与恢复路径标「失败」，可能波及的不变行为单独一组放最后 -->
+<section class="block" id="checklist">
+  <div class="sec-head"><span class="sec-no">✓</span><h2>验收清单</h2></div>
+  <table class="checklist">
+    <thead><tr><th>编号</th><th>操作与前置条件</th><th>预期</th><th>验证</th></tr></thead>
+    <tbody>
+      <tr class="group"><td colspan="4">01 · 客服筛出退款失败的订单 · 3 项</td></tr>
+      <tr data-check-id="A1"><td class="id" data-label="编号">A1</td><td data-label="操作与前置条件">列表含 1 条退款失败订单，点击「退款失败」</td><td data-label="预期">只显示 SO-240611-0827，标签计数为 1，URL 带 refund=failed</td><td data-label="验证">浏览器</td></tr>
+      <tr data-check-id="A2"><td class="id" data-label="编号">A2 <span class="fail">失败</span></td><td data-label="操作与前置条件">选「已退款」且无匹配订单</td><td data-label="预期">显示空态与「清除筛选」，点击后恢复全部 24 条</td><td data-label="验证">浏览器</td></tr>
+      <tr data-check-id="A3"><td class="id" data-label="编号">A3</td><td data-label="操作与前置条件">筛选后刷新页面</td><td data-label="预期">仍选中「退款失败」，结果不变</td><td data-label="验证">浏览器</td></tr>
+      <tr class="group"><td colspan="4">不变行为 · 1 项</td></tr>
+      <tr data-check-id="A4"><td class="id" data-label="编号">A4</td><td data-label="操作与前置条件">选「退款失败」后点击导出</td><td data-label="预期">导出文件只含 1 条订单</td><td data-label="验证">接口 / 数据核对</td></tr>
+    </tbody>
+  </table>
+</section>
+
+</main>
+
+<footer class="wrap">文件位置：&lt;工作区根&gt;/reports/&lt;MMDD&gt;-&lt;主题&gt;.html · 不入仓库 · 示意线框，非最终视觉稿</footer>
+</body>
+</html>
