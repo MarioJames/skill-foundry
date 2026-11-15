@@ -21,7 +21,7 @@ export interface PluginInstall {
   name?: string;
   reason?: string;
   plugin_dir?: string;
-  settings?: string;
+  settings?: string | null;
   cli_args?: string[];
   skills?: string[];
   agents?: string[];

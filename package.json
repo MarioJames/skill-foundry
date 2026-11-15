@@ -1,0 +1,9 @@
+{
+  "name": "skill-foundry",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "@types/ws": "^8.18.2"
+  }
+}

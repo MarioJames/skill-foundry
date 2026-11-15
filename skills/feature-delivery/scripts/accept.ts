@@ -54,10 +54,10 @@ function validateRule(r: any): asserts r is Rule {
   if (r.review !== undefined && (!record(r.review) || !nonempty(r.review.reviewer) || !nonempty(r.review.evidence) || !date(r.review.date))) fail(`${r.id}: review 需要 reviewer/evidence/date`);
   if (r.examples !== undefined) {
     if (!record(r.examples) || !Array.isArray(r.examples.bad) || !Array.isArray(r.examples.good)) fail(`${r.id}: examples 需要 bad/good 数组`);
-    for (const e of [...r.examples.bad, ...r.examples.good]) if (!record(e) || !safeRel(e.path) || typeof e.content !== 'string' || !applies(r, e.path)) fail(`${r.id}: example 必须落在规则范围且含 path/content`);
+    for (const e of [...r.examples.bad, ...r.examples.good]) if (!record(e) || !safeRel(e.path) || typeof e.content !== 'string' || !applies(r as Rule, e.path)) fail(`${r.id}: example 必须落在规则范围且含 path/content`);
   }
   if (r.exceptions !== undefined && (!Array.isArray(r.exceptions) || r.exceptions.some((e: any) => !record(e) || !globs([e.glob], true) || !nonempty(e.reason) || !date(e.until)))) fail(`${r.id}: exception 需要 glob/reason/until`);
-  if (r.status === 'active') validatePromotion(r);
+  if (r.status === 'active') validatePromotion(r as Rule);
 }
 function validatePromotion(r: Rule) {
   if (!r.review) fail(`${r.id}: 晋升需要 Agent review 证据`);

@@ -116,7 +116,7 @@ export function inspect(projectInput: string, rootPid?: number) {
   if (rootPid && !table.has(rootPid)) throw new Error("root PID is no longer running");
   const inventory = herdrPanes();
   const seen = new Set<number>();
-  const candidates = scan.groups.flatMap((group: any) => group.services).filter((service: any) => {
+  const candidates = (scan.groups as any[]).flatMap((group: any) => group.services).filter((service: any) => {
     if (!Number.isInteger(service.pid) || seen.has(service.pid)) return false;
     seen.add(service.pid);
     return true;

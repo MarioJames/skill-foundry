@@ -1,2 +1,3 @@
 # Tests live in tests/<skill>/ at the repository root; skill directories ship without them.
 skills/*/tests/
+node_modules/

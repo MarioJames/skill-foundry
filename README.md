@@ -131,6 +131,8 @@ Metadata conventions:
 Checks before publishing:
 
 ```bash
+bun install                                      # type declarations only (@types/bun, @types/ws); skills need no install
+bun check                                        # type-check scripts and tests against tsconfig.json
 bun scripts/check-runtime-contract.ts
 bun test tests                                   # every skill; tests/debian-testvm/testvm.test.ts needs /dev/kvm, QEMU and built images
 bun test tests/<skill>                           # one skill
