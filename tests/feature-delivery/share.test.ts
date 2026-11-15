@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { active, publicUrl, remove, upload, type Config, type Deps } from '../../skills/feature-delivery/scripts/share';
+
+const CLI = join(import.meta.dir, '../../skills/feature-delivery/scripts/share.ts');
 
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
@@ -177,5 +179,181 @@ describe('R2 分享上传与回收', () => {
     expect(r.absent).toEqual(['2026-11-08/a.html']);
     expect(cloud.writes().filter(c => c[4] === 'delete')).toEqual([]);
     expect(active(config.ledger)).toEqual([]);
+  });
+});
+
+// 替身 cf / jinnang / weaver 放进 PATH，验证真实子进程参数，不访问 Cloudflare 或 Weaver
+function fakeTools(root: string) {
+  const bin = join(root, 'bin'), bucket = join(root, 'bucket');
+  for (const d of [bin, bucket]) mkdirSync(d, { recursive: true });
+  for (const name of ['cf', 'jinnang', 'weaver']) {
+    const shim = join(bin, name);
+    writeFileSync(shim, `#!/bin/sh\nexec '${process.execPath}' '${join(import.meta.dir, 'fakes', `${name}.ts`)}' "$@"\n`);
+    chmodSync(shim, 0o755);
+  }
+  return { bin, bucket, jinnangLog: join(root, 'jinnang.log'), weaverLog: join(root, 'weaver.log') };
+}
+
+function cliEnv(root: string, t: ReturnType<typeof fakeTools>, extra: Record<string, string> = {}) {
+  return {
+    ...process.env,
+    PATH: [t.bin, dirname(process.execPath), '/usr/local/bin', '/usr/bin', '/bin'].join(':'),
+    R2_SHARE_CONFIG: join(root, 'config.json'),
+    XDG_STATE_HOME: join(root, 'state'),
+    FAKE_BUCKET: t.bucket,
+    FAKE_ACCOUNT: ACCOUNT,
+    FAKE_JINNANG_LOG: t.jinnangLog,
+    FAKE_WEAVER_LOG: t.weaverLog,
+    ...extra,
+  };
+}
+
+function runShare(args: string[], env: Record<string, string | undefined>) {
+  const r = Bun.spawnSync({ cmd: [process.execPath, CLI, ...args], env, stdout: 'pipe', stderr: 'pipe' });
+  return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
+}
+
+// 需要本地 HTTP 服务时用异步启动，避免 spawnSync 阻塞事件循环
+async function runShareAsync(args: string[], env: Record<string, string | undefined>) {
+  const proc = Bun.spawn({ cmd: [process.execPath, CLI, ...args], env, stdout: 'pipe', stderr: 'pipe' });
+  const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  return { code, out, err };
+}
+
+function shareWorkspace() {
+  const root = mkdtempSync(join(tmpdir(), 'feature-delivery-share-cli-')); dirs.push(root);
+  mkdirSync(join(root, 'reports'), { recursive: true });
+  writeFileSync(join(root, 'config.json'), JSON.stringify({ account: ACCOUNT, bucket: 'b', domain: 'share.example', accessToken: 'jn://cloudflare/r2-share' }));
+  return { root, t: fakeTools(root), file: join(root, 'reports/展示.html') };
+}
+
+describe('公开目录、Weaver 登记与 Access 服务令牌', () => {
+  test('--public 带资源时整组放在 public/<日期>/ 下', async () => {
+    const { root, config } = workspace();
+    mkdirSync(join(root, 'evidence/demo'), { recursive: true });
+    mkdirSync(join(root, 'reports/demo'), { recursive: true });
+    writeFileSync(join(root, 'evidence/demo/首页.png'), 'png');
+    writeFileSync(join(root, 'reports/demo/REPORT.html'), `<img src="../../evidence/demo/${encodeURIComponent('首页.png')}">`);
+    const cloud = fakeCloud(config);
+    const r = await upload(cloud.deps, { file: join(root, 'reports/demo/REPORT.html'), task: 'demo', public: true });
+    expect([...cloud.bucket.keys()].sort()).toEqual([
+      'public/2026-11-08/demo/evidence/demo/首页.png',
+      'public/2026-11-08/demo/reports/demo/REPORT.html',
+    ]);
+    expect(r.url).toBe('https://share.example/public/2026-11-08/demo/reports/demo/REPORT.html');
+    expect(active(config.ledger).every(rec => rec.public === true && rec.key.startsWith('public/'))).toBe(true);
+  });
+
+  test('--public 与 --mission：核对经 jinnang 服务令牌，成功后登记入口页', () => {
+    const { root, t, file } = shareWorkspace();
+    writeFileSync(file, '<p>展示</p>');
+    const r = runShare(['upload', '--file', file, '--task', 'task-1', '--mission', 'mis-1', '--public'], cliEnv(root, t));
+    expect(r.code).toBe(0);
+    const out = JSON.parse(r.out);
+    expect(out.url).toMatch(/^https:\/\/share\.example\/public\/\d{4}-\d{2}-\d{2}\/%E5%B1%95%E7%A4%BA\.html$/);
+    expect(out.artifact).toEqual({ mission: 'mis-1', file, url: out.url });
+
+    const [record] = readFileSync(join(root, 'state/r2-share/ledger.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(record).toMatchObject({
+      task: 'task-1', mission: 'mis-1', public: true, releaseWhen: '永久保留',
+      url: out.url, source: file,
+    });
+    expect(record.key).toMatch(/^public\/\d{4}-\d{2}-\d{2}\/展示\.html$/);
+    expect(record.entry).toBe(record.key);
+
+    const weaverArgs = JSON.parse(readFileSync(t.weaverLog, 'utf8').trim());
+    expect(weaverArgs).toEqual(['artifact', 'add', '--mission', 'mis-1', '--file', file, '--url', out.url]);
+
+    // 核对请求经 jinnang 子进程，令牌字段名固定，值不在参数里
+    const jinnangArgs = JSON.parse(readFileSync(t.jinnangLog, 'utf8').trim());
+    expect(jinnangArgs.slice(0, 7)).toEqual(['run', 'jn://cloudflare/r2-share', '--env', 'CF_ACCESS_CLIENT_ID=client_id', '--env', 'CF_ACCESS_CLIENT_SECRET=client_secret', '--']);
+    expect(jinnangArgs[7]).toBe(process.execPath);
+    expect(jinnangArgs[8]).toMatch(/skills\/feature-delivery\/scripts\/share\.ts$/);
+    expect(jinnangArgs[9]).toBe('__probe');
+    expect(jinnangArgs[10].startsWith(`${out.url}?verify=`)).toBe(true);
+    expect(JSON.stringify(jinnangArgs)).not.toContain('secret-value');
+  });
+
+  test('Weaver 登记失败时上传照常返回，并给出补登命令', () => {
+    const { root, t, file } = shareWorkspace();
+    writeFileSync(file, '<p>展示</p>');
+    const r = runShare(['upload', '--file', file, '--task', 'task-2', '--mission', 'mis-2'], cliEnv(root, t, { FAKE_WEAVER_EXIT: '8' }));
+    expect(r.code).toBe(0);
+    const out = JSON.parse(r.out);
+    expect(out.url).toBeTruthy();
+    expect(out.artifact).toBeUndefined();
+    expect(out.artifactError).toContain('登记到 Weaver 主任务 mis-2 失败');
+    expect(out.artifactError).toContain('链接可用');
+    expect(out.artifactCommand).toBe(`weaver artifact add --mission 'mis-2' --file '${file}' --url '${out.url}'`);
+    expect(active(join(root, 'state/r2-share/ledger.jsonl')).map(rec => rec.mission)).toEqual(['mis-2']);
+  });
+
+  test('PATH 里没有 weaver 时同样保留上传结果并给出补登命令', () => {
+    const { root, t, file } = shareWorkspace();
+    writeFileSync(file, '<p>展示</p>');
+    rmSync(join(t.bin, 'weaver'));
+    const r = runShare(['upload', '--file', file, '--task', 'task-3', '--mission', 'mis-3'], cliEnv(root, t));
+    expect(r.code).toBe(0);
+    const out = JSON.parse(r.out);
+    expect(out.url).toBeTruthy();
+    expect(out.artifactError).toContain('登记到 Weaver 主任务 mis-3 失败');
+    expect(out.artifactCommand).toContain(`--mission 'mis-3'`);
+  });
+
+  test('删除后的 404 核对同样经过 jinnang', () => {
+    const { root, t, file } = shareWorkspace();
+    writeFileSync(file, '<p>展示</p>');
+    const env = cliEnv(root, t);
+    expect(runShare(['upload', '--file', file, '--task', 'task-del'], env).code).toBe(0);
+    const before = readFileSync(t.jinnangLog, 'utf8').trim().split('\n').length;
+    const r = runShare(['remove', '--task', 'task-del'], env);
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.out).removed).toHaveLength(1);
+    const probes = readFileSync(t.jinnangLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(probes).toHaveLength(before + 1);
+    expect(probes.at(-1)[9]).toBe('__probe');
+  });
+
+  test('未配置 accessToken 时直接请求，不带 Access 头也不调用 jinnang', async () => {
+    const { root, config } = workspace();
+    writeFileSync(join(root, 'reports/a.html'), '<p>a</p>');
+    const cloud = fakeCloud(config);
+    const seen: (RequestInit | undefined)[] = [];
+    const deps = { ...cloud.deps, fetch: (url: string, init?: RequestInit) => { seen.push(init); return cloud.deps.fetch(url, init); } };
+    await upload(deps, { file: join(root, 'reports/a.html'), task: 't' });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.headers).toBeUndefined();
+    expect(cloud.calls.some(call => call[0] === 'jinnang')).toBe(false);
+  });
+
+  test('内部核对子命令从环境带 Access 服务令牌，未设置时不带令牌头', async () => {
+    const seen: { id: string | null; secret: string | null }[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        seen.push({ id: req.headers.get('cf-access-client-id'), secret: req.headers.get('cf-access-client-secret') });
+        return new Response('ok', { headers: { 'content-type': 'text/plain; charset=utf-8' } });
+      },
+    });
+    try {
+      const url = `http://127.0.0.1:${server.port}/x.txt`;
+      const base = { ...process.env };
+      delete base.CF_ACCESS_CLIENT_ID; delete base.CF_ACCESS_CLIENT_SECRET;
+      const withToken = await runShareAsync(['__probe', url], { ...base, CF_ACCESS_CLIENT_ID: 'id-value', CF_ACCESS_CLIENT_SECRET: 'secret-value' });
+      expect(withToken.code).toBe(0);
+      expect(JSON.parse(withToken.out)).toEqual({ status: 200, type: 'text/plain; charset=utf-8', md5: new Bun.CryptoHasher('md5').update('ok').digest('hex') });
+      expect(seen[0]).toEqual({ id: 'id-value', secret: 'secret-value' });
+
+      const without = await runShareAsync(['__probe', url], base);
+      expect(without.code).toBe(0);
+      expect(seen[1]).toEqual({ id: null, secret: null });
+    } finally { server.stop(true); }
+  });
+
+  test('--help 显示 --mission 与 --public', () => {
+    const r = runShare(['--help'], { ...process.env });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('--mission <主任务>');
+    expect(r.out).toContain('--public');
   });
 });

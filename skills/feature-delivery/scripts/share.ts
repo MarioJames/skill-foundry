@@ -1,19 +1,20 @@
 #!/usr/bin/env bun
-// 把本地 HTML（含其引用的本地资源）发布到 R2 公网链接，并登记供收尾回收。对象读写一律经 cf CLI。
+// 把本地 HTML（含其引用的本地资源）发布到 R2 公网链接，并登记账本；对象读写一律经 cf CLI。
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const env = process.env;
 const LEDGER = join(env.XDG_STATE_HOME || join(homedir(), '.local/state'), 'r2-share/ledger.jsonl');
 // 唯一的配置：本机文件，不随技能分发，不含凭据；R2_SHARE_CONFIG 可指定其他文件
 const CONFIG_FILE = env.R2_SHARE_CONFIG || join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'r2-share/config.json');
-const CONFIG_FORMAT = '{"account": "<Cloudflare 账户 ID>", "bucket": "<桶名>", "domain": "<桶已启用的自定义域名>", "profile": "<cf 登录 profile，可省略，默认 default>"}';
-export type Config = { profile: string; account: string; bucket: string; domain: string; ledger: string };
+const CONFIG_FORMAT = '{"account": "<Cloudflare 账户 ID>", "bucket": "<桶名>", "domain": "<桶已启用的自定义域名>", "profile": "<cf 登录 profile，可省略，默认 default>", "accessToken": "<jn:// 引用，可省略>"}';
+export type Config = { profile: string; account: string; bucket: string; domain: string; ledger: string; accessToken?: string };
 export type Exec = (cmd: string[]) => { code: number; out: string; err: string };
 export type Deps = { config: Config; exec: Exec; fetch: (url: string, init?: RequestInit) => Promise<Response>; now: () => Date };
 export type UploadRecord = {
-  op: 'upload'; at: string; task: string; releaseWhen: string; account: string; bucket: string;
+  op: 'upload'; at: string; task: string; mission?: string | null; public?: boolean; releaseWhen: string; account: string; bucket: string;
   key: string; url: string; entry: string; source: string; md5: string; size: number; contentType: string;
 };
 type DeleteRecord = { op: 'delete'; at: string; task: string; account: string; bucket: string; key: string; result: 'deleted' | 'absent' };
@@ -22,11 +23,14 @@ class UsageError extends Error {}
 class OpError extends Error {}
 
 const USAGE = [
-  'bun share.ts upload --file <html> --task <任务> [--name <名称>] [--release-when <释放条件>]',
+  'bun share.ts upload --file <html> --task <任务> [--name <名称>] [--mission <主任务>] [--public] [--release-when <释放条件>]',
   'bun share.ts list [--task <任务>]',
   'bun share.ts remove --task <任务> [--key <对象 key>]...',
 ].join('\n');
-const DEFAULT_RELEASE = '用户不再需要该链接';
+const DEFAULT_RELEASE = '永久保留';
+const SELF = fileURLToPath(import.meta.url);
+// Access 服务令牌的字段名；值由 jinnang 注入子进程环境，不出现在参数、输出和日志里
+const ACCESS_ENV = ['--env', 'CF_ACCESS_CLIENT_ID=client_id', '--env', 'CF_ACCESS_CLIENT_SECRET=client_secret'];
 const MAX_SIZE = 300 * 1024 * 1024; // cf upload 端点上限
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -44,9 +48,10 @@ function loadConfig(): Config {
   catch (e) { throw new UsageError(`读取本机配置失败: ${CONFIG_FILE}（${(e as Error).message}）。按此格式写入，不含凭据: ${CONFIG_FORMAT}`); }
   const bad = ['account', 'bucket', 'domain'].filter(k => !text(raw?.[k]));
   if (raw?.profile !== undefined && !text(raw.profile)) bad.push('profile');
+  if (raw?.accessToken !== undefined && (!text(raw.accessToken) || !raw.accessToken.startsWith('jn://'))) bad.push('accessToken（jn:// 引用）');
   if (text(raw?.domain) && /[\/:]/.test(raw.domain)) bad.push('domain（只写主机名）');
   if (bad.length) throw new UsageError(`本机配置 ${CONFIG_FILE} 缺少或无效字段: ${bad.join(', ')}。格式: ${CONFIG_FORMAT}`);
-  return { profile: raw.profile ?? 'default', account: raw.account, bucket: raw.bucket, domain: raw.domain, ledger: LEDGER };
+  return { profile: raw.profile ?? 'default', account: raw.account, bucket: raw.bucket, domain: raw.domain, ledger: LEDGER, accessToken: raw.accessToken };
 }
 const isFile = (p: string) => existsSync(p) && statSync(p).isFile();
 const isHtml = (p: string) => /\.html?$/i.test(p);
@@ -89,16 +94,17 @@ function collect(html: string, root: string): string[] {
   return files;
 }
 
-// 单文件放在 <日期>/<文件名>；带资源时放在 <日期>/<名称>/ 下并保留相对根的目录结构
-function plan(file: string, date: string, name?: string) {
+// 单文件放在 <日期>/<文件名>；带资源时放在 <日期>/<名称>/ 下并保留相对根的目录结构。--public 时整组放在 public/ 下
+function plan(file: string, date: string, name?: string, isPublic = false) {
   const html = resolve(file);
   if (!isFile(html) || !isHtml(html)) throw new UsageError(`--file 须为存在的 .html 文件: ${file}`);
   if (name !== undefined && (!text(name) || /[\/\\\x00-\x1f]/.test(name) || name.startsWith('.'))) throw new UsageError(`--name 须为不含斜杠、不以 . 开头的名称: ${name}`);
+  const prefix = `${isPublic ? 'public/' : ''}${date}`;
   const root = rootOf(html), files = collect(html, root);
-  if (files.length === 1) return [{ file: html, key: `${date}/${name ?? basename(html)}` }];
+  if (files.length === 1) return [{ file: html, key: `${prefix}/${name ?? basename(html)}` }];
   const stem = basename(html, extname(html));
-  const prefix = `${date}/${name ?? (/^(report|index)$/i.test(stem) ? basename(dirname(html)) : stem)}`;
-  return files.map(f => ({ file: f, key: `${prefix}/${relative(root, f).split(sep).join('/')}` }));
+  const dir = `${prefix}/${name ?? (/^(report|index)$/i.test(stem) ? basename(dirname(html)) : stem)}`;
+  return files.map(f => ({ file: f, key: `${dir}/${relative(root, f).split(sep).join('/')}` }));
 }
 
 function readLedger(ledger: string): (UploadRecord | DeleteRecord)[] {
@@ -154,14 +160,48 @@ function write(d: Deps, op: 'upload' | 'delete', key: string, extra: string[]) {
 
 // 带一次性查询参数绕过边缘缓存，读到的是对象当前状态
 async function probe(d: Deps, url: string) {
-  const res = await d.fetch(`${url}?verify=${crypto.randomUUID()}`, { redirect: 'manual' });
-  return { status: res.status, type: res.headers.get('content-type'), md5: md5(await res.arrayBuffer()) };
+  const target = `${url}?verify=${crypto.randomUUID()}`;
+  if (!d.config.accessToken) {
+    const res = await d.fetch(target, { redirect: 'manual' });
+    return { status: res.status, type: res.headers.get('content-type'), md5: md5(await res.arrayBuffer()) };
+  }
+  // 令牌值只在 jinnang 子进程的环境里；父进程的参数、输出和日志都不带
+  const r = d.exec(['jinnang', 'run', d.config.accessToken, ...ACCESS_ENV, '--', process.execPath, SELF, '__probe', target]);
+  if (r.code !== 0) throw new OpError(`带 Access 服务令牌的核对请求失败（jinnang 退出码 ${r.code}）: ${r.err.trim().slice(0, 300) || r.out.trim().slice(0, 300)}`);
+  let got: any;
+  try { got = JSON.parse(r.out); } catch { throw new OpError(`带 Access 服务令牌的核对输出无法解析: ${r.out.slice(0, 200)}`); }
+  if (typeof got?.status !== 'number' || typeof got?.md5 !== 'string') throw new OpError('带 Access 服务令牌的核对输出缺少 status 或 md5');
+  return { status: got.status, type: typeof got.type === 'string' ? got.type : null, md5: got.md5 };
 }
 
-export async function upload(d: Deps, o: { file: string; task: string; name?: string; releaseWhen?: string }) {
+// 由 jinnang run 在子进程里执行：只从环境读令牌，输出只含核对结果
+async function internalProbe(url: string) {
+  if (!text(url)) throw new UsageError('__probe 需要 URL');
+  const headers: Record<string, string> = {};
+  const id = env.CF_ACCESS_CLIENT_ID, secret = env.CF_ACCESS_CLIENT_SECRET;
+  if (id && secret) { headers['CF-Access-Client-Id'] = id; headers['CF-Access-Client-Secret'] = secret; }
+  const res = await fetch(url, { redirect: 'manual', headers });
+  console.log(JSON.stringify({ status: res.status, type: res.headers.get('content-type'), md5: md5(await res.arrayBuffer()) }));
+}
+
+const shellQuote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
+// 上传与核对成功后把入口页登记到 Weaver；登记失败不影响已经可用的上传
+function register(d: Deps, o: { mission: string; file: string; url: string }) {
+  const cmd = ['weaver', 'artifact', 'add', '--mission', o.mission, '--file', o.file, '--url', o.url];
+  const r = d.exec(cmd);
+  if (r.code === 0) return { artifact: { mission: o.mission, file: o.file, url: o.url } };
+  const detail = (r.err.trim() || r.out.trim() || `退出码 ${r.code}`).slice(0, 300);
+  return {
+    artifactError: `登记到 Weaver 主任务 ${o.mission} 失败（上传与核对已完成，链接可用）: ${detail}`,
+    artifactCommand: `weaver artifact add --mission ${shellQuote(o.mission)} --file ${shellQuote(o.file)} --url ${shellQuote(o.url)}`,
+  };
+}
+
+export async function upload(d: Deps, o: { file: string; task: string; name?: string; releaseWhen?: string; mission?: string; public?: boolean }) {
   const c = d.config;
   if (!text(o.task)) throw new UsageError('--task 必填：写本任务名，收尾按它回收');
-  const items = plan(o.file, shanghaiDate(d.now()), o.name).map(p => ({ ...p, size: statSync(p.file).size, type: typeOf(p.file) }));
+  if (o.mission !== undefined && (!text(o.mission) || o.mission.startsWith('--'))) throw new UsageError(`--mission 须为 Weaver 主任务 ID: ${o.mission}`);
+  const items = plan(o.file, shanghaiDate(d.now()), o.name, Boolean(o.public)).map(p => ({ ...p, size: statSync(p.file).size, type: typeOf(p.file) }));
   for (const it of items) if (it.size > MAX_SIZE) throw new UsageError(`文件超过 300 MB 上传上限: ${it.file}`);
   const taken = items.filter(it => remote(d, it.key));
   if (taken.length) throw new UsageError(`对象已存在，不覆盖：${taken.map(t => t.key).join(', ')}；用 --name 换一个名称`);
@@ -177,14 +217,19 @@ export async function upload(d: Deps, o: { file: string; task: string; name?: st
     const stored = remote(d, it.key);
     if (!stored) throw new OpError(`cf upload 返回成功，但桶内没有该对象，未登记: ${it.key}`);
     // 登记桶内实际 etag，回收时按它确认对象仍是本次上传的
-    appendLedger(c, { op: 'upload', at: d.now().toISOString(), task: o.task, releaseWhen: text(o.releaseWhen) ? o.releaseWhen : DEFAULT_RELEASE,
+    appendLedger(c, { op: 'upload', at: d.now().toISOString(), task: o.task, mission: text(o.mission) ? o.mission : null,
+      public: Boolean(o.public), releaseWhen: text(o.releaseWhen) ? o.releaseWhen : DEFAULT_RELEASE,
       account: c.account, bucket: c.bucket, key: it.key, url, entry, source: it.file, md5: stored.etag, size: it.size, contentType: it.type });
     uploaded.push({ key: it.key, url, size: it.size });
     const got = await probe(d, url);
     if (stored.etag !== sum || got.status !== 200 || !sameType(got.type, it.type) || got.md5 !== sum)
       throw new OpError(`上传后核对失败（对象已登记）: ${url} etag ${stored.etag}、状态 ${got.status}、类型 ${got.type}、MD5 ${got.md5}，预期 ${sum}、200、${it.type}、${sum}`);
   }
-  return { url: publicUrl(c, entry), task: o.task, objects: uploaded, ledger: c.ledger };
+  const url = publicUrl(c, entry);
+  return {
+    url, task: o.task, objects: uploaded, ledger: c.ledger,
+    ...(text(o.mission) ? register(d, { mission: o.mission, file: items[0].file, url }) : {}),
+  };
 }
 
 export async function remove(d: Deps, o: { task: string; keys: string[] }) {
@@ -213,11 +258,17 @@ export async function remove(d: Deps, o: { task: string; keys: string[] }) {
 
 function args(argv: string[]) {
   const named = new Map<string, string[]>();
-  for (let i = 1; i < argv.length; i += 2) {
-    if (!argv[i].startsWith('--') || argv[i + 1] === undefined) throw new UsageError(`参数无效: ${argv[i]}`);
-    named.set(argv[i], [...(named.get(argv[i]) ?? []), argv[i + 1]]);
+  let isPublic = false;
+  for (let i = 1; i < argv.length; i++) {
+    const key = argv[i];
+    if (!key.startsWith('--')) throw new UsageError(`参数无效: ${key}`);
+    if (key === '--public') { isPublic = true; continue; }
+    const value = argv[i + 1];
+    if (value === undefined) throw new UsageError(`参数无效: ${key}`);
+    named.set(key, [...(named.get(key) ?? []), value]);
+    i++;
   }
-  return { one: (k: string) => named.get(k)?.at(-1), all: (k: string) => named.get(k) ?? [] };
+  return { one: (k: string) => named.get(k)?.at(-1), all: (k: string) => named.get(k) ?? [], public: isPublic };
 }
 
 // cf 会在工作目录写 .cloudflare/ 缓存并读取项目配置，固定在登记目录下运行，不落进仓库或受项目配置影响
@@ -230,17 +281,29 @@ const defaultExec: Exec = cmd => {
 };
 
 async function main(argv: string[]) {
+  if (argv[0] === '__probe') {
+    try {
+      await internalProbe(argv[1] ?? '');
+      return 0;
+    } catch (e) {
+      console.error(JSON.stringify({ error: 'failed', message: (e as Error).message }));
+      return 1;
+    }
+  }
   const deps = (): Deps => ({ config: loadConfig(), exec: defaultExec, fetch: (u, i) => fetch(u, i), now: () => new Date() });
   try {
     const a = args(argv);
     let result: unknown, code = 0;
-    if (argv[0] === 'upload') result = await upload(deps(), { file: a.one('--file') ?? '', task: a.one('--task') ?? '', name: a.one('--name'), releaseWhen: a.one('--release-when') });
+    if (argv[0] === 'upload') result = await upload(deps(), { file: a.one('--file') ?? '', task: a.one('--task') ?? '', name: a.one('--name'), releaseWhen: a.one('--release-when'), mission: a.one('--mission'), public: a.public });
     else if (argv[0] === 'remove') {
       const r = await remove(deps(), { task: a.one('--task') ?? '', keys: a.all('--key') });
       result = r; code = r.refused.length ? 1 : 0;
     } else if (argv[0] === 'list') {
       const task = a.one('--task');
       result = { ledger: LEDGER, objects: active(LEDGER).filter(r => !task || r.task === task) };
+    } else if (argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') {
+      console.log(USAGE);
+      return 0;
     } else throw new UsageError('未知子命令');
     console.log(JSON.stringify(result, null, 2));
     return code;

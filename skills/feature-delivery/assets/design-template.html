@@ -121,7 +121,7 @@ table.wf tr:last-child td{border-bottom:0}
 .checklist th{font:600 12px var(--sans);color:var(--ink2);background:#faf9f5;border-bottom:1.5px solid var(--ink)}
 .checklist .group td{background:#f0eee6;font-weight:600;border-top:1.5px solid var(--ink)}
 .checklist .id{font:700 12px var(--mono);white-space:nowrap}
-.fail{display:inline-block;margin-left:4px;font:600 10.5px/1 var(--sans);padding:3px 5px;border-radius:3px;color:var(--issue);border:1px solid var(--issue)}
+.edge{display:inline-block;margin-left:4px;font:600 10.5px/1 var(--sans);padding:3px 5px;border-radius:3px;color:var(--issue);border:1px solid var(--issue)}
 
 footer{padding:36px 0 56px;color:var(--ink3);font:12px/1.6 var(--mono)}
 
@@ -229,7 +229,7 @@ footer{padding:36px 0 56px;color:var(--ink3);font:12px/1.6 var(--mono)}
   <div class="scene-note">不变：关键词与日期筛选可与状态筛选叠加；导出按当前筛选结果导出。</div>
 </section>
 
-<!-- 验收清单：按场景分组，每项一行 data-check-id，失败与恢复路径标「失败」，可能波及的不变行为单独一组放最后 -->
+<!-- 验收清单：按场景分组，每项一行 data-check-id，失败、空态、无权限与恢复路径标「异常场景」（说明场景类型，不是验收结果），可能波及的不变行为单独一组放最后 -->
 <section class="block" id="checklist">
   <div class="sec-head"><span class="sec-no">✓</span><h2>验收清单</h2></div>
   <table class="checklist">
@@ -237,7 +237,7 @@ footer{padding:36px 0 56px;color:var(--ink3);font:12px/1.6 var(--mono)}
     <tbody>
       <tr class="group"><td colspan="4">01 · 客服筛出退款失败的订单 · 3 项</td></tr>
       <tr data-check-id="A1"><td class="id" data-label="编号">A1</td><td data-label="操作与前置条件">列表含 1 条退款失败订单，点击「退款失败」</td><td data-label="预期">只显示 SO-240611-0827，标签计数为 1，URL 带 refund=failed</td><td data-label="验证">浏览器</td></tr>
-      <tr data-check-id="A2"><td class="id" data-label="编号">A2 <span class="fail">失败</span></td><td data-label="操作与前置条件">选「已退款」且无匹配订单</td><td data-label="预期">显示空态与「清除筛选」，点击后恢复全部 24 条</td><td data-label="验证">浏览器</td></tr>
+      <tr data-check-id="A2"><td class="id" data-label="编号">A2 <span class="edge">异常场景</span></td><td data-label="操作与前置条件">选「已退款」且无匹配订单</td><td data-label="预期">显示空态与「清除筛选」，点击后恢复全部 24 条</td><td data-label="验证">浏览器</td></tr>
       <tr data-check-id="A3"><td class="id" data-label="编号">A3</td><td data-label="操作与前置条件">筛选后刷新页面</td><td data-label="预期">仍选中「退款失败」，结果不变</td><td data-label="验证">浏览器</td></tr>
       <tr class="group"><td colspan="4">不变行为 · 1 项</td></tr>
       <tr data-check-id="A4"><td class="id" data-label="编号">A4</td><td data-label="操作与前置条件">选「退款失败」后点击导出</td><td data-label="预期">导出文件只含 1 条订单</td><td data-label="验证">接口 / 数据核对</td></tr>
