@@ -1,4 +1,3 @@
-import { ancestorPids, ownsPane } from "./caller-identity";
 import { randomUUID } from "node:crypto";
 import { CliError, type ResourceIds } from "./herdr-route";
 
@@ -12,7 +11,10 @@ const samePane = (first: any, second: any) => identityKeys.every(key =>
   typeof first?.[key] === "string" && first[key].length > 0 && first[key] === second?.[key]);
 const resourceIds = (pane: any): ResourceIds => ({ paneId: pane.pane_id, tabId: pane.tab_id, workspaceId: pane.workspace_id });
 
-/** Prefer OS ancestry; a shared daemon can instead prove a live client subscription. */
+/**
+ * For a thread served by a shared daemon, whose tools do not descend from the TUI: prove a live
+ * client subscription. Process ancestry is tried first by the caller (name-tab.ts).
+ */
 export async function withVerifiedCodexPane<T>(
   request: Request, threadId: string, herdr: Herdr,
   work: (caller: ResourceIds, proof: Proof, verify: Verify) => Promise<T>,
@@ -26,30 +28,6 @@ export async function withVerifiedCodexPane<T>(
   const original = (await readThread()).name;
   if (typeof original !== "string" || !original) {
     throw new CliError("missing_thread_name", "Set the native task name before binding its pane");
-  }
-  // --current is only a candidate. Neither its focus nor inherited metadata
-  // establishes identity; require a foreground OS ancestor of this invocation.
-  let candidate: any;
-  let processProven = false;
-  const processOwns = async () => ownsPane(candidate.pane_id,
-    (await herdr("pane", "process-info", "--pane", candidate.pane_id))?.result?.process_info, ancestorPids());
-  try {
-    candidate = (await herdr("pane", "current", "--current"))?.result?.pane;
-    processProven = candidate?.agent === "codex" && samePane(candidate, candidate) && await processOwns();
-  } catch {
-    // Initial read-only discovery may be unavailable under a shared host.
-    // No proof or write exists yet; the fresh challenge remains independent.
-  }
-  if (processProven) {
-    const verify = async () => {
-      const current = (await herdr("pane", "current", "--pane", candidate.pane_id))?.result?.pane;
-      if (current?.agent !== "codex" || !samePane(candidate, current) || !await processOwns() || (await readThread()).name !== original) {
-        throw new CliError("binding_conflict", "Process or pane ownership changed; no alternate target may be selected");
-      }
-    };
-    await verify();
-    // No catch/fallback after proof: failures may include an uncertain write.
-    return await work(resourceIds(candidate), "process-ancestry", verify);
   }
   // Check availability before touching a title. Never consume agent_session here:
   // SessionStart hooks can themselves report a daemon-inherited, incorrect pane.

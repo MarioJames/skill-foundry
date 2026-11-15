@@ -19,21 +19,21 @@ test("rejects a changed pane, missing evidence, and init PID", () => {
 
 test("reads the real parent independently of inherited pane/session variables", () => {
   expect(ancestorPids()).toContain(process.ppid);
-  expect(ancestorPids()).not.toContain(process.pid);
 });
 
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-for (const owned of [true, false]) {
-  test(`automatic resolver ${owned ? "accepts its ancestor" : "rejects a foreign pane"} through CLI`, async () => {
+// "self": the resolver itself is the pane's foreground process, e.g. run directly in that pane's shell.
+for (const owned of [true, "self", false] as const) {
+  test(`automatic resolver ${owned === "self" ? "accepts running in the foreground itself" : owned ? "accepts its ancestor" : "rejects a foreign pane"} through CLI`, async () => {
     const dir = mkdtempSync(join(tmpdir(), "herdr-caller-test-"));
     try {
       writeFileSync(join(dir, "herdr"), `#!/usr/bin/env bun
 const pane = {workspace_id:'w1',tab_id:'w1:t1',pane_id:'w1:p1'};
 const result = process.argv[3] === 'current' ? {pane} : {
- process_info:{pane_id:pane.pane_id,foreground_processes:[{pid:${owned ? process.pid : 1}}]}
+ process_info:{pane_id:pane.pane_id,foreground_processes:[{pid:${owned === "self" ? "process.ppid" : owned ? process.pid : 1}}]}
 };
 console.log(JSON.stringify({result}));
 `, { mode: 0o755 });

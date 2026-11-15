@@ -1,6 +1,9 @@
 import { execFileSync } from "node:child_process";
 
-/** Read OS ancestry, rather than trusting inherited Agent or Herdr IDs. */
+/**
+ * Read OS ancestry, rather than trusting inherited Agent or Herdr IDs. This process is
+ * included: when it is itself in a pane's foreground group, it was started in that pane.
+ */
 export function ancestorPids(): number[] {
   const ancestors: number[] = [];
   let pid = process.pid;
@@ -10,8 +13,7 @@ export function ancestorPids(): number[] {
     if (!Number.isSafeInteger(parent) || parent <= 0) break;
     pid = parent;
   }
-  // The resolver itself is not an Agent identity.
-  return ancestors.slice(1).filter((value) => value > 1);
+  return ancestors.filter((value) => value > 1);
 }
 
 export function ownsPane(paneId: string, info: any, ancestors: readonly number[]): boolean {
