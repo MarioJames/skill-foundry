@@ -32,7 +32,7 @@ Herdr 实际调用可用时加载 `herdr` 技能，按如下分支执行。保�
 - 已有服务但无 pane：直接记录已有可读日志位置，不为展示创建日志追踪 pane；没有可读日志时如实说明，不擅自重启。
 - 无 DEV 进程：创建新 tab 的单个 pane，直接运行下一节的项目开发脚本。
 
-新建时使用已加载 herdr 的 router，显式 `--scope independent` 以创建独立 tab，不能沿用 service 默认的同 tab split。`TAB_LABEL` 遵循当前会话的命名规则：
+新建时使用已加载 herdr 的 router，显式 `--scope independent` 以创建独立 tab，不能沿用 service 默认的同 tab split。`TAB_LABEL` 遵循 agent-conduct 的「会话命名」：
 
 ```bash
 bun "$HERDR_SKILL_DIR/scripts/route-lane.ts" --type service --scope independent \

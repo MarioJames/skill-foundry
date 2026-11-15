@@ -1,11 +1,41 @@
 ---
 name: agent-conduct
-description: Agent 守则：任何会在本机留下文件、进程、容器或 Git 状态的任务（写代码、跑测试、构建、验收、部署、排障）开始和收尾时使用，无需用户点名。规定报告、证据、临时目录、worktree、分支、Docker 容器与卷、R2 分享对象、测试残留的落点和回收；需要隔离的工作树用 wt.ts 新建和回收，合入后的本地与远端分支用 branch.ts 清理，收尾用只读扫描核对本任务遗留。只读问答不触发。
+description: Agent 守则，无需用户点名。会话开始或主任务切换时（含只读问答、LobeHub 聊天与任务调度发起的运行）先用 name-session.ts 按 MMDD｜TYPE｜Topic 命名当前会话：LobeHub 话题、Codex 线程，以及经 herdr 原语命名可证明归属的 Herdr 标签页。任何会在本机留下文件、进程、容器或 Git 状态的任务（写代码、跑测试、构建、验收、部署、排障）开始和收尾时使用：规定报告、证据、临时目录、worktree、分支、Docker 容器与卷、R2 分享对象、测试残留的落点和回收；需要隔离的工作树用 wt.ts 新建和回收，合入后的本地与远端分支用 branch.ts 清理，收尾用只读扫描核对本任务遗留。
 ---
 
 # Agent 守则
 
-Agent 对自己在本机留下的东西负责。用完的临时环境随手回收；有持久价值的结果放到约定位置；不给用户和下一个 Agent 留下垃圾或谜题。
+两条通用守则：会话一开始就按统一规则命名，让用户在任何宿主里都能认出它；Agent 对自己在本机留下的东西负责，用完的临时环境随手回收，有持久价值的结果放到约定位置，不给用户和下一个 Agent 留下垃圾或谜题。
+
+命名适用于所有会话，包括只读问答；其余资源规则只在任务会留下文件、进程、容器或 Git 状态时适用。
+
+## 会话命名
+
+会话开始或主任务切换时，任务一明确就命名，先于读取其他技能、派发子任务和实质工作；被 Weaver 拉起的父 Agent 同样如此。同一目标下的进度、追问和子任务不重命名。
+
+主任务切换时，新标题合并前后任务的关键信息，不丢掉前一个任务：例如 `1115｜OPT｜会话命名迁入 conduct` 之后转去排查 herdr 归属，改为 `1115｜FIX｜命名迁入 conduct 与 herdr 归属误判`，TYPE 取当前主任务。合并后过长时压缩各任务的措辞，不整段删掉某个任务。
+
+- **格式 `MMDD｜TYPE｜Topic`。** MMDD 只取会话 `createdAt` 转 Asia/Shanghai 的日期，不用 `updatedAt` 或今天；TYPE 取 FEA、DES、FIX、OPT、REL、EXP、DOC、RES；Topic 用用户的语言，简短具体，不重复项目名，不含换行和 `｜`。主题不明时保留原标题。
+- **按当前任务直接设置。** 不管现有标题是谁设的、看起来是否已经像样，也不征求确认；宿主自动生成的标题不合规范时立即修正。只改标题，不动项目、分组、顺序、置顶和归档状态。
+- **一条命令完成，结果以输出为准：**
+
+  ```bash
+  bun <skill-dir>/scripts/name-session.ts --type FIX --topic '具体任务' [--dry-run]
+  ```
+
+  stdout 输出 JSON：`label`、`named`，以及 `targets` 里每个目标的 `status`（`named`、`unchanged`、`dry-run`、`skipped`、`failed`）。每次写入都读回核对；写入超时或读回不一致时不重放，读一次现状后报告。
+
+| 宿主 | 识别 | 写入 |
+| --- | --- | --- |
+| LobeHub | `LOBEHUB_TOPIC_ID` 与 `LOBEHUB_OPERATION_ID` | 同时满足两点才用 `lh topic edit` 改话题标题：话题的 `metadata.runningOperation.operationId` 等于本次运行的 `LOBEHUB_OPERATION_ID`；进程链没有显示这份身份是继承来的。后者指：话题已记录 `metadata.heteroSessionId` 时，它要等于最内层 Agent 自己的会话 ID（`CLAUDE_CODE_SESSION_ID` 或 `CODEX_THREAD_ID` 中，在离本进程最近的一层引入的那个）；在 Linux 上，`LOBEHUB_OPERATION_ID` 沿祖先进程最多延续到该 Agent 的父进程，也就是启动它的 LobeHub 进程。在 LobeHub 运行里启动的 Herdr、tmux 这类长驻宿主会把运行身份传给后来在里面启动的 Agent，而祖先运行仍在进行，只比运行编号挡不住，这时记为 `skipped`（`session_mismatch`、`inherited_operation`）。祖先 Agent 的环境被继承、群组里共享话题的成员、运行已结束等情况同样记为 `skipped`，不写入，再按下面几行判断。此时不命名 Herdr 标签页：承载 LobeHub 守护进程的终端不是这个会话 |
+| Codex | `CODEX_THREAD_ID`，本机 Codex app-server daemon 在运行 | 改该线程的原生标题。不为命名启动 daemon；`CODEX_SESSION_ID` 可能指父会话，不能代替 |
+| Claude Code | `CLAUDE_CODE_SESSION_ID` | 没有可写的标题接口，只从会话记录取 `createdAt`，供 Herdr 标签页使用 |
+| Herdr | `HERDR_PANE_ID`，同级装有 herdr 技能 | 用上面得到的标题调用 herdr 的 `name-tab.ts`，只有能证明标签页属于本进程时才改名，证明失败记为 `failed`，任务照常继续 |
+
+`named` 为 `false`（没有可写且归属本次运行的标题）时保留原标题，在回复里简短说明。
+
+- **任务调度发起的运行同样命名。** LobeHub 任务派发的话题（输出里 `trigger` 为 `task`、带 `taskId`）初始标题通常是派发提示词或任务原标题，开始工作前照常改名。Topic 写这次任务的具体目标，可以带任务编号，例如 `1115｜FIX｜T-123 图片上传失败`；不照抄「由 T-xxx 调度派发……」这类提示词。只改话题标题，不改任务本身。
+- **命名归会话的所有者。** 归属看交接内容，不看焦点、pane 数量或 Agent 类型。子 Agent、fork、Weaver worker 可能继承父会话的环境变量，不改父会话的标题，除非交接里明确交给它；它有自己独立的话题、线程或标签页时，按交接里的任务命名自己的。新建目标标签页的一方负责初始命名（herdr 的 `route-lane.ts --label`），交接里写明自己的 caller、目标 ID 和命名归属。
 
 实际出现过的反例：
 - **Docker**：761 个悬空匿名卷约 60G，都是测试用 Postgres 容器删除时没带 `-v` 留下的。

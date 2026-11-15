@@ -17,8 +17,8 @@
 
 | Area | Skill | What it does |
 | --- | --- | --- |
-| Orchestration | [`herdr`](skills/herdr/SKILL.md) | Herdr tabs and panes, persistent terminals, agent start/stop, verified naming and precise cleanup |
-| | [`agent-conduct`](skills/agent-conduct/SKILL.md) | Where reports, evidence and temporary files go; ready-to-run task worktrees and their reclamation; local and remote branch cleanup after merge; Docker and test leftovers; a read-only closure scan |
+| Orchestration | [`herdr`](skills/herdr/SKILL.md) | Herdr tabs and panes, persistent terminals, agent start/stop, verified tab labels and precise cleanup |
+| | [`agent-conduct`](skills/agent-conduct/SKILL.md) | Names every conversation `MMDD｜TYPE｜Topic` at its start, on LobeHub topics (chat and task-dispatched runs), Codex threads and Herdr tabs; where reports, evidence and temporary files go; ready-to-run task worktrees and their reclamation; local and remote branch cleanup after merge; Docker and test leftovers; a read-only closure scan |
 | Quality | [`tdd`](skills/tdd/SKILL.md) | Decides before coding which checks a change needs; writes tests only when they can fail |
 | | [`feature-delivery`](skills/feature-delivery/SKILL.md) | A feature from design to acceptance: an HTML design demo, drawn as wireframes from a bundled template, that asks only the decisions you must make and fixes the acceptance checklist up front, engineering preferences and interaction checks while building, then item-by-item acceptance in an HTML report whose evidence opens large with its description; shares the design doc and report as a public R2 link that opens on a phone; records corrections where they belong |
 | | [`browser-harness`](skills/browser-harness/SKILL.md) | Browser acceptance with agent-browser: services, login state, screenshot/console/network evidence |
@@ -89,7 +89,7 @@ Bun 1.3 or newer runs every script and hook entrypoint. Some skills also need ho
 | Skill | Also needs |
 | --- | --- |
 | `herdr` | Herdr CLI; the CLI response decides availability, and inherited `HERDR_*` variables are not trusted for identity |
-| `agent-conduct` | Git; the project's package manager for worktree installs; GitHub CLI for pull-request evidence when cleaning GitHub branches (remote branches are kept without it); Docker CLI for the container and volume part of the scan (skipped when absent) |
+| `agent-conduct` | For session naming: the LobeHub `lh` CLI inside LobeHub runs, a running Codex app-server daemon for native Codex titles, and `herdr` installed alongside for tab labels (each skipped when absent). Git; the project's package manager for worktree installs; GitHub CLI for pull-request evidence when cleaning GitHub branches (remote branches are kept without it); Docker CLI for the container and volume part of the scan (skipped when absent) |
 | `feature-delivery` | For share links only: an authenticated Cloudflare `cf` CLI and `~/.config/r2-share/config.json` naming the account, bucket and its custom domain |
 | `browser-harness` | agent-browser with its bundled Chromium; `DISPLAY` or `WAYLAND_DISPLAY` for headed login ([runtime setup](skills/browser-harness/references/runtime.md)) |
 | `public-acceptance` | `cloudflared` for anonymous Quick Tunnels |
@@ -101,7 +101,7 @@ Bun 1.3 or newer runs every script and hook entrypoint. Some skills also need ho
 
 ## Usage
 
-Ask in normal language. Name a skill when you want to require it; selection is otherwise model-driven and never guaranteed by installation alone. `agent-conduct` and `tdd` are written to activate on development work without being named.
+Ask in normal language. Name a skill when you want to require it; selection is otherwise model-driven and never guaranteed by installation alone. `agent-conduct` is written to activate at the start of every conversation (naming) and on development work, `tdd` on development work, both without being named.
 
 ```text
 Use agent-conduct to give this task its own ready-to-run worktree, and remove it once the branch is merged.
