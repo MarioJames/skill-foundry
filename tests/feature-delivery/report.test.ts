@@ -86,6 +86,42 @@ describe('HTML 验收报告渲染', () => {
     expect(ok.html).toContain('<a href="../1105-orders.html">1105-orders.html</a>');
   });
 
+  test('检查项按设计文档的场景分组，清单外问题单独成组；没有分组行时不分组', () => {
+    const root = workspace();
+    writeFileSync(join(root, 'reports/1105-orders.html'), `<table class="checklist"><tbody>
+      <tr class="group"><td colspan="4">01 · 筛出退款失败的订单 · 2 项</td></tr>
+      <tr data-check-id="A1"><td>筛选</td></tr>
+      <tr data-check-id="A2"><td class="id">A2 <span class="edge">异常场景</span></td></tr>
+      <tr class="group"><td colspan="4">不变行为 &amp; 导出 · 1 项</td></tr>
+      <tr data-check-id="A3"><td>导出</td></tr>
+    </tbody></table>`);
+    const checks = [check({ id: 'A1', expected: 'e1' }), check({ id: 'X1', title: '清单外的问题' }), check({ id: 'A3', expected: 'e3' }), check({ id: 'A2', expected: 'e2', status: 'fail' })];
+    const r = run(root, { ...result(checks), checklist: '../1105-orders.html' });
+    expect(r.code).toBe(0);
+    const at = (s: string) => { const i = r.html.indexOf(s); expect(i).toBeGreaterThan(-1); expect(r.html.indexOf(s, i + 1)).toBe(-1); return i; };
+    const order = ['>筛出退款失败的订单</h2>', 'id="check-A1"', 'id="check-A2"', '>不变行为 &amp; 导出</h2>', 'id="check-A3"', '>清单外发现</h2>', 'id="check-X1"'].map(at);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    const a2 = r.html.slice(at('id="check-A2"'), at('id="check-A3"'));
+    expect(a2).toContain('异常场景');
+    expect(r.html.slice(at('id="check-A1"'), at('id="check-A2"'))).not.toContain('异常场景');
+
+    writeFileSync(join(root, 'reports/flat.html'), '<ul><li data-check-id="A1">筛选</li></ul>');
+    const flat = run(root, { ...result([check({ id: 'A1', expected: 'e1' }), check({ id: 'X1' })]), checklist: '../flat.html' });
+    expect(flat.code).toBe(0);
+    expect(flat.html).not.toContain('清单外发现');
+    expect(flat.html.indexOf('id="check-A1"')).toBeLessThan(flat.html.indexOf('id="check-X1"'));
+  });
+
+  test('首屏列出未通过的检查项并链接到对应位置，全部通过时不出现', () => {
+    const root = workspace();
+    const mixed = run(root, result([check(), check({ id: '2', title: '失败后重试', status: 'fail' }), check({ id: '3', title: '无权限提示', status: 'skipped' })]));
+    const attention = mixed.html.slice(mixed.html.indexOf('id="attention"'), mixed.html.indexOf('</nav>'));
+    expect(attention).toContain('href="#check-2"'); expect(attention).toContain('失败后重试');
+    expect(attention).toContain('href="#check-3"'); expect(attention).toContain('无权限提示');
+    expect(attention).not.toContain('href="#check-1"');
+    expect(run(root, result([check()])).html).not.toContain('id="attention"');
+  });
+
   test('验收清单路径不存在或其中没有编号时拒绝生成', () => {
     const root = workspace();
     writeFileSync(join(root, 'reports/empty.html'), '<p>没有清单</p>');
@@ -94,6 +130,15 @@ describe('HTML 验收报告渲染', () => {
       expect(r.code).toBe(2);
       expect(JSON.parse(r.err).problems.some((p: string) => p.includes('checklist'))).toBe(true);
     }
+  });
+
+  test('报告与设计文档模板共用的色板和字体取值一致', () => {
+    const tokens = (css: string) => new Map([...css.matchAll(/(--[a-z0-9-]+):([^;}]+)/g)].map(m => [m[1], m[2].trim()]));
+    const template = tokens(readFileSync(resolve(import.meta.dir, '../../skills/feature-delivery/assets/design-template.html'), 'utf8').match(/:root\{([\s\S]*?)\n\}/)![1]);
+    const report = tokens(run(workspace(), result([check()])).html.match(/:root\{([\s\S]*?)\}/)![1]);
+    const shared = [...report.keys()].filter(k => template.has(k));
+    expect(shared).toEqual(expect.arrayContaining(['--paper', '--ink', '--line', '--card', '--accent', '--issue', '--change', '--mono', '--serif', '--sans']));
+    for (const k of shared) expect([k, report.get(k)]).toEqual([k, template.get(k)]);
   });
 
   test('检查项缺实际观察或 id 重复时拒绝生成', () => {
