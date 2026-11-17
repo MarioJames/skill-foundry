@@ -1,6 +1,6 @@
 ---
 name: agent-conduct
-description: Agent 守则，无需用户点名。会话开始或主任务切换时（含只读问答、LobeHub 聊天与任务调度发起的运行）先用 name-session.ts 按 MMDD｜TYPE｜Topic 命名当前会话：LobeHub 话题、Codex 线程，以及经 herdr 原语命名可证明归属的 Herdr 标签页。任何会在本机留下文件、进程、容器或 Git 状态的任务（写代码、跑测试、构建、验收、部署、排障）开始和收尾时使用：规定报告、证据、临时目录、worktree、分支、Docker 容器与卷、R2 分享对象、测试残留的落点和回收；需要隔离的工作树用 wt.ts 新建和回收，合入后的本地与远端分支用 branch.ts 清理，收尾用只读扫描核对本任务遗留。
+description: Agent 守则，无需用户点名。会话开始或主任务切换时（含只读问答、LobeHub 聊天与任务调度发起的运行）先用 name-session.ts 按 MMDD｜TYPE｜Topic 命名当前会话：LobeHub 话题、Codex 线程，以及经 herdr 原语命名可证明归属的 Herdr 标签页。任何会在本机留下文件、进程、容器或 Git 状态的任务（写代码、跑测试、构建、验收、部署、排障）开始和收尾时使用：规定报告、证据、临时目录、worktree、分支、Docker 容器与卷、R2 分享对象、测试残留的落点和回收；需要隔离的工作树用 wt.ts 新建和回收，合入后的本地与远端分支用 branch.ts 清理，收尾用只读扫描核对本任务遗留。向 LobeHub 社区仓库（lobehub/lobehub）提交、跟进或合并 PR 时使用：创建前经用户同意，用 community-pr.ts 判定合并门槛（最新提交上 CI 全过、Codex 评审无意见并 👍、无未解决评论）、等待状态变化、请求 Codex 复审、回复并解决评审线程，合并由用户做。
 ---
 
 # Agent 守则
@@ -8,6 +8,8 @@ description: Agent 守则，无需用户点名。会话开始或主任务切换�
 两条通用守则：会话一开始就按统一规则命名，让用户在任何宿主里都能认出它；Agent 对自己在本机留下的东西负责，用完的临时环境随手回收，有持久价值的结果放到约定位置，不给用户和下一个 Agent 留下垃圾或谜题。
 
 命名适用于所有会话，包括只读问答；其余资源规则只在任务会留下文件、进程、容器或 Git 状态时适用。
+
+向 LobeHub 社区仓库提交或跟进 PR 时，另按「社区 PR」一节执行。
 
 ## 会话命名
 
@@ -138,6 +140,25 @@ bun <skill-dir>/scripts/branch.ts --repo <仓库> [--branch <分支>]... [--remo
 | 仓库开启了「合入后自动删除 head 分支」 | 远端分支已被删除；`fetch --prune` 后只剩本地分支，照常清理 |
 | 用户要求整理整个仓库 | 不带 `--branch` 先列出，把可删除清单交给用户确认后再 `--apply` |
 | 其他情况 | 只处理本任务创建的分支。扫描列出的其他已合入分支，在回复里提一句，不要顺手删除 |
+
+## 社区 PR
+
+向 LobeHub 社区仓库（`lobehub/lobehub`）提交、跟进或合并 PR 前，读 [社区 PR：从创建到合并](references/community-pr.md)，每种状况的处理以它为准。任何时候都成立的几条：
+
+- **创建前经用户同意，合并由用户做。** 用户在本次对话里点名授权时才代为合并。
+- **自己开的 PR 盯到合并或关闭。** 用 `watch` 等待，不自写轮询脚本。
+- **能不能合并只认 `check`。** 最新提交上 CI 全部通过、Codex 评审无意见并 👍、没有未解决的评审线程和待回应的人工评论，三项同时成立；之前提交上的 👍、本地测试和其他 Agent 的审查都不算。
+- **每次推送后请求 Codex 复审。** Codex 不会自动评审新提交。
+- **公开内容一律英文，只写社区版的事。** 标题、正文、评论和回复都是公开发布，不带内部、客户或租户的内容。
+
+```bash
+bun <skill-dir>/scripts/community-pr.ts check <PR 号或链接>
+bun <skill-dir>/scripts/community-pr.ts watch <PR 号或链接> [--until merged]
+bun <skill-dir>/scripts/community-pr.ts request-review <PR 号或链接>
+bun <skill-dir>/scripts/community-pr.ts reply <PR 号或链接> --thread <线程 ID> --body-file <文件> [--resolve]
+```
+
+`check` 只读，逐项列出 PR 形态、冲突、CI、Codex、评审线程、人工评论和公开内容的状态；退出码 0 表示达到门槛或已合并，10 有事项要处理，11 仍在等待，12 未合并就被关闭。`--help` 查看全部参数。
 
 ## 收尾回收
 
