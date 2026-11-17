@@ -115,6 +115,57 @@ table.wf tr:last-child td{border-bottom:0}
 .note{display:grid;grid-template-columns:22px 1fr;gap:8px;margin-bottom:8px;font-size:13px;color:var(--ink2)}
 .note b{color:var(--ink)}
 
+/* 页面外壳：产品真实的菜单与页面布局，功能模块画在内容区的实际位置；产品线有标准模板时整段换成模板里的外壳 */
+.shell{display:flex;min-height:440px;background:#fff;font-size:12.5px}
+.shell>aside{flex:none}
+.shell-rail{width:46px;border-right:1.5px solid var(--line);background:#faf9f5;padding:12px 0;display:flex;flex-direction:column;align-items:center;gap:12px}
+.shell-rail i{display:block;width:22px;height:22px;border:1.5px solid var(--ink3);border-radius:6px}
+.shell-rail i.on{background:var(--ink);border-color:var(--ink)}
+.shell-rail .gap{flex:1}
+.shell-side{width:196px;border-right:1.5px solid var(--line);background:#faf9f5;padding:12px 10px;display:flex;flex-direction:column;gap:1px}
+.shell-brand{display:flex;align-items:center;gap:6px;font:700 13.5px/1.2 var(--serif);padding:2px 6px 12px}
+.shell-brand small{font:400 11.5px var(--sans);color:var(--ink3)}
+.shell-group{font:11px/1 var(--mono);color:var(--ink3);padding:12px 8px 5px}
+.shell-item{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;color:var(--ink2);white-space:nowrap}
+.shell-item::before{content:"";flex:none;width:12px;height:12px;border:1.2px solid var(--ink3);border-radius:3px}
+.shell-item.on{background:#ebe8de;color:var(--ink);font-weight:600}
+.shell-item.on::before{background:var(--ink);border-color:var(--ink)}
+.shell-foot{margin-top:auto;display:flex;align-items:center;gap:8px;padding:12px 6px 2px;border-top:1px dashed var(--line);color:var(--ink2)}
+.shell-foot::before{content:"";flex:none;width:22px;height:22px;border-radius:50%;border:1.5px solid var(--ink3)}
+.shell-main{flex:1;display:flex;flex-direction:column;min-width:0}
+.shell-top{display:flex;align-items:center;gap:10px;padding:9px 18px;border-bottom:1px solid var(--line2);color:var(--ink3)}
+.shell-top b{color:var(--ink);font-weight:600}
+.shell-head{display:flex;align-items:flex-start;gap:12px;padding:16px 18px 0}
+.shell-head .title{flex:1;min-width:0}
+.shell-head h4{font:700 17px/1.3 var(--serif);margin:0}
+.shell-head p{margin:3px 0 0;color:var(--ink3)}
+.shell-tabs{display:flex;gap:18px;margin:12px 18px 0;border-bottom:1px solid var(--line2)}
+.shell-tabs span{padding:0 1px 8px;color:var(--ink2)}
+.shell-tabs span.on{color:var(--ink);font-weight:600;box-shadow:inset 0 -2px 0 var(--ink)}
+.shell-body{flex:1;padding:14px 18px 18px;min-width:0}
+/* 抽屉与弹窗：作为 .shell 的直接子元素，画在它所在的整页上 */
+.shell{position:relative}
+.shell-mask{position:absolute;inset:0;background:rgba(31,31,28,.22);z-index:3}
+.shell-drawer,.shell-dialog{position:absolute;z-index:4;background:#fff;border:1.5px solid var(--ink);display:flex;flex-direction:column}
+.shell-drawer{top:0;right:0;bottom:0;width:min(440px,55%);border-width:0 0 0 1.5px}
+.shell-dialog{top:56px;left:50%;transform:translateX(-50%);width:min(460px,70%);border-radius:6px;box-shadow:5px 5px 0 rgba(31,31,28,.12)}
+.pane-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line2);font-weight:600}
+.pane-body{flex:1;padding:14px 16px}
+.pane-foot{display:flex;justify-content:flex-end;gap:8px;padding:10px 16px;border-top:1px solid var(--line2)}
+.shell-ghost{border:1.5px dashed var(--line);border-radius:4px;padding:10px;color:var(--ink3);background:repeating-linear-gradient(-45deg,#fff,#fff 6px,#faf9f5 6px,#faf9f5 12px)}
+
+/* 页面全景：整页大图按操作顺序纵向排列，流程线从触发元素连到下一张图；窄屏横向滚动，不缩小 */
+.journey-scroll{overflow-x:auto;padding-bottom:6px}
+.journey{position:relative;min-width:980px;padding:4px 48px 4px 4px;display:flex;flex-direction:column;gap:30px}
+.journey>figure{margin:0}
+.journey figcaption{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:13px;color:var(--ink2)}
+.journey figcaption b{color:var(--ink)}
+.journey svg.flow-lines{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;z-index:5}
+.flow-lines path{fill:none;stroke:var(--accent);stroke-width:2;stroke-dasharray:6 4}
+.flow-lines marker path{fill:var(--accent);stroke:none}
+[data-go]{outline:2px solid var(--accent);outline-offset:2px}
+.step-pin{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 5px;border-radius:999px;background:var(--accent);color:#fff;font:700 11px/1 var(--mono);vertical-align:1px}
+
 /* 验收清单 */
 .checklist{width:100%;border-collapse:collapse;background:var(--card);border:1.5px solid var(--ink)}
 .checklist th,.checklist td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line2);font-size:13px;vertical-align:top}
@@ -157,6 +208,7 @@ footer{padding:36px 0 56px;color:var(--ink3);font:12px/1.6 var(--mono)}
 <nav class="toc"><div class="wrap">
   <a href="#decisions"><b>D</b>待拍板</a>
   <a href="#overview"><b>00</b>功能示意</a>
+  <a href="#journey"><b>P</b>页面全景</a>
   <a href="#s1"><b>01</b>按退款状态筛选</a>
   <a href="#checklist"><b>✓</b>验收清单</a>
 </div></nav>
@@ -183,6 +235,83 @@ footer{padding:36px 0 56px;color:var(--ink3);font:12px/1.6 var(--mono)}
   </div>
 </section>
 
+<!-- 页面全景：前端改动必有。整页大图放在产品真实的外壳里（菜单、页头、页签），功能模块画在实际位置；
+     按操作顺序每一步一张图，触发元素加 data-go="下一张图的 id"，流程线自动从它连到下一张图；标题里的步骤号与触发元素旁的号一致。
+     产品线有标准页面模板时，外壳从模板复制，只改当前菜单高亮和内容区。 -->
+<section class="block" id="journey">
+  <div class="sec-head"><span class="sec-no">P</span><h2>页面全景：从菜单到筛出订单</h2></div>
+  <p class="sec-desc">功能在「订单管理 / 订单列表」的筛选栏下方；客服从左侧菜单进入，点状态标签即在当前页筛出结果。</p>
+  <div class="journey-scroll"><div class="journey" data-journey>
+    <figure id="p1">
+      <figcaption><span class="step-pin">1</span><b>订单列表</b>从左侧「订单管理 / 订单列表」进入，点「退款失败」</figcaption>
+      <div class="frame">
+        <div class="frame-bar"><span class="app">商家后台</span><span class="url">/orders</span></div>
+        <div class="shell">
+          <aside class="shell-side">
+            <div class="shell-brand">示例商城 <small>商家后台</small></div>
+            <div class="shell-group">交易</div>
+            <div class="shell-item">数据概览</div>
+            <div class="shell-item on">订单管理</div>
+            <div class="shell-item">售后服务</div>
+            <div class="shell-group">商品</div>
+            <div class="shell-item">商品列表</div>
+            <div class="shell-item">库存</div>
+            <div class="shell-group">设置</div>
+            <div class="shell-item">店铺设置</div>
+            <div class="shell-foot">客服 · 小周</div>
+          </aside>
+          <div class="shell-main">
+            <div class="shell-top">订单管理 / <b>订单列表</b></div>
+            <div class="shell-head"><div class="title"><h4>订单列表</h4><p>查看和处理店铺订单</p></div><span class="btn">导出</span></div>
+            <div class="shell-tabs"><span class="on">订单列表</span><span>发货单</span><span>评价</span></div>
+            <div class="shell-body">
+              <div class="toolbar"><input class="input" value="搜索订单号或买家" readonly style="width:180px"><span class="btn">下单日期 ▾</span></div>
+              <div class="mk change"><span class="pin">2</span>
+                <div class="chips"><span class="chip">全部</span><span class="chip">待退款</span><span class="chip">退款中</span><span class="chip">已退款</span><span class="chip" data-go="p2">退款失败 (1)</span></div>
+              </div>
+              <div class="tablewrap"><table class="wf">
+                <thead><tr><th>订单号</th><th>买家</th><th>金额</th><th>状态</th></tr></thead>
+                <tbody>
+                  <tr><td class="mono">SO-240611-0832</td><td>王**</td><td>¥129.00</td><td><span class="tag">已完成</span></td></tr>
+                  <tr><td class="mono">SO-240611-0827</td><td>李**</td><td>¥58.50</td><td><span class="tag no">退款失败</span></td></tr>
+                  <tr><td class="mono">SO-240611-0819</td><td>陈**</td><td>¥310.00</td><td><span class="tag info">退款中</span></td></tr>
+                </tbody>
+              </table></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </figure>
+    <figure id="p2">
+      <figcaption><span class="step-pin">2</span><b>筛选结果</b>同一页只留退款失败的订单，URL 带 refund=failed</figcaption>
+      <div class="frame">
+        <div class="frame-bar"><span class="app">商家后台</span><span class="url">/orders?refund=failed</span></div>
+        <div class="shell" style="min-height:0">
+          <aside class="shell-side">
+            <div class="shell-brand">示例商城 <small>商家后台</small></div>
+            <div class="shell-group">交易</div>
+            <div class="shell-item">数据概览</div>
+            <div class="shell-item on">订单管理</div>
+            <div class="shell-item">售后服务</div>
+            <div class="shell-foot">客服 · 小周</div>
+          </aside>
+          <div class="shell-main">
+            <div class="shell-top">订单管理 / <b>订单列表</b></div>
+            <div class="shell-body">
+              <div class="chips" style="margin-bottom:10px"><span class="chip">全部</span><span class="chip">待退款</span><span class="chip">退款中</span><span class="chip">已退款</span><span class="chip on">退款失败 (1)</span></div>
+              <div class="tablewrap"><table class="wf">
+                <thead><tr><th>订单号</th><th>买家</th><th>金额</th><th>状态</th></tr></thead>
+                <tbody><tr><td class="mono">SO-240611-0827</td><td>李**</td><td>¥58.50</td><td><span class="tag no">退款失败</span></td></tr></tbody>
+              </table></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </figure>
+  </div></div>
+  <div class="notes"><div class="note change"><span class="pin">2</span><div><b>状态标签筛选</b>放在关键词与日期筛选下方，详见场景 01。</div></div></div>
+</section>
+
 <!-- 场景：编号标题 + 一两句描述（谁、什么情况、遇到什么）+ 左现状右改后 + 编号旁注 + 可选的不变行为注释 -->
 <section class="block" id="s1">
   <div class="sec-head"><span class="sec-no">01</span><h2>客服筛出退款失败的订单</h2></div>
@@ -191,7 +320,7 @@ footer{padding:36px 0 56px;color:var(--ink3);font:12px/1.6 var(--mono)}
     <div>
       <div class="col-label before">现状 <span>只能按关键词和日期筛</span></div>
       <div class="frame">
-        <div class="frame-bar"><span class="app">商家后台</span><span class="url">/orders</span></div>
+        <div class="frame-bar"><span class="app">商家后台 · 订单管理</span><span class="url">/orders</span></div>
         <div class="frame-body">
           <div class="mk issue"><span class="pin">1</span>
             <div class="toolbar" style="margin:0"><input class="input" value="搜索订单号或买家" readonly style="width:150px"><span class="btn">下单日期 ▾</span><span class="grow"></span><span class="btn">导出</span></div>
@@ -211,7 +340,7 @@ footer{padding:36px 0 56px;color:var(--ink3);font:12px/1.6 var(--mono)}
     <div>
       <div class="col-label after">改后 <span>新增退款状态标签筛选</span></div>
       <div class="frame">
-        <div class="frame-bar"><span class="app">商家后台</span><span class="url">/orders?refund=failed</span></div>
+        <div class="frame-bar"><span class="app">商家后台 · 订单管理</span><span class="url">/orders?refund=failed</span></div>
         <div class="frame-body">
           <div class="toolbar"><input class="input" value="搜索订单号或买家" readonly style="width:150px"><span class="btn">下单日期 ▾</span><span class="grow"></span><span class="btn">导出</span></div>
           <div class="mk change"><span class="pin">2</span>
@@ -248,5 +377,23 @@ footer{padding:36px 0 56px;color:var(--ink3);font:12px/1.6 var(--mono)}
 </main>
 
 <footer class="wrap">文件位置：&lt;工作区根&gt;/reports/&lt;MMDD&gt;-&lt;主题&gt;.html · 不入仓库 · 示意线框，非最终视觉稿</footer>
+<script>
+/* 流程线：从带 data-go 的触发元素经右侧走线连到目标图的标题；布局变化时重画。没有触发元素的页面不做任何事。 */
+(()=>{const NS='http://www.w3.org/2000/svg';
+const draw=j=>{let svg=j.querySelector(':scope>svg.flow-lines');
+if(!svg){svg=document.createElementNS(NS,'svg');svg.setAttribute('class','flow-lines');j.prepend(svg)}
+const id='ah'+[...document.querySelectorAll('[data-journey]')].indexOf(j);
+svg.innerHTML=`<defs><marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z"/></marker></defs>`;
+const o=j.getBoundingClientRect();
+[...j.querySelectorAll('[data-go]')].forEach((el,i)=>{const t=document.getElementById(el.dataset.go);if(!t)return;
+const a=el.getBoundingClientRect(),b=(t.querySelector('figcaption')||t).getBoundingClientRect();
+const x1=a.right-o.left,y1=a.top+a.height/2-o.top,gx=o.width-16-i*8,y2=b.top+b.height/2-o.top,x2=b.right-o.left+6,r=8,dy=y2>y1?r:-r;
+const p=document.createElementNS(NS,'path');
+p.setAttribute('d',`M${x1+4} ${y1}H${gx-r}Q${gx} ${y1} ${gx} ${y1+dy}V${y2-dy}Q${gx} ${y2} ${gx-r} ${y2}H${x2}`);
+p.setAttribute('marker-end',`url(#${id})`);svg.append(p)})};
+const all=()=>document.querySelectorAll('[data-journey]').forEach(draw);
+addEventListener('load',all);document.fonts&&document.fonts.ready.then(all);
+if(window.ResizeObserver)document.querySelectorAll('[data-journey]').forEach(j=>new ResizeObserver(all).observe(j));})();
+</script>
 </body>
 </html>
