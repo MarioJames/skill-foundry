@@ -168,7 +168,6 @@ export function render(data: Result, list?: Checklist) {
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(data.title)}</title>
 <style>${CSS}</style>
 </head>
@@ -320,24 +319,6 @@ aside{padding:22px 20px;border-left:1.5px solid var(--ink);overflow:auto}
 .lb-tools button,.lb-raw{font:12.5px/1 var(--sans);border:1.5px solid var(--ink);background:#fff;color:var(--ink);padding:7px 11px;border-radius:4px;cursor:pointer;text-decoration:none}
 .lb-tools button:disabled{opacity:.35;cursor:default}
 
-@media (max-width:760px){
-  .pair{grid-template-columns:minmax(0,1fr)}
-  .pair>.exp{padding:0 0 10px}
-  .pair>.exp+.act{padding:10px 0 0;border-left:0;border-top:1px dashed var(--line)}
-  dialog[open]{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) auto}
-  aside{border-left:0;border-top:1.5px solid var(--ink);max-height:45vh}
-}
-@media (max-width:600px){
-  h1{font-size:25px}
-  .wrap{padding:0 12px}
-  .hero-top{grid-template-columns:minmax(0,1fr)}
-  .stamp{justify-self:start;margin:16px 0 4px 4px;transform:rotate(-2deg);padding:7px 14px 6px}
-  .stamp b{font-size:22px}
-  .check{grid-template-columns:minmax(0,1fr);padding:12px}
-  .side{flex-direction:row;align-items:center;gap:10px}
-  .attention a{grid-template-columns:auto auto minmax(0,1fr)}
-  .tally{margin-left:0}
-}
 @media print{
   body{background:#fff}nav.toc{position:static}dialog{display:none!important}
   .check,figure{break-inside:avoid}figure img{height:auto;max-height:420px;object-fit:contain}

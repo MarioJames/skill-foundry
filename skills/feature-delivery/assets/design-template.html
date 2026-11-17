@@ -2,7 +2,6 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- 设计文档模板：保留 <style> 与区块结构，替换为本次调研得到的真实数据和文案；不需要的区块整块删除。用法见 references/design.md。 -->
 <title>订单列表按退款状态筛选 · 设计</title>
 <style>
@@ -154,7 +153,7 @@ table.wf tr:last-child td{border-bottom:0}
 .pane-foot{display:flex;justify-content:flex-end;gap:8px;padding:10px 16px;border-top:1px solid var(--line2)}
 .shell-ghost{border:1.5px dashed var(--line);border-radius:4px;padding:10px;color:var(--ink3);background:repeating-linear-gradient(-45deg,#fff,#fff 6px,#faf9f5 6px,#faf9f5 12px)}
 
-/* 页面全景：整页大图按操作顺序纵向排列，流程线从触发元素连到下一张图；窄屏横向滚动，不缩小 */
+/* 页面全景：整页大图按操作顺序纵向排列，流程线从触发元素连到下一张图 */
 .journey-scroll{overflow-x:auto;padding-bottom:6px}
 .journey{position:relative;min-width:980px;padding:4px 48px 4px 4px;display:flex;flex-direction:column;gap:30px}
 .journey>figure{margin:0}
@@ -175,23 +174,6 @@ table.wf tr:last-child td{border-bottom:0}
 .edge{display:inline-block;margin-left:4px;font:600 10.5px/1 var(--sans);padding:3px 5px;border-radius:3px;color:var(--issue);border:1px solid var(--issue)}
 
 footer{padding:36px 0 56px;color:var(--ink3);font:12px/1.6 var(--mono)}
-
-@media (max-width:920px){
-  .compare{grid-template-columns:minmax(0,1fr)}
-  .flow{grid-template-columns:1fr 1fr;gap:12px}
-  .flow .step{margin-right:0}
-  .flow .step::after,.flow .step::before{display:none}
-}
-@media (max-width:600px){
-  h1{font-size:25px}
-  .wrap{padding:0 12px}
-  .flow{grid-template-columns:1fr}
-  .checklist thead{display:none}
-  .checklist,.checklist tbody,.checklist tr,.checklist td{display:block;width:100%}
-  .checklist tr[data-check-id]{border-bottom:1.5px solid var(--line);padding:6px 0}
-  .checklist tr[data-check-id] td{border:0;padding:3px 10px}
-  .checklist tr[data-check-id] td::before{content:attr(data-label);display:block;font:600 11px var(--mono);color:var(--ink3)}
-}
 </style>
 </head>
 <body>
@@ -365,11 +347,11 @@ footer{padding:36px 0 56px;color:var(--ink3);font:12px/1.6 var(--mono)}
     <thead><tr><th>编号</th><th>操作与前置条件</th><th>预期</th><th>验证</th></tr></thead>
     <tbody>
       <tr class="group"><td colspan="4">01 · 客服筛出退款失败的订单 · 3 项</td></tr>
-      <tr data-check-id="A1"><td class="id" data-label="编号">A1</td><td data-label="操作与前置条件">列表含 1 条退款失败订单，点击「退款失败」</td><td data-label="预期">只显示 SO-240611-0827，标签计数为 1，URL 带 refund=failed</td><td data-label="验证">浏览器</td></tr>
-      <tr data-check-id="A2"><td class="id" data-label="编号">A2 <span class="edge">异常场景</span></td><td data-label="操作与前置条件">选「已退款」且无匹配订单</td><td data-label="预期">显示空态与「清除筛选」，点击后恢复全部 24 条</td><td data-label="验证">浏览器</td></tr>
-      <tr data-check-id="A3"><td class="id" data-label="编号">A3</td><td data-label="操作与前置条件">筛选后刷新页面</td><td data-label="预期">仍选中「退款失败」，结果不变</td><td data-label="验证">浏览器</td></tr>
+      <tr data-check-id="A1"><td class="id">A1</td><td>列表含 1 条退款失败订单，点击「退款失败」</td><td>只显示 SO-240611-0827，标签计数为 1，URL 带 refund=failed</td><td>浏览器</td></tr>
+      <tr data-check-id="A2"><td class="id">A2 <span class="edge">异常场景</span></td><td>选「已退款」且无匹配订单</td><td>显示空态与「清除筛选」，点击后恢复全部 24 条</td><td>浏览器</td></tr>
+      <tr data-check-id="A3"><td class="id">A3</td><td>筛选后刷新页面</td><td>仍选中「退款失败」，结果不变</td><td>浏览器</td></tr>
       <tr class="group"><td colspan="4">不变行为 · 1 项</td></tr>
-      <tr data-check-id="A4"><td class="id" data-label="编号">A4</td><td data-label="操作与前置条件">选「退款失败」后点击导出</td><td data-label="预期">导出文件只含 1 条订单</td><td data-label="验证">接口 / 数据核对</td></tr>
+      <tr data-check-id="A4"><td class="id">A4</td><td>选「退款失败」后点击导出</td><td>导出文件只含 1 条订单</td><td>接口 / 数据核对</td></tr>
     </tbody>
   </table>
 </section>

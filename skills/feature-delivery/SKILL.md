@@ -1,6 +1,6 @@
 ---
 name: feature-delivery
-description: 功能从设计到验收的全程技能：新功能或有取舍的改动先调研现有能力，用真实数据按场景左右对比现状与改后，做成 HTML 设计 Demo，只把需要用户拍板的点交给用户，并在设计环节定下验收清单；实现时应用工程偏好、检查交互状态与恢复路径，结合脚本扫描和重点审查；验收按清单逐项执行，交付可点开放大证据的 HTML 报告，设计文档和报告上传 R2 给出手机可开的公网链接，并将纠偏按归属沉淀到技能或项目门禁。与 lobe-design 分工，可独立使用或与 browser-harness 协同。
+description: 功能从设计到验收的全程技能：新功能或有取舍的改动先调研现有能力，用真实数据按场景左右对比现状与改后，做成 HTML 设计 Demo，只把需要用户拍板的点交给用户，并在设计环节定下验收清单；实现时应用工程偏好、检查交互状态与恢复路径，结合脚本扫描和重点审查；验收按清单逐项执行，交付可点开放大证据的 HTML 报告，设计文档和报告上传 R2 给出公网链接，并将纠偏按归属沉淀到技能或项目门禁。与 lobe-design 分工，可独立使用或与 browser-harness 协同。
 ---
 
 # Feature Delivery
@@ -52,7 +52,7 @@ bun "$FD_DIR/scripts/accept.ts" scan --project "$PROJECT" --base "$BASE_COMMIT"
 
 ## 分享链接
 
-用户常在手机上查看，设计文档和 HTML 验收报告交付时上传到 R2，回复里同时给公网链接和本地路径：
+设计文档和 HTML 验收报告只做桌面版式，不做手机端样式；交付时上传到 R2，回复里同时给公网链接和本地路径：
 
 ```bash
 bun "$FD_DIR/scripts/share.ts" upload --file "<工作区根>/reports/<文件>.html" --task <任务名> [--name <名称>] [--mission <主任务>] [--public] [--release-when <释放条件>]
