@@ -36,7 +36,13 @@ bun <skill-dir>/scripts/community-pr.ts check <PR>
 
 ## 跟进
 
-用 `watch` 等待，它在有事要处理、达到门槛、被合并或关闭时退出；放在后台运行，退出码 11 表示超时，重新启动即可。不写自己的轮询脚本，不用 `sleep` 循环。
+用 `watch` 等待，它在有事要处理、达到门槛、被合并或关闭时退出；退出码 11 表示超时，重新启动即可。不写自己的轮询脚本，不用 `sleep` 循环。
+
+**`watch` 退出并处理完之前，不结束本轮回复。** 本轮一结束就没人读 `watch` 的退出结果：Codex（包括在 LobeHub 里运行的 Codex）在后台进程退出时不会唤醒你，评审意见到了也只会躺在那里，直到用户来问。所以：
+
+- 只有宿主保证进程退出时会唤醒你，才把 `watch` 放后台并结束本轮，例如 Claude Code 的 `run_in_background`。
+- 其他宿主一律前台运行，并持续读取输出直到进程退出。Codex 的做法是用 `write_stdin` 空输入反复轮询同一个会话。等待期间可以发进度说明，但不发最终回复，也不写「后台已启动跟踪」这类收尾。
+- 只在下列情况结束本轮：`ready`（交用户合并）、`closed`、本文规定要停下交用户裁定的情况，以及需要用户拍板方向或范围的评论。
 
 ```bash
 bun <skill-dir>/scripts/community-pr.ts watch <PR>                  # 等到有事或达到门槛
@@ -51,7 +57,7 @@ bun <skill-dir>/scripts/community-pr.ts watch <PR> --until merged   # 达到门�
 | `comments` 待回应 | 回复对方的问题。涉及方向或范围取舍的先问用户。人工评审者开的线程回复后不加 `--resolve`，留给对方关闭 |
 | `mergeable` 有冲突 | 把最新 `canary` 合并进分支后推送。PR 以 squash 合入，不需要 rebase，也不强推 |
 | `content` 需要修改 | 标题和正文用 `gh pr edit <PR> --title … --body-file …`；评论用 `gh api -X PATCH repos/<owner>/<repo>/issues/comments/<id> -F body=@<文件>`，线程里的回复把 `issues/comments` 换成 `pulls/comments` |
-| `ready` | 把 PR 链接和 `check` 输出交给用户合并，然后 `watch --until merged` |
+| `ready` | 把 PR 链接和 `check` 输出交给用户合并。宿主能在进程退出时唤醒你，就在后台运行 `watch --until merged`；不能就结束本轮，下次回到这个会话时先运行 `check`，已合并就按下一行回收 |
 | `merged` | 用 `wt.ts remove` 回收 worktree 和本地分支；远端分支还在时用 `branch.ts` 清理 |
 | `closed` | 停下，把关闭的情况告诉用户，不重开、不另建 PR |
 
