@@ -11,6 +11,13 @@ export AGENT_BROWSER_PROFILE="$(bun "$BH_DIR/bh.ts" profile-dir)"
 
 在本机 agent-browser 0.34 的实际验收中，open 带 profile、下一条 snapshot 不带时会切换到空白页。通过上述环境变量或每条命令传入同一 `--profile` 避免重启；采证后读回 DOM 的真实 origin 与交互结果，不能只看 summary 中的目标 URL。
 
+## 目录
+
+- [一次性烟测](#一次性烟测)
+- [交互后采证](#交互后采证)
+- [元素与请求定位](#元素与请求定位)
+- [证据文件](#证据文件)
+
 ## 一次性烟测
 
 ```bash
@@ -70,6 +77,23 @@ agent-browser click "@e3"                            # 触发跳转
 agent-browser wait --text "目标文案"                 # 等页面稳定
 agent-browser screenshot --annotate step.png
 ```
+
+### 内滚边界与原生滚轮落点
+
+验收滚动衔接时，不能仅设置 `scrollTop` 后宣称滚轮／触摸可用。先确认指针位于目标内滚区、内层已在边界，发送原生输入，再核对外层滚动变化与事件实际目标。
+
+本机 `agent-browser 0.34.0` 实测：`mouse move` 后执行 `mouse wheel`（含 batch）仍把可信 wheel 发到 `(0,0)`，可能完全没滚，或滚了别的区域。先记录事件 `clientX/clientY` 与目标，确认命中这一版本问题时，用**同一命名 session** 的原生 stream 显式指定坐标，不换 CDP／profile：
+
+1. `agent-browser stream status --json` 取得 `data.port`；只连接它返回的本任务本机端口。
+2. 用 Bun WebSocket 向 `ws://127.0.0.1:<port>` 发送：
+
+   ```json
+   {"type":"input_mouse","eventType":"mouseWheel","x":200,"y":500,"deltaX":0,"deltaY":50}
+   ```
+
+3. 留证：发送前 `elementFromPoint(x,y)` 属于目标滚动区、内层 `scrollTop` 等于最大值；事件 `isTrusted=true` 且目标仍属于该区；发送后外层 `scrollTop` 确实变化。坐标取当前布局中的实际落点，不照抄示例。发送完关闭这个临时 WebSocket，不影响原浏览器 session。
+
+2026-11-17 已在 390px 真实页面验证：可信事件命中树内 BUTTON，内层处于末端，外层 main 从 0 滚到 50。大滚动量可能让事件处理时的 hit-test 已落到下方内容，复验用小增量并同时记录前后几何。该记录只适用于已复现的 0.34.0 行为，其他版本先测，不默认回退。
 
 ### 网络深挖
 

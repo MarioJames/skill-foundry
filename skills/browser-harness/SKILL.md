@@ -1,6 +1,6 @@
 ---
 name: browser-harness
-description: 验收前端页面：准备服务和登录态，通过 agent-browser 交互、采集证据并清理资源。
+description: 前端变更（包括样式、文案或交互小修复）完成后做真实浏览器验收时使用，也用于验证用户指定的页面或原型。准备服务和登录态，通过 agent-browser 交互、采证并清理资源。
 ---
 
 # Browser Harness
@@ -72,6 +72,7 @@ agent-browser close
 ## 按需分支
 
 - 登录、多账号、profile 复用：[登录态](references/login.md)。
-- 点击/填写/截图、网络深挖、证据结构：[交互采证](references/interaction-evidence.md)。
+- 点击/填写/截图、网络深挖、证据结构：[交互采证](references/interaction-evidence.md)。内滚边界或 `mouse wheel` 未命中目标时，读其中的「内滚边界与原生滚轮落点」。
 - 用户要求远程走查、保留服务或启动并发布：[远程流程](references/remote-review.md)。创建公网仍须用户授权，已有授权不重复问；加载 public-acceptance，复用同一 tunnel。启动获得地址立即交付，不把探活作为启动条件。
 - 依赖、dispatcher 定位、自定义服务、macOS、清理故障：[平台排障](references/runtime.md)。
+- Vite 刷新提示缺少 default 导出但磁盘源码完整：[HMR 空模块](references/runtime.md#文件写入期的-hmr-空模块)。
