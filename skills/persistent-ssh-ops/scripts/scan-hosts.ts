@@ -176,9 +176,65 @@ export function filterServerProfiles(records: DiscoveryRecord[]): ServerProfile[
   return discovered.sort((left, right) => left.name.localeCompare(right.name, "en"));
 }
 
+export interface Resolution {
+  target: string;
+  kind: "profile" | "alias" | "openssh";
+  /** Start this exact command in a TTY; do not rebuild it from other fields. */
+  command: string;
+  tty: true;
+  shape?: Record<string, string[]>;
+  note?: string;
+}
+
+const SAFE_OPENSSH_HOST = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const SHAPE_KEYS = new Set(["hostname", "user", "port", "proxyjump", "identityfile"]);
+
+/** Non-secret connection shape of an OpenSSH host alias, read without connecting. */
+export function opensshShape(host: string): Record<string, string[]> | null {
+  const result = Bun.spawnSync(["ssh", "-G", host], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+  if (result.exitCode !== 0) return null;
+  const shape: Record<string, string[]> = {};
+  for (const line of result.stdout.toString().split("\n")) {
+    const space = line.indexOf(" ");
+    const key = line.slice(0, space);
+    if (space > 0 && SHAPE_KEYS.has(key)) (shape[key] ??= []).push(line.slice(space + 1));
+  }
+  return shape;
+}
+
+/** A registered profile wins over a legacy alias of the same name; anything else is tried as an OpenSSH Host alias. */
+export function resolveTarget(
+  target: string,
+  profiles: ServerProfile[],
+  aliases: HostAlias[],
+  shell: string,
+  shapeOf: (host: string) => Record<string, string[]> | null = opensshShape,
+): Resolution {
+  if (profiles.some(({ name }) => name === target)) {
+    return { target, kind: "profile", command: `"$HOME/.config/zsh/server-runtime.zsh" ${target}`, tty: true };
+  }
+  if (aliases.some(({ alias }) => alias === target)) {
+    return { target, kind: "alias", command: `${shellQuote(shell)} -lic ${shellQuote(target)}`, tty: true };
+  }
+  if (!SAFE_OPENSSH_HOST.test(target)) throw new Error(`not a registered profile, a scanned alias or a valid host alias: ${target}`);
+  const shape = shapeOf(target);
+  if (!shape) throw new Error(`ssh -G failed for ${target}`);
+  const configured = shape.hostname?.[0] !== target || Boolean(shape.proxyjump);
+  return {
+    target,
+    kind: "openssh",
+    command: `ssh ${target}`,
+    tty: true,
+    shape,
+    ...(configured ? {} : { note: "No OpenSSH Host entry rewrites this name: confirm the host with the user before connecting." }),
+  };
+}
+
 function printHelp(): void {
-  console.log("Usage: bun scan-hosts.ts");
+  console.log("Usage: bun scan-hosts.ts [--target <name>]");
   console.log("Discover server_ssh profiles and legacy SSH aliases from the configured login shell.");
+  console.log("--target resolves one name and prints only the exact command to start in a TTY:");
+  console.log("  a registered profile, else a scanned alias, else an OpenSSH Host alias with its non-secret shape.");
 }
 
 export function main(args: string[] = Bun.argv.slice(2)): number {
@@ -186,7 +242,8 @@ export function main(args: string[] = Bun.argv.slice(2)): number {
     printHelp();
     return 0;
   }
-  if (args.length > 0) {
+  const target = args.length === 2 && args[0] === "--target" ? args[1] : null;
+  if (args.length > 0 && target === null) {
     console.error(`scan-hosts: unexpected argument: ${args[0]}`);
     return 2;
   }
@@ -194,12 +251,18 @@ export function main(args: string[] = Bun.argv.slice(2)): number {
   try {
     const shell = loginShell();
     const discovery = effectiveDiscovery(shell);
+    const profiles = filterServerProfiles(discovery);
+    const aliases = filterHostAliases(discovery);
+    if (target !== null) {
+      console.log(JSON.stringify(resolveTarget(target, profiles, aliases, shell), null, 2));
+      return 0;
+    }
     const output = {
       schema_version: 2,
       shell,
       runtime_status: discovery.find(({ kind }) => kind === "status")!.value.split(":")[0],
-      server_profiles: filterServerProfiles(discovery),
-      host_aliases: filterHostAliases(discovery),
+      server_profiles: profiles,
+      host_aliases: aliases,
     };
     console.log(JSON.stringify(output, null, 2));
     return 0;

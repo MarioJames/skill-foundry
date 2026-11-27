@@ -10,6 +10,7 @@ import {
   filterServerProfiles,
   parseDiscoveryStream,
   effectiveDiscovery,
+  resolveTarget,
 } from "../../skills/persistent-ssh-ops/scripts/scan-hosts.ts";
 import { initializeServerConfig } from "../../skills/persistent-ssh-ops/scripts/init-server-config.ts";
 
@@ -42,6 +43,31 @@ describe("scan-hosts", () => {
       { alias: "jump", transport: "autossh", command: "autossh -M 0 jump.example" },
       { alias: "prod", transport: "ssh", command: "command ssh prod.example" },
     ]);
+  });
+
+  test("resolves a target to the exact command to start: profile, then alias, then OpenSSH host", () => {
+    const profiles = [{ name: "prodhost", uri: "ssh://root@203.0.113.10:22" }];
+    const aliases = [
+      { alias: "prodhost", transport: "ssh" as const, command: "ssh other.example" },
+      { alias: "jump", transport: "autossh" as const, command: "autossh -M 0 jump.example" },
+    ];
+    const shape = (host: string): Record<string, string[]> =>
+      host === "configured" ? { hostname: ["10.0.0.5"], user: ["deploy"] } : { hostname: [host] };
+
+    // A registered profile wins over a legacy alias with the same name and never exposes its URI as a command.
+    expect(resolveTarget("prodhost", profiles, aliases, "/bin/zsh", shape)).toEqual({
+      target: "prodhost", kind: "profile", command: '"$HOME/.config/zsh/server-runtime.zsh" prodhost', tty: true,
+    });
+    // A legacy alias runs by name through the login shell, not by its expansion.
+    expect(resolveTarget("jump", profiles, aliases, "/bin/zsh", shape)).toEqual({
+      target: "jump", kind: "alias", command: "'/bin/zsh' -lic 'jump'", tty: true,
+    });
+    expect(resolveTarget("configured", profiles, aliases, "/bin/zsh", shape)).toEqual({
+      target: "configured", kind: "openssh", command: "ssh configured", tty: true, shape: { hostname: ["10.0.0.5"], user: ["deploy"] },
+    });
+    // A name no Host entry rewrites is only a guess: flagged for confirmation.
+    expect(resolveTarget("unknown-box", profiles, aliases, "/bin/zsh", shape).note).toContain("confirm the host");
+    expect(() => resolveTarget("bad name; rm -rf /", profiles, aliases, "/bin/zsh", shape)).toThrow("not a registered profile");
   });
 
   test("builds commands only for supported login shells", () => {
