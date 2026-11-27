@@ -1,190 +1,49 @@
 ---
 name: agent-conduct
-description: Agent 守则，无需用户点名。会话开始或主任务切换时（含只读问答、LobeHub 聊天与任务调度发起的运行）先用 name-session.ts 按 MMDD｜TYPE｜Topic 命名当前会话：LobeHub 话题、Codex 线程，以及经 herdr 原语命名可证明归属的 Herdr 标签页。任何会在本机留下文件、进程、容器或 Git 状态的任务（写代码、跑测试、构建、验收、部署、排障）开始和收尾时使用：规定报告、证据、临时目录、worktree、分支、Docker 容器与卷、R2 分享对象、测试残留的落点和回收；需要隔离的工作树用 wt.ts 新建和回收，合入后的本地与远端分支用 branch.ts 清理，收尾用只读扫描核对本任务遗留。向 LobeHub 社区仓库（lobehub/lobehub）提交、跟进或合并 PR 时使用：创建前经用户同意，用 community-pr.ts 判定合并门槛（最新提交上 CI 全过、Codex 评审无意见并 👍、无未解决评论）、等待状态变化、请求 Codex 复审、回复并解决评审线程，合并由用户做。
+description: Agent 守则，无需用户点名。会话开始或主任务切换时（含只读问答、LobeHub 聊天与任务调度发起的运行）先用 name-session.ts 按 MMDD｜TYPE｜Topic 命名当前会话。任何会在本机留下文件、进程、容器或 Git 状态的任务（写代码、跑测试、构建、验收、部署、排障）开始、汇报完成和收尾时使用：规定什么才算完成，以及报告、证据、临时目录、worktree、分支、Docker 容器与卷、R2 分享对象的落点和回收（wt.ts、branch.ts、scan.ts）。向 LobeHub 社区仓库（lobehub/lobehub）提交、跟进或合并 PR 时使用：创建前经用户同意，用 community-pr.ts 判定合并门槛并跟进到合并。
 ---
 
 # Agent 守则
 
-两条通用守则：会话一开始就按统一规则命名，让用户在任何宿主里都能认出它；Agent 对自己在本机留下的东西负责，用完的临时环境随手回收，有持久价值的结果放到约定位置，不给用户和下一个 Agent 留下垃圾或谜题。
+三件事：会话一开始就命名，让用户在任何宿主里都能认出它；说完成之前对照目标核对，不拿做过的那部分充数；对自己在本机留下的东西负责，用完的回收，有价值的放到约定位置。
 
-命名适用于所有会话，包括只读问答；其余资源规则只在任务会留下文件、进程、容器或 Git 状态时适用。
+命名适用于所有会话，包括只读问答。本文是每次都要守的规则，细则按当前要做的事去读对应的一份，不用全读：
 
-向 LobeHub 社区仓库提交或跟进 PR 时，另按「社区 PR」一节执行。
+| 要做的事 | 读 |
+| --- | --- |
+| 放报告和证据、起容器、写测试 teardown、起长驻进程 | [资源落点与创建](references/resources.md) |
+| 建隔离工作树、清理合入后的分支 | [Worktree 与分支](references/worktree-branch.md) |
+| 收尾回收、保留临时资源、删除 R2 分享对象 | [收尾](references/cleanup.md) |
+| 向 `lobehub/lobehub` 提交、跟进或合并 PR | [社区 PR](references/community-pr.md) |
+| 命名结果是 `skipped` 或 `failed`、给子 Agent 交接命名、任务调度派发的话题 | [会话命名细则](references/session-naming.md) |
 
 ## 会话命名
 
-会话开始或主任务切换时，任务一明确就命名，先于读取其他技能、派发子任务和实质工作；被 Weaver 拉起的父 Agent 同样如此。同一目标下的进度、追问和子任务不重命名。
-
-主任务切换时，新标题合并前后任务的关键信息，不丢掉前一个任务：例如 `1115｜OPT｜会话命名迁入 conduct` 之后转去排查 herdr 归属，改为 `1115｜FIX｜命名迁入 conduct 与 herdr 归属误判`，TYPE 取当前主任务。合并后过长时压缩各任务的措辞，不整段删掉某个任务。
-
-- **格式 `MMDD｜TYPE｜Topic`。** MMDD 只取会话 `createdAt` 转 Asia/Shanghai 的日期，不用 `updatedAt` 或今天；TYPE 取 FEA、DES、FIX、OPT、REL、EXP、DOC、RES；Topic 用用户的语言，简短具体，不重复项目名，不含换行和 `｜`。主题不明时保留原标题。
-- **按当前任务直接设置。** 不管现有标题是谁设的、看起来是否已经像样，也不征求确认；宿主自动生成的标题不合规范时立即修正。只改标题，不动项目、分组、顺序、置顶和归档状态。
-- **一条命令完成，结果以输出为准：**
-
-  ```bash
-  bun <skill-dir>/scripts/name-session.ts --type FIX --topic '具体任务' [--dry-run]
-  ```
-
-  stdout 输出 JSON：`label`、`named`，以及 `targets` 里每个目标的 `status`（`named`、`unchanged`、`dry-run`、`skipped`、`failed`）。每次写入都读回核对；写入超时或读回不一致时不重放，读一次现状后报告。
-
-| 宿主 | 识别 | 写入 |
-| --- | --- | --- |
-| LobeHub | `LOBEHUB_TOPIC_ID` 与 `LOBEHUB_OPERATION_ID` | 同时满足两点才用 `lh topic edit` 改话题标题：话题的 `metadata.runningOperation.operationId` 等于本次运行的 `LOBEHUB_OPERATION_ID`；进程链没有显示这份身份是继承来的。后者指：话题已记录 `metadata.heteroSessionId` 时，它要等于最内层 Agent 自己的会话 ID（`CLAUDE_CODE_SESSION_ID` 或 `CODEX_THREAD_ID` 中，在离本进程最近的一层引入的那个）；在 Linux 上，`LOBEHUB_OPERATION_ID` 沿祖先进程最多延续到该 Agent 的父进程，也就是启动它的 LobeHub 进程。在 LobeHub 运行里启动的 Herdr、tmux 这类长驻宿主会把运行身份传给后来在里面启动的 Agent，而祖先运行仍在进行，只比运行编号挡不住，这时记为 `skipped`（`session_mismatch`、`inherited_operation`）。祖先 Agent 的环境被继承、群组里共享话题的成员、运行已结束等情况同样记为 `skipped`，不写入，再按下面几行判断。此时不命名 Herdr 标签页：承载 LobeHub 守护进程的终端不是这个会话 |
-| Codex | `CODEX_THREAD_ID`，本机 Codex app-server daemon 在运行 | 改该线程的原生标题。不为命名启动 daemon；`CODEX_SESSION_ID` 可能指父会话，不能代替 |
-| Claude Code | `CLAUDE_CODE_SESSION_ID` | 没有可写的标题接口，只从会话记录取 `createdAt`，供 Herdr 标签页使用 |
-| Herdr | `HERDR_PANE_ID`，同级装有 herdr 技能 | 用上面得到的标题调用 herdr 的 `name-tab.ts`，只有能证明标签页属于本进程时才改名，证明失败记为 `failed`，任务照常继续 |
-
-`named` 为 `false`（没有可写且归属本次运行的标题）时保留原标题，在回复里简短说明。
-
-- **任务调度发起的运行同样命名。** LobeHub 任务派发的话题（输出里 `trigger` 为 `task`、带 `taskId`）初始标题通常是派发提示词或任务原标题，开始工作前照常改名。Topic 写这次任务的具体目标，可以带任务编号，例如 `1115｜FIX｜T-123 图片上传失败`；不照抄「由 T-xxx 调度派发……」这类提示词。只改话题标题，不改任务本身。
-- **命名归会话的所有者。** 归属看交接内容，不看焦点、pane 数量或 Agent 类型。子 Agent、fork、Weaver worker 可能继承父会话的环境变量，不改父会话的标题，除非交接里明确交给它；它有自己独立的话题、线程或标签页时，按交接里的任务命名自己的。新建目标标签页的一方负责初始命名（herdr 的 `route-lane.ts --label`），交接里写明自己的 caller、目标 ID 和命名归属。
-
-实际出现过的反例：
-- **Docker**：761 个悬空匿名卷约 60G，都是测试用 Postgres 容器删除时没带 `-v` 留下的。
-- **/tmp**：项目测试 `mkdtemp` 后不删，一天积累数百个同名前缀的临时目录。
-- **失效 worktree**：多个仓库登记着指向 `/tmp/...`、`.worktrees/...` 的 worktree，目录早已删除，记录还在。
-- **分支堆积**：PR squash 合入后，本地和远端分支都没人删，一个仓库攒下两百多个远端分支；本地 `origin/HEAD` 还指向早已不是默认分支的旧分支。
-- **报告和证据进了仓库**：有的作为 `docs/evidence/` 之类的目录提交到远程，有的以未跟踪目录留在仓库里（`.task-artifacts/`）。
-- **工作区根杂物**：工作区根被生成了 `node_modules/`。
-- **任务目录散落**：`~/.cache`、`~/.local/share` 下有按任务命名的目录。
-
-## 东西放哪
-
-工作区根指仓库所在的上一级目录，例如 `~/workspaces/<项目组>/`。
-
-| 产物 | 位置 | 生命周期 |
-| --- | --- | --- |
-| 源码改动 | 仓库工作树，或用 `wt.ts add` 建的 worktree | 按项目流程提交；worktree 合入后删除 |
-| 报告（HTML / Markdown） | `<工作区根>/reports/`，一个任务一个文件或子目录，名称含主题和日期 | 持久 |
-| 验收证据（截图、HAR、日志摘录） | `<工作区根>/evidence/`，按任务分子目录 | 持久，只留判断结论所需的最小证据 |
-| 中间产物、一次性脚本、fixture、构建日志 | 任务临时根（`mktemp -d`） | 收尾删除 |
-| 持久私有配置、开发数据库数据 | 既有的持久位置，不放临时根和工作区 | 持久 |
-| 报告的公网分享副本 | R2，按「R2 分享对象」登记 | 交付给用户的文档、报告、证据和历史版本永久保留；自测和探测对象收尾删除 |
-
-- **报告和证据不进仓库。** 只有两种例外：用户本次明确要求，或项目指令（AGENTS.md、CLAUDE.md 等）明确规定该交付物入库。提交上去会给协作者添麻烦；不提交、留在仓库里，又会被下一个 Agent 当成别人没做完的工作。仓库里不留 `.task-artifacts/`、`REPORT.*`、截图、`tsconfig.tsbuildinfo` 这类任务产物。
-- **工作区根只放仓库和 `reports/`、`evidence/`。** 不在工作区根运行会生成 `node_modules`、缓存或构建输出的命令，也不在这里建草稿、备份或任务目录。
-- **不在 `~/.cache/<任务>`、`~/.local/share/<任务>`、仓库内 `.worktrees/` 另起任务目录。** debian-testvm 这类工具管理的存储，通过它们自己的 CLI 使用。
-- **用户或项目有约定的，按约定执行。** 已有约定的报告目录照用。项目明确规定的单一任务目录可以复用，回收义务和临时根相同。用户本次指定了运行路径，就照指定的路径走，收尾时仍按类别回收其中的一次性内容。
-- **报告目录只放交付物。** 最终 HTML 报告和它必需的非机密配套配置放在一起；报告目录里不放完整的一次性运行现场。证据只留最小必要部分，不保留全部原始文件，也不保留重复的完整 body / HAR 快照。私有配置和真实业务数据不放进可回收的工作区。
-
-## 创建时就为回收做准备
-
-- **记录起点和临时根。** 任务开始时记下开始时间（收尾扫描要用），并用 `mktemp -d` 建一个任务临时根。这个任务的所有 worker 都用父 Agent 交下来的这一个临时根，按需建子目录，不各自另建带日期的目录。在任务说明或交接里分清三样东西：源码工作区、临时根、报告目录。写新任务说明时，按当前全局规则和本技能写，不照抄旧任务的 `REPORT.md` 或「永久保留」条款。
-- **Docker 按用途选参数：**
-  - 一次性容器用 `docker run --rm`。
-  - 要活到任务后段的容器，加 `--label owner=<任务> --label purpose=<用途> --label release-when=<条件>`；条件写成本任务结束前就能核对的事件（见「什么要留」）。删除时用 `docker rm -v`，不带 `-v` 会留下匿名卷。
-  - postgres、redis、minio 这类镜像声明了 `VOLUME`，每次启动都会生成匿名卷。需要保留的数据用带标签的命名卷或绑定挂载。
-  - compose 项目只有在整个项目都属于本任务时，才用 `docker compose down -v`。
-  - 回收时只处理带本任务标签、且释放条件已满足的资源。未加标签的容器和卷视为归属不明。
-- **测试的 teardown 包含失败路径。** 测试创建的临时目录、容器、端口、数据库都要在 teardown / `afterAll` 中清理，失败路径也一样。发现项目测试漏清理，当作 bug 修，或在结果里指出位置。
-- **长驻进程按全局规则用 `systemd-run --user --scope`**，unit 名带上任务名，收尾按 unit 精确停止。
-
-## Worktree
-
-需要和主工作树隔离时（并行任务、主工作树有别人的改动、要在另一个基线上验证）用 worktree。不用 CoW：它不支持子模块，在 ext4 上每个基线都是完整拷贝，成果还要导出 bundle 再合回来。
+会话开始或主任务切换时，任务一明确就运行，先于读取其他技能、派发子任务和实质工作；被 Weaver 拉起的父 Agent 同样如此：
 
 ```bash
-bun <skill-dir>/scripts/wt.ts add --repo <主仓库> --name <任务名> [--branch <分支>] [--base <提交>]
-bun <skill-dir>/scripts/wt.ts remove --path <worktree>
-bun <skill-dir>/scripts/wt.ts gc --workspace <工作区根>... [--apply]
+bun <skill-dir>/scripts/name-session.ts --type <FEA|DES|FIX|OPT|REL|EXP|DOC|RES> --topic '<主题>' [--dry-run]
 ```
 
-- **`add` 建好就能用。**
-  - 位置固定在 `~/.local/share/worktrees/<仓库名>/<任务名>`（`AGENT_WORKTREE_ROOT` 可改），在仓库和工作区之外。
-  - 默认先从 origin 读取实际的默认分支并 fetch，从它新建 `wt/<任务名>` 分支；本地 `origin/HEAD` 可能过期，不作依据。连不上 origin 时退回本地记录，并在输出的 `baseNote` 中说明。不从主工作树当前检出的分支起步，那常常是别人进行中的工作。按项目分支命名时传 `--branch`。
-  - 链接主仓库的 `.env`，任务差异写 `.env.local`，不改链接目标。
-  - 子模块从主仓库的本地副本检出，没有对应提交时才走远端。
-  - 按锁文件离线安装依赖；pnpm 从 store 硬链接，通常几秒完成。
-  - stdout 输出 JSON，`cwd` 就是工作目录。
-- **改用 `add`，不要直接 `git worktree add`。** 运行环境自带的隔离（如 Claude Code 的 `isolation: worktree`）会自建 worktree，本技能管不到创建这一步。这类 worktree 照样在收尾时用 `remove` 回收，或者由 `gc` 兜底。
-- **`remove` 先核对，再删除。** 依次核对：没有未提交改动、没有未合入默认分支的提交、没有进程在用；通过后删除 worktree，已合入的本地任务分支一并删除。合入的判断和 branch.ts 相同：以 origin 实际声明的默认分支为准，squash、rebase 合入都算。远端还有同名分支时，输出的 `remoteBranch` 会列出，按下面的「分支」一节处理。确认成果可以丢弃时才加 `--force`；有进程在用时，加 `--force` 也拒绝。
-- **`gc` 是兜底，不管 worktree 是谁建的。** 它盘点工作区内所有仓库的 worktree，分三类：
-  - 失效记录：HEAD 仍在某个分支上的，标为清理；
-  - 已合入、无改动、无进程占用、闲置超过 `--min-idle`（默认 24h）的，标为可回收；
-  - 其余一律保留。
-  默认只列出，加 `--apply` 才执行；失效记录逐条删除，不做整仓 prune。`remove`、`gc` 和收尾扫描都向 origin 查询实际默认分支（只读），连不上时才用本地 `origin/HEAD` 记录。
-- **端口和数据不随 worktree 隔离。** 并行服务各用各的端口；数据库、Redis、对象存储按全局数据规则隔离。数据库文件、bind mount 和私有配置不放进 worktree，删除 worktree 时被忽略的文件会一起删掉。
+- 你只定 TYPE 和主题：主题用用户的语言，简短具体，不重复项目名；主题还不明确时保留原标题。日期、宿主识别、归属判断和读回核对都由脚本完成，结果以 stdout 的 JSON 为准，不手工改标题，也不重放。
+- `named` 为 `false` 时保留原标题，在回复里说一句。
+- 同一目标下的进度、追问和子任务不重命名。主任务切换时，新标题合并前后任务的关键信息，TYPE 取当前主任务，例如 `1115｜OPT｜会话命名迁入 conduct` 之后转去排查 herdr 归属，改为 `1115｜FIX｜命名迁入 conduct 与 herdr 归属误判`。
+- 子 Agent、fork、Weaver worker 不改父会话的标题，除非交接里明确交给它。
 
-## 分支
+## 责任心
 
-任务分支合入主线后，本地和远端的副本都要清理。是否已合入、删不删、怎么留痕，都交给 branch.ts 判断；不要凭分支名、日期或 `git branch --merged` 手动删除。
+「完成」指用户要的结果在真实链路上做成并验证过，约定的交付物也都交了。说完成之前，对照原始目标和所用技能的交付要求逐项核对；没做到的直接说没做到，并在本任务内补完，不等用户追问。
 
-```bash
-bun <skill-dir>/scripts/branch.ts --repo <仓库> [--branch <分支>]... [--remote] [--apply --record <文件>]
-```
+## 本机资源
 
-- **以远端实际默认分支为准。** 先 `fetch --prune`，再向 origin 查询它声明的默认分支。本地 `main`、过期的 `origin/HEAD` 都不作依据。
-- **三种情况算已合入：**
-  - 分支头是默认分支的祖先（merge、fast-forward）；
-  - 分支上的提交逐个 rebase 进了默认分支；
-  - 整个分支被 squash 成默认分支上的一个提交。
-- **内容判断不出时，看 PR。** squash 时手工改过内容的，内容比对认不出来。这时以 GitHub PR 为证据：已合入的 PR 覆盖了分支头，且合并提交在默认分支上。
-- **这些不算已合入：** 长期不活跃、上游显示 `[gone]`。
-- **一律保留：**
-  - 默认分支；
-  - 在任一工作树检出的分支；
-  - 有未关闭 PR 的分支；
-  - 有未合入提交的分支，包括 PR 合入后又推了新提交的。
-- **远端从严：**
-  - GitHub 仓库只删有已合入 PR 证据的分支；gh 查不到 PR 时，远端分支一律保留。
-  - 删除带 `--force-with-lease`：判断之后有人推了新提交，删除会被拒绝。
-  - 受保护分支由服务端拒绝删除。
-- **删除要留痕。** `--apply` 必须同时用 `--record` 指定一个新文件，写入每个分支删除前的 SHA、证据、PR 和恢复命令。记录放在 `<工作区根>/evidence/branch-cleanup/<仓库>-<日期>.json`，不放进仓库。
-- **按场景处理：**
+任务会留下文件、进程、容器或 Git 状态时适用。下面几条不读细则也要守：
 
-| 场景 | 做法 |
-| --- | --- |
-| 本任务 worktree 的分支已合入 | `wt.ts remove` 删除 worktree 和本地分支。输出的 `remoteBranch` 不为空时，再用 `branch.ts --branch <分支> --remote --apply --record <文件>` 删除远端分支 |
-| 在主工作树上开的任务分支已合入 | 主工作树干净、且检出的是本任务分支时：先切回默认分支并 `pull --ff-only`，再用 `branch.ts --branch <分支> --remote --apply …` 清理。主工作树有别人的改动，或检出的不是本任务分支时，不切换，只清理远端 |
-| PR 还没合入 | 不清理。在交接或最终回复里写明分支和 PR，合入后由接手的 Agent 处理，或由下次扫描发现 |
-| 仓库开启了「合入后自动删除 head 分支」 | 远端分支已被删除；`fetch --prune` 后只剩本地分支，照常清理 |
-| 用户要求整理整个仓库 | 不带 `--branch` 先列出，把可删除清单交给用户确认后再 `--apply` |
-| 其他情况 | 只处理本任务创建的分支。扫描列出的其他已合入分支，在回复里提一句，不要顺手删除 |
+- **落点。** 报告放 `<工作区根>/reports/`，证据放 `<工作区根>/evidence/`，中间产物放任务临时根；工作区根指仓库所在的上一级目录。任务开始时记下开始时间，并用 `mktemp -d` 建临时根，worker 共用父 Agent 交下来的这一个。报告和证据不进仓库，工作区根不放别的东西。
+- **容器和进程。** 一次性容器用 `docker run --rm`；要活到任务后段的加 `owner`、`purpose`、`release-when` 标签，删除用 `docker rm -v`。长驻进程用 `systemd-run --user --scope`，unit 名带任务名。
+- **Worktree 和分支只走脚本。** 隔离工作树用 `wt.ts add` 建、`wt.ts remove` 回收，不直接 `git worktree add`。分支合入后用 `branch.ts` 清理，不凭分支名、日期或 `git branch --merged` 手动删除。参数看各自的 `--help`。
+- **只动本任务的。** 不用 `docker volume prune`、`docker system prune`、`git worktree prune`、批量 `rm /tmp/*` 这类宽泛命令；归属不明的保留。
 
-## 社区 PR
-
-向 LobeHub 社区仓库（`lobehub/lobehub`）提交、跟进或合并 PR 前，读 [社区 PR：从创建到合并](references/community-pr.md)，每种状况的处理以它为准。任何时候都成立的几条：
-
-- **创建前经用户同意，合并由用户做。** 用户在本次对话里点名授权时才代为合并。
-- **自己开的 PR 盯到合并或关闭。** 用 `watch` 等待，不自写轮询脚本。`watch` 退出并处理完之前不结束本轮回复：除非宿主会在进程退出时唤醒你（如 Claude Code 的 `run_in_background`），否则后台的 `watch` 退出时没人接。
-- **能不能合并只认 `check`。** 最新提交上 CI 全部通过、Codex 评审无意见并 👍、没有未解决的评审线程和待回应的人工评论，三项同时成立；之前提交上的 👍、本地测试和其他 Agent 的审查都不算。
-- **每次推送后请求 Codex 复审。** Codex 不会自动评审新提交。
-- **公开内容一律英文，只写社区版的事。** 标题、正文、评论和回复都是公开发布，不带内部、客户或租户的内容。
-
-```bash
-bun <skill-dir>/scripts/community-pr.ts check <PR 号或链接>
-bun <skill-dir>/scripts/community-pr.ts watch <PR 号或链接> [--until merged]
-bun <skill-dir>/scripts/community-pr.ts request-review <PR 号或链接>
-bun <skill-dir>/scripts/community-pr.ts reply <PR 号或链接> --thread <线程 ID> --body-file <文件> [--resolve]
-```
-
-`check` 只读，逐项列出 PR 形态、冲突、CI、Codex、评审线程、人工评论和公开内容的状态；退出码 0 表示达到门槛或已合并，10 有事项要处理，11 仍在等待，12 未合并就被关闭。`--help` 查看全部参数。
-
-## 收尾回收
-
-- **默认回收本任务的一次性资源。** 范围包括临时目录、fixture、隔离的测试数据、容器和卷、worktree、自测和探测用的 R2 分享对象。交付给用户的分享链接不在此列，见「R2 分享对象」。回收的前提是三点都已确认：归属和隔离明确、交付和交接已完成、对其状态的具体依赖已结束。验证过归属的本任务一次性资源，不需要再等用户确认才回收。
-- **worktree 和分支合入后清理。** 合入主线后，用 `wt.ts remove` 删除 worktree 和本地任务分支，远端分支按上面的「分支」一节处理。不用 `git worktree prune`：它会清掉仓库里所有失效记录，包括别人的。
-- **构建产物同样回收。** 一次性目录里的 `.next`、`dist`、`.vite` 等构建产物和缓存，在服务停止、复验和排障依赖结束后回收；构建无论成败，只留必要的诊断证据。真实项目正在使用的产物，以及工具共享的缓存，不在回收范围内。
-- **失败现场按需保留。** 只有后续诊断确实需要、又不能简单重建时才保留。可以复现的一次性状态，先存最小诊断信息，再回收。
-- **跨会话恢复用的暂存目录不算持久数据。** 选一个外部暂存根，在既有任务或交接记录里写明所有者、未完成的具体工作或依赖它的消费者、可观察的释放条件；条件满足就回收。
-- **worker 的资源也要验收，回收不往外推。** 父 Agent 验收 worker 时，同时核对它留下的资源，只停掉进程不算闭环。worker 要么自己回收，要么在交接里逐项列出名称、路径或端口、依赖和释放条件。父 Agent 就是这些资源的最终负责人：先确认交付物和保留的证据完好，再回收临时根、容器和卷、视图和可回收的基线，不再写「留给 owner 审查后处置」。
-
-## R2 分享对象
-
-设计文档和验收报告用 feature-delivery 的 [`share.ts`](../feature-delivery/SKILL.md#分享链接) 上传到 R2。每个对象在 `~/.local/state/r2-share/ledger.jsonl` 追加一行 JSON 登记：`op`、`at`、`task`、`mission`（登记到 Weaver 主任务时有值）、`public`、`releaseWhen`、`account`、`bucket`、`key`、`url`、`entry`（所属页面）、`source`（本地源）、`md5`（桶内 etag）、`size`、`contentType`；删除时再追加一行 `op: "delete"` 记录，不改写旧行。
-
-```bash
-bun <feature-delivery>/scripts/share.ts list [--task <任务>]
-bun <feature-delivery>/scripts/share.ts remove --task <任务> [--key <对象或页面 key>]...
-```
-
-- **交给用户的链接是永久保留的交付物。** 设计文档、验收报告、它们引用的证据和所有历史版本都保留，不设一次性释放条件。在 Weaver 主任务里工作时上传带 `--mission <主任务>`，脚本把入口页登记到 Weaver；登记失败不影响链接，按 stdout 里的命令补登。`--release-when` 默认「永久保留」，通常不用写。
-- **默认私有，只有 `--public` 进公开目录。** 整个分享域名要登录（Cloudflare Access）；给外部看的展示页才加 `--public`，放在 `public/<上海日期>/` 下，免登录但受限流和缓存保护。上传的核对请求在配置了 Access 服务令牌时经 `jinnang` 子进程带令牌访问，配置见 feature-delivery 的「分享链接」。
-- **其余上传是一次性资源，收尾删除：** 自测和探测对象、核对失败的上传。
-- **`remove` 只删登记在该任务名下的对象**，不按前缀批量删除，不碰桶里未登记的文件。每个对象先列出确认它仍在、etag 与登记一致，被改写过的拒绝删除并列出；再以完整参数预演、执行，重新列出确认已删除，读取公网链接核对 404，最后追加删除记录。已不在桶里的只补记录。给页面 key 时整组删除它的资源。
-- 核对 404 时带一次性查询参数绕过边缘缓存。删除前被直接访问过的图片等可缓存文件，边缘缓存仍可能继续提供最多 4 小时；HTML 不缓存，不受影响。
-
-## 收尾自检
+### 收尾回收
 
 收尾前运行只读扫描，时间窗从任务开始算起：
 
@@ -192,31 +51,22 @@ bun <feature-delivery>/scripts/share.ts remove --task <任务> [--key <对象或
 bun <skill-dir>/scripts/scan.ts --since <任务开始时间或 6h> --workspace <工作区根>
 ```
 
-扫描会列出以下几类候选：
-- 窗口内新建的临时目录，范围是 `$TMPDIR`、`/tmp`、`~/.cache`、`~/.local/share`，随机后缀会归组显示；
-- 窗口内创建的已停止容器、未加 `owner` 标签的运行中容器、新增的悬空卷；
-- 所有带 `owner` 标签的容器，不限窗口，附 `release-when`；
-- 各仓库的 worktree（失效、已合入、位于仓库内的会标出）、未跟踪文件、被忽略的报告或证据目录、已合入（含 squash）的本地分支；
-- 工作区根下除仓库和 `reports/`、`evidence/` 之外的杂项；
-- 登记中尚未删除的 R2 分享对象，不限窗口，附 `task` 和 `release-when`（只读登记，不访问远端）。
+- 扫描结果是待核实的候选，不是删除清单。本任务创建的一次性资源直接回收，不用等用户确认；别人的不动，在回复里列出；归属不明的保留。
+- 保留临时资源要写明所有者、具体依赖和本任务结束前就能核对的释放条件。「以后可能还要复验」「留给 owner 审查后处置」都不是保留理由。
+- 父 Agent 验收 worker 时，同时核对并回收它留下的资源。
+- 最终回复分开写「已回收」和「仍保留」，后者带原因、所有者、释放条件，以及端口、路径或分享链接。
 
-加 `--json` 输出机器可读结果，`--help` 查看参数。扫描不删除任何内容。
+各类资源的回收条件、扫描范围和保留规则见 [收尾](references/cleanup.md)。
 
-扫描结果是待核实的候选，不是删除清单：并行的其他 Agent 也会在同一时间窗内创建资源。逐项判断归属：
-- 本任务创建的，按上面的规则回收；
-- 不属于本任务、但明显是遗留的，不动，在最终回复里列出；带标签且释放条件已满足、所属任务已结束的，列为可回收，交用户确认；
-- 归属不明的，保留。
+### R2 分享对象
 
-## 什么要留
+交给用户的设计文档、验收报告和它们引用的证据，分享链接永久保留。自测、探测和核对失败的上传是一次性资源，收尾时用 feature-delivery 的 `share.ts remove --task <任务>` 删除，它只删登记在该任务名下的对象。登记格式和删除时的核对见 [收尾的「R2 分享对象」](references/cleanup.md#r2-分享对象)。
 
-- **有持久价值的要留：** 最终报告及交给用户的分享链接、必要的证据、开发数据库及其迁移记录、用户要求保留的环境（例如带 `environment.json` 写明 lifetime 的打包环境）、别人正在使用的资源。
-- **保留临时资源要写明理由：** 写清所有者、具体依赖、可观察的释放条件，并在最终回复中说明。「以后可能还要复验」「留给 owner／用户审查后处置」都不是保留理由：前者没有终点，后者把回收推给了不会再回来的人。释放条件写成本任务结束前就能核对的事件，例如「报告交付后」；条件在本任务内满足的，收尾时当场回收。确需跨任务保留的，在最终回复里交给用户决定。
-- **不扩大清理范围：** 不用 `docker volume prune`、`docker system prune`、`docker compose down -v`（项目不归本任务时）、批量 `rm /tmp/*` 这类宽泛命令。不删其他任务的 worktree、分支和数据。共享实例、数据卷、Redis、对象存储只按精确归属清理。
+## 社区 PR
 
-## 汇报
+向 LobeHub 社区仓库（`lobehub/lobehub`）提交、跟进或合并 PR 前，读 [社区 PR：从创建到合并](references/community-pr.md)，每种状况的处理以它为准。任何时候都成立的几条：
 
-最终回复分开说明两件事：
-- **已回收：** 回收了哪些资源、范围多大；
-- **仍保留：** 保留了哪些资源，各自的原因、所有者、释放条件，以及相关端口、路径或分享链接。
-
-扫描发现的非本任务遗留单独列出，不和本任务的回收混在一起。
+- **创建前经用户同意，合并由用户做。** 用户在本次对话里点名授权时才代为合并。
+- **能不能合并只认 `community-pr.ts check`。** 之前提交上的 👍、本地测试和其他 Agent 的审查都不算。
+- **自己开的 PR 用 `watch` 盯到合并或关闭。** `watch` 退出并处理完之前不结束本轮回复，除非宿主会在进程退出时唤醒你；每次推送后请求 Codex 复审。
+- **公开内容一律英文，只写社区版的事。** 不带内部、客户或租户的内容。
