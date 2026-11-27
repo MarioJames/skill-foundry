@@ -2,6 +2,13 @@
 
 Use these command contracts for real CLI acceptance. When unattended execution is requested, continue authorized work through verification and cleanup without pausing for routine confirmations.
 
+## 目录
+
+- [Scope and preparation](#scope-and-preparation)
+- [Continuation Rule](#continuation-rule)
+- [Unattended Command Spine](#unattended-command-spine)
+- [Observe Loop Details](#observe-loop-details)
+
 ## Scope and preparation
 
 Use the requested acceptance scope and CLI without reconfirmation. Read the relevant asset entry and prerequisites, resolve the CLI, then register the acceptance before creating rounds. Review-only tasks do not use this workflow. Necessary source or reference reads may precede registration; do not create state simply to satisfy an ordering ritual.

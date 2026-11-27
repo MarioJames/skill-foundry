@@ -32,4 +32,11 @@ Load only the route needed for the current task:
 - [Behavioral acceptance](references/acceptance.md): real CLI execution, evidence, and cleanup.
 - [Asset identification](references/asset-understanding.md): ambiguous asset types or acceptance registration.
 
+During behavioral acceptance, the acceptance route sends you to these; each is one step from here:
+
+- [Convergence and task design](references/convergence-and-task-design.md): which tasks to write, what counts as covered, when a round is done.
+- [Unattended execution](references/unattended-execution.md): the exact CLI commands, staging, task files and recovery.
+- [Scheduling](references/scheduling.md): how rounds are ordered and when to stop.
+- Acceptance dimensions: [common](references/asset-strategies/common.md), then the one for the asset type: [skill](references/asset-strategies/skill.md), [plugin](references/asset-strategies/plugin.md), [rule](references/asset-strategies/rule.md), [agent](references/asset-strategies/agent.md).
+
 The CLI is `scripts/acc.ts`, relative to this skill directory. Its Bun runtime, DB, and round mechanics belong to the behavioral acceptance route; ordinary review does not need them.

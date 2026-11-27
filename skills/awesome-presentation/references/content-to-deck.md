@@ -2,6 +2,16 @@
 
 使用根据现有材料整理的内部页表或用户指定的大纲。用户已要求完整制作时直接实现；只有要求先讨论或缺关键事实时才回到 [内容发现](content-discovery.md)。
 
+## 目录
+
+- [目标](#目标)
+- [Step A — 对照 Spec，不重新发明叙事](#step-a-对照-spec不重新发明叙事)
+- [Step B — recommendLayout](#step-b-recommendlayout)
+- [Step C — 建页目录](#step-c-建页目录)
+- [Step D — registry](#step-d-registry)
+- [Step E — 组件与证据合同（摘要）](#step-e-组件与证据合同摘要)
+- [Step F — 静态自检](#step-f-静态自检)
+
 ## 目标
 
 把页表落成：
