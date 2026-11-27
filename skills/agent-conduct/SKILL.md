@@ -57,7 +57,7 @@ bun <skill-dir>/scripts/name-session.ts --type <FEA|DES|FIX|OPT|REL|EXP|DOC|RES>
 
 ## 本机资源
 
-- **任务名是归属标记。** 任务开始时定一个任务名（字母、数字、连字符），之后建的东西都带上它：临时根 `mktemp -d "${TMPDIR:-/tmp}/<任务名>.XXXXXX"`，worktree `wt.ts add --name <任务名>`，容器 `--label owner=<任务名>`，分享 `share.ts --task <任务名>`。测试、构建、脚本这类一次性命令带 `TMPDIR=<临时根>` 运行，它们的临时文件也落在里面。worker 沿用父 Agent 的任务名和临时根。
+- **任务名是归属标记。** 任务开始时定一个任务名（字母、数字、连字符），之后建的东西都带上它：临时根 `mktemp -d "${TMPDIR:-/tmp}/<任务名>.XXXXXX"`，worktree `wt.ts add --name <任务名>`，容器 `--label owner=<任务名>`，分享 `share.ts --task <任务名>`。测试、构建、脚本这类一次性命令带 `TMPDIR=<临时根>` 运行，它们的临时文件也落在里面。Unix socket 路径上限 108 字节，报 `bind: invalid argument`（Go 测试可能直接卡到超时）时，这条命令改用默认 TMPDIR。worker 沿用父 Agent 的任务名和临时根。
 - **落点。** 报告放 `<工作区根>/reports/`，证据放 `<工作区根>/evidence/`，中间产物放临时根。报告和证据不进仓库，工作区根（仓库的上一级目录）不放别的。
 - **容器和进程。** 一次性容器用 `docker run --rm`；要留的再加 `purpose`、`release-when` 标签，删除用 `docker rm -v`。长驻进程用 `systemd-run --user --scope`。
 - **Worktree 和分支只走脚本。** 用 `wt.ts add`、`wt.ts remove` 和 `branch.ts`，不直接 `git worktree add`，不手动删分支。
