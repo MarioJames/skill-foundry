@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 // Close-out scan. With --task it reports what carries that task's name (temporary roots, containers, share pages,
 // worktrees) plus what appeared in the window without any owner mark; without it, it inventories the whole host.
-// Read-only unless --clean, which removes only what is provably safe: the task's own temporary roots, and what the
-// sibling scripts already judge safe (merged idle worktrees, stale worktree records, merged local branches).
+// Read-only unless --clean. With --task that removes only what carries the task's name (its temporary roots and
+// merged worktrees); without it, what the sibling scripts judge safe host-wide (merged idle worktrees, stale
+// worktree records, merged local branches).
 // Containers, volumes, share objects and untracked files are never deleted.
 
 import { existsSync, lstatSync, readdirSync, realpathSync, rmSync } from "node:fs";
@@ -28,10 +29,12 @@ const HELP = `用法: bun scan.ts --task <任务名> --workspace <工作区根>.
   窗口起点默认取任务临时根的创建时间，没有临时根时取 24h 前。
 不带 --task 是整机盘点：列出窗口内所有候选，用于整理环境。
 
-  --clean       清理低风险项，其余只列出：
-                  本任务的临时根（属于当前用户、没有进程在用）；
-                  已合入、无改动、无进程占用且闲置超过 24h 的 worktree，以及失效的 worktree 记录（同 wt.ts gc --apply）；
-                  已合入默认分支的本地分支（同 branch.ts --apply，不动远端，记录写入 <工作区根>/evidence/branch-cleanup/）。
+  --clean       清理低风险项，其余只列出。
+                带 --task 只清带任务名的：临时根（没有进程在用），已合入、无改动、无进程占用的 worktree
+                  及其本地分支（同 wt.ts remove）。别人的东西不动。
+                不带 --task 清整机的：已合入、无改动、无进程占用且闲置超过 24h 的 worktree 和失效的 worktree
+                  记录（同 wt.ts gc --apply），已合入默认分支的本地分支（同 branch.ts --apply，不动远端，
+                  记录写入 <工作区根>/evidence/branch-cleanup/）。
   --since       时间窗起点：ISO 时间或相对时长（90m、6h、2d）
   --workspace   工作区根（仓库的上一级目录，如 ~/workspaces/<项目组>），可重复
   --temp-root   整机盘点时替换默认临时位置（$TMPDIR、/tmp、~/.cache、~/.local/share），可重复
@@ -381,6 +384,34 @@ function taskRoots(task: string): { path: string; created: string }[] {
   return [...roots].map(([path, created]) => ({ path, created })).sort((a, b) => a.created.localeCompare(b.created));
 }
 
+function isTaskWorktree(worktree: Worktree, task: string): boolean {
+  return basename(worktree.path) === task || worktree.branch === `wt/${task}`;
+}
+
+/** The task's own merged worktrees. wt.ts remove refuses uncommitted changes, unmerged commits and live processes. */
+function taskWorktrees(repositories: RepositoryReport[], task: string, apply: boolean): WorktreeAction[] {
+  const actions: WorktreeAction[] = [];
+  for (const repo of repositories) {
+    for (const w of repo.worktrees) {
+      if (!isTaskWorktree(w, task) || !w.merged || w.prunable) continue;
+      const action: WorktreeAction = { repo: repo.path, path: w.path, branch: w.branch, action: "remove", reason: `已合入 ${repo.defaultRef}` };
+      if (apply) {
+        const result = run([process.execPath, WT_SCRIPT, "remove", "--path", w.path]);
+        if (!result.ok) action.done = `未删除：${result.err.trim().split("\n").pop()}`;
+        else {
+          const removed = JSON.parse(result.out) as { branchDeleted: string | null; remoteBranch: string | null };
+          action.done = [
+            removed.branchDeleted ? `已删除，分支 ${removed.branchDeleted} 已删除` : "已删除",
+            ...(removed.remoteBranch ? [`远端 ${removed.remoteBranch} 还在，用 branch.ts --remote 清理`] : []),
+          ].join("；");
+        }
+      }
+      actions.push(action);
+    }
+  }
+  return actions;
+}
+
 function removeTaskRoot(path: string): string {
   const pids = processesInside(path);
   if (pids.length > 0) return `未删除：进程 ${pids.slice(0, 5).join(",")} 正在使用`;
@@ -464,13 +495,13 @@ function printTask(report: Report, task: NonNullable<Report["task"]>): void {
   for (const repo of report.repositories) {
     for (const w of repo.worktrees) {
       if (handled.has(w.path)) continue;
-      if (basename(w.path) !== task.name && w.branch !== `wt/${task.name}`) {
+      if (!isTaskWorktree(w, task.name)) {
         otherWorktrees += 1;
         continue;
       }
       own.push(
-        w.merged
-          ? `worktree ${w.path} [${w.branch ?? "detached"}] 已合入：wt.ts remove --path ${w.path}`
+        w.prunable
+          ? `worktree 记录 ${w.path} 的目录已不存在：wt.ts gc 清理`
           : `worktree ${w.path} [${w.branch ?? "detached"}] 未合入：保留，在回复里写明分支和 PR`,
       );
     }
@@ -584,8 +615,16 @@ async function buildReport(options: Options) {
   const roots = options.task ? taskRoots(options.task) : [];
   const sinceFromRoot = !options.sinceGiven && roots.length > 0;
   const since = sinceFromRoot ? new Date(roots[0].created) : options.since;
+  const scanAll = () => scopes.flatMap((scope) => scope.repos.map((repo) => scanRepository(repo, scope.defaults.get(repo) ?? null)));
   let cleaned: Cleanup | null = null;
-  if (options.clean) {
+  if (options.clean && options.task) {
+    // A task's close-out touches only what carries the task's name; other people's leftovers wait for an inventory run.
+    cleaned = {
+      worktrees: taskWorktrees(scanAll(), options.task, true),
+      branches: [],
+      roots: roots.map((root) => ({ ...root, done: removeTaskRoot(root.path) })),
+    };
+  } else if (options.clean) {
     // Worktrees first: removing one frees its branch for the branch pass.
     const worktrees = worktreeActions(options.workspaces, true);
     const stamp = new Date().toISOString().replace(/\D/gu, "").slice(0, 14);
@@ -596,16 +635,18 @@ async function buildReport(options: Options) {
         branches.push(deleteMergedBranches(repo, scope.workspace, stamp));
       }
     }
-    cleaned = { worktrees, branches, roots: roots.map((root) => ({ ...root, done: removeTaskRoot(root.path) })) };
+    cleaned = { worktrees, branches, roots: [] };
   }
-  const repositories = scopes.flatMap((scope) => scope.repos.map((repo) => scanRepository(repo, scope.defaults.get(repo) ?? null)));
-  const cleanable: Cleanup = options.clean
-    ? { worktrees: [], branches: [], roots: [] }
-    : {
-        worktrees: worktreeActions(options.workspaces, false),
-        branches: repositories.map((repo) => ({ repo: repo.path, branches: deletableBranches(repo) })).filter((b) => b.branches.length > 0),
-        roots,
-      };
+  const repositories = scanAll();
+  let cleanable: Cleanup = { worktrees: [], branches: [], roots: [] };
+  if (!options.clean && options.task) cleanable = { worktrees: taskWorktrees(repositories, options.task, false), branches: [], roots };
+  else if (!options.clean) {
+    cleanable = {
+      worktrees: worktreeActions(options.workspaces, false),
+      branches: repositories.map((repo) => ({ repo: repo.path, branches: deletableBranches(repo) })).filter((b) => b.branches.length > 0),
+      roots: [],
+    };
+  }
   return {
     since: since.toISOString(),
     task: options.task ? { name: options.task, sinceFromRoot } : null,

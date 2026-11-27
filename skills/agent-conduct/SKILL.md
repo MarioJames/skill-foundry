@@ -69,7 +69,7 @@ bun <skill-dir>/scripts/name-session.ts --type <FEA|DES|FIX|OPT|REL|EXP|DOC|RES>
 bun <skill-dir>/scripts/scan.ts --task <任务名> --workspace <工作区根> --clean
 ```
 
-收尾前运行。脚本清掉本任务的临时根和其他低风险项，列出带任务名的容器、worktree、分享页面，以及任务期间新出现却没有标记的东西，按输出里的规则处理。父 Agent 一并回收 worker 留下的资源。
+收尾前运行。脚本只清带任务名的临时根和已合入的 worktree，列出带任务名的容器、分享页面、未合入的 worktree，以及任务期间新出现却没有标记的东西，按输出里的规则处理。别人的东西不动。父 Agent 一并回收 worker 留下的资源。
 
 ### R2 分享对象
 

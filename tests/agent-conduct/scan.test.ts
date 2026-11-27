@@ -169,53 +169,78 @@ describe("scan", () => {
     rmSync(join(fixtureRoot, "state"), { recursive: true, force: true });
   });
 
-  test("--clean removes only what is safe: merged local branches, stale worktree records and the task's temp roots", () => {
+  test("--task --clean removes only what carries the task's name", () => {
     const gone = join(fixtureRoot, "worktrees", "gone-again");
     git(["worktree", "add", "-q", "--detach", gone], repo);
     rmSync(gone, { recursive: true, force: true });
     const task = `scan-fixture-${process.pid}`;
     const own = mkdtempSync(join(tmpdir(), `${task}.`));
     const lookalike = mkdtempSync(join(tmpdir(), `${task}-other.`));
+    const taskWorktree = join(fixtureRoot, "worktrees", task);
+    git(["worktree", "add", "-q", "-b", `wt/${task}`, taskWorktree], repo);
     const base = ["--no-docker", "--task", task, "--workspace", workspace];
 
     const dry = JSON.parse(scan(["--json", ...base]).stdout);
     expect(dry.cleaned).toBeNull();
     expect(dry.task).toEqual({ name: task, sinceFromRoot: true });
     expect(dry.cleanable.roots.map((root: { path: string }) => root.path)).toEqual([own]);
-    expect(dry.cleanable.branches).toEqual([{ repo, branches: ["merged-feature"] }]);
-    expect(dry.cleanable.worktrees).toEqual([expect.objectContaining({ path: gone, action: "prune" })]);
+    expect(dry.cleanable.worktrees).toEqual([expect.objectContaining({ path: taskWorktree, action: "remove" })]);
+    expect(dry.cleanable.branches).toEqual([]);
     const listed = scan(base).stdout;
     expect(listed).toContain("可直接清理（加 --clean 执行）");
     expect(listed).toContain(`临时根 ${own}`);
-    expect(listed).toContain("merged-feature");
-    expect(git(["branch", "--list", "merged-feature"], repo)).toContain("merged-feature");
+    expect(listed).not.toContain("merged-feature");
     expect(existsSync(own)).toBe(true);
 
     const result = scan(["--json", "--clean", ...base]);
     expect(result.stderr).toBe("");
     const cleaned = JSON.parse(result.stdout).cleaned;
+    expect(cleaned.roots).toEqual([{ path: own, created: expect.any(String), done: "已删除" }]);
+    expect(cleaned.worktrees).toEqual([
+      expect.objectContaining({ path: taskWorktree, done: `已删除，分支 wt/${task} 已删除` }),
+    ]);
+    expect(cleaned.branches).toEqual([]);
+
+    // Gone: the task's root, its merged worktree and that worktree's branch.
+    expect(existsSync(own)).toBe(false);
+    expect(existsSync(taskWorktree)).toBe(false);
+    expect(git(["branch", "--list", `wt/${task}`], repo)).toBe("");
+    // Kept: everything that is not the task's, however safe it would be to remove.
+    expect(existsSync(lookalike)).toBe(true);
+    expect(git(["branch", "--list", "merged-feature"], repo)).toContain("merged-feature");
+    expect(git(["worktree", "list", "--porcelain"], repo)).toContain(gone);
+    expect(existsSync(worktree)).toBe(true);
+    expect(existsSync(join(repo, "REPORT.html"))).toBe(true);
+    expect(existsSync(join(tempRoot, "titu-sandbox-claims-fix-1023"))).toBe(true);
+    rmSync(lookalike, { recursive: true, force: true });
+    git(["worktree", "prune"], repo);
+  });
+
+  test("--clean without --task removes what is safe host-wide: merged local branches and stale worktree records", () => {
+    const gone = join(fixtureRoot, "worktrees", "gone-inventory");
+    git(["worktree", "add", "-q", "--detach", gone], repo);
+    rmSync(gone, { recursive: true, force: true });
+    const base = ["--no-docker", "--workspace", workspace, "--temp-root", tempRoot];
+
+    const dry = JSON.parse(scan(["--json", ...base]).stdout);
+    expect(dry.cleanable.branches).toEqual([{ repo, branches: ["merged-feature"] }]);
+    expect(dry.cleanable.worktrees).toEqual([expect.objectContaining({ path: gone, action: "prune" })]);
+    expect(scan(base).stdout).toContain("merged-feature");
+
+    const cleaned = JSON.parse(scan(["--json", "--clean", ...base]).stdout).cleaned;
     expect(cleaned.worktrees).toEqual([expect.objectContaining({ path: gone, action: "prune", done: "已清理记录" })]);
     expect(cleaned.branches).toEqual([{ repo, branches: ["merged-feature"], record: expect.stringContaining(join(workspace, "evidence", "branch-cleanup")) }]);
     expect(existsSync(cleaned.branches[0].record)).toBe(true);
-    expect(cleaned.roots).toEqual([{ path: own, created: expect.any(String), done: "已删除" }]);
-
-    // Gone: the merged branch, the stale record, the task's root.
     expect(git(["branch", "--list", "merged-feature"], repo)).toBe("");
     expect(git(["worktree", "list", "--porcelain"], repo)).not.toContain(gone);
-    expect(existsSync(own)).toBe(false);
-    // Kept: another task's root, the fresh worktree and its branch, untracked files, ignored artefacts, workspace strays.
-    expect(existsSync(lookalike)).toBe(true);
+    // Kept: the fresh worktree and its branch, untracked files, ignored artefacts, workspace strays, temp dirs.
     expect(existsSync(worktree)).toBe(true);
     expect(git(["branch", "--list", "feat"], repo)).toContain("feat");
     expect(existsSync(join(repo, "REPORT.html"))).toBe(true);
     expect(existsSync(join(repo, ".task-artifacts", "run-1"))).toBe(true);
     expect(existsSync(join(workspace, "node_modules"))).toBe(true);
     expect(existsSync(join(tempRoot, "titu-sandbox-claims-fix-1023"))).toBe(true);
-    rmSync(lookalike, { recursive: true, force: true });
-
-    const after = scan(["--clean", ...base]).stdout;
-    expect(after).not.toContain("可直接清理");
-    expect(after).not.toContain("merged-feature");
+    expect(scan(["--clean", ...base]).stdout).not.toContain("merged-feature");
   });
 
   test("--task reports what carries the task's name and what is new and unmarked, and only counts the rest", () => {
