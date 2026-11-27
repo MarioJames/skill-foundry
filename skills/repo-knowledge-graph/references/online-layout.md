@@ -1,7 +1,7 @@
 # 线上项目知识契约
 
 ```text
-viking://user/resources/projects/
+viking://~/resources/projects/
   RELATIONS.md
   MEMORY.md
   repos/

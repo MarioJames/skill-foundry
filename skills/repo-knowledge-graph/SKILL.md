@@ -1,6 +1,6 @@
 ---
 name: repo-knowledge-graph
-description: 查询或维护 Git 项目知识、项目路径及跨仓关系；普通代码搜索不触发。
+description: 查询或维护 Git 项目知识、项目路径、父仓和子模块关系或跨仓对应关系时使用，包括匹配 LobeHub 社区版与各企业版的仓库。普通代码搜索不触发。
 ---
 
 # 全局项目知识图谱
@@ -8,23 +8,23 @@ description: 查询或维护 Git 项目知识、项目路径及跨仓关系；�
 线上入口固定为：
 
 ```text
-viking://user/resources/projects/RELATIONS.md
-viking://user/resources/projects/MEMORY.md
-viking://user/resources/projects/repos/<project-id>/
+viking://~/resources/projects/RELATIONS.md
+viking://~/resources/projects/MEMORY.md
+viking://~/resources/projects/repos/<project-id>/
 ```
 
-通过运行时已注册的 OpenViking `find` / `search` / `read` / `glob` / `grep` / `edit` / `write` 工具工作。不要调用本地 `ov` CLI、直连 HTTP 或重建数据库客户端；`viking://user/...` 是当前用户别名，不硬编码实际 user id。
+通过运行时已注册的 OpenViking `find` / `search` / `read` / `glob` / `grep` / `edit` / `write` 工具工作。不要调用本地 `ov` CLI、直连 HTTP 或重建数据库客户端；`viking://~/...` 是当前用户别名（旧写法 `viking://user/resources/...` 已被服务端拒绝），不硬编码实际 user id。
 
 ## 定位当前项目
 
 1. 在当前 Git 根目录读取 `remote.origin.url`，优先用完整 remote 在 `RELATIONS.md` 精确匹配稳定 `<project-id>`。同一 remote 的多个本地路径属于同一项目。
 2. remote 缺失时，再用当前绝对路径或明确仓库名在 `RELATIONS.md` 匹配。路径只是按 peer 记录的位置，不是项目身份；不要从父目录名称推断归属。
 3. 同名仓库必须用 remote、项目 ID 或精确路径消歧。仍有多个合理结果时说明歧义并询问，不合并事实。
-4. 定位后把查询限定到 `viking://user/resources/projects/repos/<project-id>/`。不要查找或依赖工作空间根的 `AGENTS.md`、`CLAUDE.md`、`MEMORY.md` 或 `.workspace`。
+4. 定位后把查询限定到 `viking://~/resources/projects/repos/<project-id>/`。不要查找或依赖工作空间根的 `AGENTS.md`、`CLAUDE.md`、`MEMORY.md` 或 `.workspace`。
 
 ## 查询
 
-- 本技能处理项目知识时，事实源白名单只有 `viking://user/resources/projects/`（服务端展开实际 user id 后的同一路径也等价）。不要补读 `memories/`、旧 `resources/workspaces/` 或其他 OpenViking 目录；运行时自动注入的召回摘要只用于判断是否触发本技能，不引用其中事实，也不展开其 URI。
+- 本技能处理项目知识时，事实源白名单只有 `viking://~/resources/projects/`（服务端展开实际 user id 后的同一路径也等价）。不要补读 `memories/`、旧 `resources/workspaces/` 或其他 OpenViking 目录；运行时自动注入的召回摘要只用于判断是否触发本技能，不引用其中事实，也不展开其 URI。
 - 仓库结构、常用操作和项目技能读 `graph.md`；业务域读 `domains.md`；共享机制和技术边界读 `knowledge.md`；存在 `entities.md` 时用于稳定实体定义。
 - 项目身份、本机路径和跨项目依赖只查 `RELATIONS.md`。用项目 ID、完整 remote、路径或 relation ID 做 `grep`，语义不确定时再用限定到 `projects/` 的 `find`。
 - 续接、纠正、确认取舍或用户外部操作查 `MEMORY.md`，用项目 ID 和任务关键词缩小结果。
@@ -59,5 +59,5 @@ viking://user/resources/projects/repos/<project-id>/
 
 - OpenViking 工具未注册或不可用时，明确说明线上项目上下文不可达；不要改用本地 CLI、HTTP、旧本地快照或自动记忆摘要冒充规范资源。
 - 新写入的语义索引可能异步刷新；需要当场验收时使用 `wait=true`，超时后先 `read` 精确 URI 判断是否已写入，不要盲目重复创建。
-- 工具返回的规范 URI 可能展开为 `viking://user/<id>/...`；后续调用继续使用当前用户别名，不把实际 user id 写进技能或配置。
+- 工具返回的规范 URI 可能展开为 `viking://user/<id>/...`（如 `viking://user/default/...`）；后续调用继续使用当前用户别名，不把实际 user id 写进技能或配置。
 - 目录级 `.abstract.md` / `.overview.md` 是派生索引，不是事实源；派生内容异常时先读规范文件，不能用错误摘要覆盖正文。
