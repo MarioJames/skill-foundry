@@ -1,6 +1,6 @@
 ---
 name: public-acceptance
-description: 公网验收本地项目：启动或复用 DEV 服务、创建 Cloudflare 临时隧道，交付公网地址、登录信息和页面可达性结果。也支持已有隧道的状态查询与清理；不用于生产部署或命名隧道。
+description: 公网验收本地 DEV 项目时使用。启动或复用服务，管理匿名 Cloudflare Quick Tunnel，交付公网地址、登录信息和可达性结果。账号下的命名隧道由 cloudflare-cli 管理。
 ---
 
 # 公网验收
@@ -18,6 +18,7 @@ description: 公网验收本地项目：启动或复用 DEV 服务、创建 Clou
 
 ## 2. 创建隧道
 
+- 本节处理无需 Cloudflare 账号的匿名 Quick Tunnel。账号管理的命名隧道、DNS 和 Access 操作按 `cloudflare-cli` 技能。
 - 以已确认的本地 origin 执行一次 `cqt start`，全程使用任务专属绝对 `--state-dir`，见 [隧道命令](references/tunnel-lifecycle.md)。已有本轮隧道直接复用；仅对已由 `browser-harness` 项目 target 管理的服务使用其 `share`，不再另建隧道。
 - 从成功命令的结构化输出取得 `PUBLIC_URL`、PID 和日志。以真实入口的 path/query/hash 生成验收地址；已有 `REMOTE_REVIEW_URL` 时直接使用。
 - 生成地址后立即交付。`start` 只等待地址生成，不等待 HTTP/TLS 探活；隧道后台托管，不另建 pane。
