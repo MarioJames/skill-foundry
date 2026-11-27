@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -156,11 +156,122 @@ describe("scan", () => {
       "d/orders/reports/REPORT.html",
     ]);
 
-    const text = scan(["--no-docker", "--temp-root", tempRoot]).stdout;
+    const text = scan(["--no-docker", "--temp-root", tempRoot, "--since", "2026-11-07T00:00:00.000Z"]).stdout;
     expect(text).toContain("task=orders release-when=report-delivered");
     expect(text).toContain("共 2 个对象");
     expect(text).toContain("https://share.example/d/orders/reports/REPORT.html");
     expect(text).not.toContain("probe");
+
+    // Pages uploaded before the window are counted, not listed, so a long ledger does not flood the output.
+    const later = scan(["--no-docker", "--temp-root", tempRoot, "--since", "2026-11-09T00:00:00.000Z"]).stdout;
+    expect(later).not.toContain("https://share.example/");
+    expect(later).toContain("更早上传的分享页面 1 个");
+    rmSync(join(fixtureRoot, "state"), { recursive: true, force: true });
+  });
+
+  test("--clean removes only what is safe: merged local branches, stale worktree records and the task's temp roots", () => {
+    const gone = join(fixtureRoot, "worktrees", "gone-again");
+    git(["worktree", "add", "-q", "--detach", gone], repo);
+    rmSync(gone, { recursive: true, force: true });
+    const task = `scan-fixture-${process.pid}`;
+    const own = mkdtempSync(join(tmpdir(), `${task}.`));
+    const lookalike = mkdtempSync(join(tmpdir(), `${task}-other.`));
+    const base = ["--no-docker", "--task", task, "--workspace", workspace];
+
+    const dry = JSON.parse(scan(["--json", ...base]).stdout);
+    expect(dry.cleaned).toBeNull();
+    expect(dry.task).toEqual({ name: task, sinceFromRoot: true });
+    expect(dry.cleanable.roots.map((root: { path: string }) => root.path)).toEqual([own]);
+    expect(dry.cleanable.branches).toEqual([{ repo, branches: ["merged-feature"] }]);
+    expect(dry.cleanable.worktrees).toEqual([expect.objectContaining({ path: gone, action: "prune" })]);
+    const listed = scan(base).stdout;
+    expect(listed).toContain("可直接清理（加 --clean 执行）");
+    expect(listed).toContain(`临时根 ${own}`);
+    expect(listed).toContain("merged-feature");
+    expect(git(["branch", "--list", "merged-feature"], repo)).toContain("merged-feature");
+    expect(existsSync(own)).toBe(true);
+
+    const result = scan(["--json", "--clean", ...base]);
+    expect(result.stderr).toBe("");
+    const cleaned = JSON.parse(result.stdout).cleaned;
+    expect(cleaned.worktrees).toEqual([expect.objectContaining({ path: gone, action: "prune", done: "已清理记录" })]);
+    expect(cleaned.branches).toEqual([{ repo, branches: ["merged-feature"], record: expect.stringContaining(join(workspace, "evidence", "branch-cleanup")) }]);
+    expect(existsSync(cleaned.branches[0].record)).toBe(true);
+    expect(cleaned.roots).toEqual([{ path: own, created: expect.any(String), done: "已删除" }]);
+
+    // Gone: the merged branch, the stale record, the task's root.
+    expect(git(["branch", "--list", "merged-feature"], repo)).toBe("");
+    expect(git(["worktree", "list", "--porcelain"], repo)).not.toContain(gone);
+    expect(existsSync(own)).toBe(false);
+    // Kept: another task's root, the fresh worktree and its branch, untracked files, ignored artefacts, workspace strays.
+    expect(existsSync(lookalike)).toBe(true);
+    expect(existsSync(worktree)).toBe(true);
+    expect(git(["branch", "--list", "feat"], repo)).toContain("feat");
+    expect(existsSync(join(repo, "REPORT.html"))).toBe(true);
+    expect(existsSync(join(repo, ".task-artifacts", "run-1"))).toBe(true);
+    expect(existsSync(join(workspace, "node_modules"))).toBe(true);
+    expect(existsSync(join(tempRoot, "titu-sandbox-claims-fix-1023"))).toBe(true);
+    rmSync(lookalike, { recursive: true, force: true });
+
+    const after = scan(["--clean", ...base]).stdout;
+    expect(after).not.toContain("可直接清理");
+    expect(after).not.toContain("merged-feature");
+  });
+
+  test("--task reports what carries the task's name and what is new and unmarked, and only counts the rest", () => {
+    const task = "orders-export";
+    const bin = join(fixtureRoot, "fake-docker-task");
+    mkdirSync(bin, { recursive: true });
+    const created = (minutesAgo: number) =>
+      new Date(Date.now() - minutesAgo * 60_000).toISOString().replace("T", " ").replace(/\.\d+Z$/u, " +0000 UTC");
+    const rows = [
+      ["orders-pg", "postgres:18", created(5), task, "report-delivered", "Up 5 minutes"],
+      ["other-pg", "postgres:18", created(5), "another-task", "report-delivered", "Up 5 minutes"],
+      ["stray-redis", "redis:8", created(5), "", "", "Up 5 minutes"],
+    ].map((row) => row.join("\t"));
+    writeFileSync(
+      join(bin, "docker"),
+      `#!/bin/sh\nif [ "$1" = ps ]; then printf '%s\\n' ${rows.map((row) => `'${row}'`).join(" ")}; fi\n`,
+      { mode: 0o755 },
+    );
+    const ledgerDir = join(fixtureRoot, "state", "r2-share");
+    mkdirSync(ledgerDir, { recursive: true });
+    const upload = (owner: string, key: string) => ({
+      op: "upload", at: "2026-11-08T00:00:00.000Z", task: owner, releaseWhen: "永久保留", key, entry: key, url: `https://share.example/${key}`,
+      account: "acc", bucket: "b", md5: "m", size: 1, contentType: "text/html", source: "/src",
+    });
+    writeFileSync(
+      join(ledgerDir, "ledger.jsonl"),
+      [upload(task, "d/orders.html"), upload("another-task", "d/other.html")].map((line) => JSON.stringify(line)).join("\n") + "\n",
+    );
+    const taskWorktree = join(fixtureRoot, "worktrees", task);
+    git(["worktree", "add", "-q", "-b", `wt/${task}`, taskWorktree], repo);
+    writeFileSync(join(taskWorktree, "change.txt"), "x\n");
+    git(["add", "change.txt"], taskWorktree);
+    git(["commit", "-q", "-m", "work"], taskWorktree);
+
+    const text = scan(["--task", task, "--since", "1h", "--workspace", workspace], { PATH: `${bin}:${process.env.PATH}` }).stdout;
+    expect(text).toContain(`任务 ${task}`);
+    // The task's own resources, found by name.
+    expect(text).toContain(`容器 owner=${task} release-when=report-delivered：orders-pg（1/1 在运行）`);
+    expect(text).toContain(`worktree ${taskWorktree} [wt/${task}] 未合入`);
+    expect(text).toContain("https://share.example/d/orders.html");
+    // New and unmarked.
+    expect(text).toContain("运行中的容器 stray-redis");
+    expect(text).toContain("REPORT.html");
+    // Everything else is a count.
+    expect(text).not.toContain("other-pg");
+    expect(text).not.toContain("d/other.html");
+    expect(text).not.toContain(tempRoot);
+    expect(text).toContain("其他任务的容器 1 个");
+    expect(text).toContain("其他任务的分享页面 1 个");
+    expect(text).not.toContain("没有登记分享页面");
+    // A task with no registered share page is reminded that a visible change ships an acceptance report.
+    const bare = scan(["--task", "no-report-task", "--since", "1h", "--no-docker"]).stdout;
+    expect(bare).toContain("本任务没有登记分享页面");
+
+    git(["worktree", "remove", "--force", taskWorktree], repo);
+    git(["branch", "-D", `wt/${task}`], repo);
     rmSync(join(fixtureRoot, "state"), { recursive: true, force: true });
   });
 });
